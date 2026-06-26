@@ -1,0 +1,77 @@
+{
+  "name": "gns-utils",
+  "version": "0.1.0",
+  "description": "Utilities for the Gwei Name Service (GNS) — resolve .gwei names, reverse resolve addresses, and more.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "NODE_OPTIONS='--max-old-space-size=512' tsup",
+    "dev": "NODE_OPTIONS='--max-old-space-size=512' tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "lint": "biome check src",
+    "format": "biome check --write src",
+    "check": "biome check src && tsc --noEmit",
+    "prepublishOnly": "pnpm build",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish",
+    "pub": "pnpm check && pnpm test && node scripts/bump.mjs patch && changeset version && pnpm build && changeset publish",
+    "pub:minor": "pnpm check && pnpm test && node scripts/bump.mjs minor && changeset version && pnpm build && changeset publish",
+    "pub:major": "pnpm check && pnpm test && node scripts/bump.mjs major && changeset version && pnpm build && changeset publish"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@biomejs/biome"
+    ]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.8.0",
+    "@changesets/cli": "^2.27.0",
+    "@types/node": "^25.2.1",
+    "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.0",
+    "viem": "^2.45.2"
+  },
+  "keywords": [
+    "gwei",
+    "gns",
+    "gwei-name-service",
+    "ethereum",
+    "ens",
+    "name-service",
+    "web3"
+  ],
+  "license": "MIT",
+  "author": "lucadonnoh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucadonnoh/gwei-names.git",
+    "directory": "sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/lucadonnoh/gwei-names/issues"
+  },
+  "homepage": "https://gwei.domains"
+}

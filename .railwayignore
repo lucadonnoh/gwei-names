@@ -1,0 +1,9 @@
+# Keep the Railway upload/build context small — only the Dockerfile + dapp/ are needed.
+.git/
+lib/
+out/
+cache/
+broadcast/
+test/
+src/
+audit/

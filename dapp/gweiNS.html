@@ -1,0 +1,3164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>GNS</title>
+<script>
+// Dark mode: apply saved/system preference before first paint to avoid FOUC
+try{var d=localStorage.getItem('dark');if(d==='1'||(d===null&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark')}catch(_){}
+function toggleDark(){var on=document.documentElement.classList.toggle('dark');try{localStorage.setItem('dark',on?'1':'0')}catch(_){}}
+</script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='11' fill='%23e8e8e0'/><rect x='3' y='12' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='9' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='9' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js" integrity="sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM" crossorigin="anonymous"></script>
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm" integrity="sha384-wZEz5bl83QiQdUg5m/tIOQtZl9ncAoDleaNxEJNoNRmYLBpEprsT4si9P2xOvSbx" crossorigin="anonymous">
+<script>
+// Load ens-normalize with integrity via modulepreload
+(async () => {
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm');
+    window.ens_normalize = mod.ens_normalize;
+    window.ens_beautify = mod.ens_beautify;
+    window.ensNormalizeReady = true;
+  } catch (e) {
+    console.error('Failed to load ens-normalize:', e);
+    // Fallback: contract-compatible normalization only
+    window.ens_normalize = null;
+    window.ensNormalizeReady = false;
+    // Show warning after DOM loads
+    window.addEventListener('DOMContentLoaded', () => {
+      const status = document.getElementById('status');
+      if (status) {
+        status.innerHTML = '⚠️ Anti-spoof protection unavailable (normalization library failed to load)';
+        status.className = 'status show';
+      }
+    });
+  }
+})();
+</script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  font-family: Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  padding: 60px 20px;
+  padding-bottom: 20px;
+  max-width: 480px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 60px;
+}
+.section {
+  margin-bottom: 40px;
+}
+label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  color: var(--fg-muted);
+}
+input {
+  width: 100%;
+  padding: 12px 0;
+  font-size: 24px;
+  font-family: inherit;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+}
+input::placeholder { color: var(--input-ph); }
+input:focus { border-bottom-width: 2px; }
+button {
+  display: inline-block;
+  padding: 12px 24px;
+  font-size: 12px;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-bg);
+  cursor: pointer;
+  margin-right: 8px;
+  margin-top: 8px;
+  transition: all 0.2s;
+}
+button:hover { background: var(--btn-hover); }
+button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); cursor: not-allowed; }
+button.secondary {
+  background: var(--bg);
+  color: var(--fg);
+}
+button.secondary:hover { background: var(--surface-hover); }
+.status {
+  font-size: 13px;
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--surface);
+  display: none;
+}
+.status.show { display: block; }
+.status.error { background: var(--status-error); }
+.status.success { background: var(--status-success); }
+.availability {
+  font-size: 18px;
+  margin-top: 16px;
+  display: none;
+}
+.availability.show { display: block; }
+.availability .available { color: var(--fg); }
+.availability .taken { color: var(--fg-dim); }
+.wallet {
+  position: fixed;
+  top: max(20px, env(safe-area-inset-top, 0px));
+  right: max(20px, env(safe-area-inset-right, 0px));
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.wallet button { margin: 0; padding: 8px 16px; text-transform: none; }
+.fee {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 8px;
+}
+.pending {
+  margin-top: 24px;
+  padding: 20px;
+  border: 2px solid var(--pending-border);
+  background: var(--pending-bg);
+  display: none;
+}
+.pending.show { display: block; }
+.pending h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 12px;
+}
+.pending .name {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.pending .timer {
+  font-size: 14px;
+  color: var(--fg);
+  font-family: monospace;
+  margin-bottom: 16px;
+}
+.pending .actions {
+  display: flex;
+  gap: 8px;
+}
+.pending button {
+  margin: 0;
+}
+.pay-method {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 12px;
+}
+.pay-method label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  margin: 0 10px 0 0;
+  white-space: nowrap;
+}
+.pay-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  border: 1.5px solid var(--border-muted);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.02em;
+}
+.pay-option:first-of-type { border-radius: 4px 0 0 4px; }
+.pay-option:last-of-type { border-radius: 0 4px 4px 0; }
+.pay-option + .pay-option { border-left: none; }
+.pay-option:hover { background: var(--surface-hover); }
+.pay-option.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); z-index: 1; position: relative; }
+.pay-option.active + .pay-option { border-left: none; }
+.pay-option svg { display: block; }
+.suffix {
+  font-size: 24px;
+  color: var(--fg-dim);
+  position: absolute;
+  right: 0;
+  bottom: 12px;
+  pointer-events: none;
+}
+.input-wrap {
+  position: relative;
+}
+
+/* Modal */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--modal-overlay);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.modal-overlay.active { display: flex; }
+body.modal-open { overflow: hidden; }
+.modal {
+  background: var(--modal-bg);
+  border: 2px solid var(--modal-border);
+  padding: 20px;
+  width: 100%;
+  max-width: 360px;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.modal-title {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  margin: 0;
+}
+.modal-close:hover { opacity: 0.5; }
+.wallet-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.15s;
+}
+.wallet-option:hover { background: var(--btn-bg); color: var(--btn-fg); }
+.wallet-option-icon { font-size: 1.5rem; }
+.wallet-option-name { font-weight: 600; }
+.wallet-option.disconnect {
+  border-color: #f00;
+  color: #f00;
+  justify-content: center;
+}
+.wallet-option.disconnect:hover {
+  background: #f00;
+  color: #fff;
+}
+
+/* Manage section */
+.manage {
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--manage-border);
+  display: none;
+}
+.manage.show { display: block; }
+.manage h3 {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+}
+.manage-info {
+  font-size: 13px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--manage-bg);
+}
+.manage-info div {
+  margin-bottom: 6px;
+}
+.manage-info span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.5;
+  margin-right: 8px;
+}
+.manage-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.manage-actions button {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1.5px solid var(--border);
+  padding: 10px 16px;
+  font-size: 11px;
+  width: 100%;
+  margin: 0;
+}
+.manage-actions button:hover:not(:disabled) {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+}
+.manage-form {
+  display: none;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--manage-border);
+}
+.manage-form.show { display: block; }
+.manage-form label {
+  margin-bottom: 4px;
+}
+.manage-form input {
+  margin-bottom: 12px;
+  font-size: 16px;
+}
+.view-link {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.view-link a {
+  color: var(--fg);
+  opacity: 0.5;
+}
+.view-link a:hover { opacity: 1; }
+
+/* Scrolling names */
+.scroll-names {
+  position: fixed;
+  left: 20px;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  overflow: hidden;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.scroll-names-inner {
+  display: flex;
+  flex-direction: column;
+  animation: scrollNames 30s linear infinite;
+}
+.scroll-names span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 2;
+  white-space: nowrap;
+}
+@keyframes scrollNames {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+@media (max-width: 700px) {
+  .scroll-names { display: none; }
+  body { padding: 80px 16px 100px; }
+  .wallet { top: 16px; right: 16px; }
+  .wallet button { padding: 10px 14px; font-size: 11px; }
+  h1 { margin-bottom: 40px; font-size: 13px; }
+  input { font-size: 20px; padding: 14px 0; }
+  .suffix { font-size: 20px; bottom: 14px; }
+  button { padding: 14px 20px; font-size: 11px; width: 100%; margin-right: 0; }
+  button.secondary { width: auto; margin-left: 8px; }
+  .manage-actions { grid-template-columns: 1fr; }
+  .pay-method { flex-wrap: wrap; }
+  .pending .actions { flex-direction: row; gap: 8px; }
+  .pending .actions button { flex: 1; }
+  .modal { max-width: 100%; margin: 0 10px; }
+  .send-form { padding: 14px; }
+  .send-form button { width: auto; display: inline-block; }
+  .manage-form button { width: auto; display: inline-block; }
+}
+
+@media (max-width: 380px) {
+  body { padding: 70px 12px 80px; }
+  input { font-size: 18px; }
+  .suffix { font-size: 18px; }
+  h1 { font-size: 12px; }
+  .availability { font-size: 16px; }
+}
+
+/* Send section */
+.send-section {
+  margin-bottom: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--send-border);
+}
+.send-toggle {
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.4;
+  text-decoration: none;
+  letter-spacing: 0.05em;
+}
+.send-toggle:hover { opacity: 0.7; }
+.send-form {
+  display: none;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--manage-border);
+  background: var(--send-bg);
+}
+.send-form.show { display: block; }
+.send-form input {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.net-btn {
+  flex: 1;
+  padding: 10px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--input-ph);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.net-btn:hover { border-color: var(--border); }
+.net-btn.active {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border-color: var(--btn-bg);
+}
+
+/* Footer */
+.site-footer {
+  position: relative;
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 11px;
+  opacity: 0.4;
+  letter-spacing: 0.5px;
+}
+.site-footer a {
+  color: inherit;
+  text-decoration: underline;
+}
+.site-footer a:hover { opacity: 0.7; }
+.net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
+.net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
+.net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
+.net-pill.disabled { opacity: 0.35; cursor: not-allowed; }
+:root {
+  --bg:#fff;--fg:#000;--fg-muted:#666;--fg-dim:#999;
+  --border:#000;--border-muted:#ddd;
+  --surface:#f9f9f9;--surface-hover:#f5f5f5;
+  --btn-bg:#000;--btn-fg:#fff;--btn-hover:#333;
+  --link-fg:inherit;
+  --modal-overlay:rgba(0,0,0,0.8);--modal-bg:#fff;--modal-border:#000;
+  --status-error:#fff0f0;--status-success:#f0fff0;--status-warning:#fff8e6;
+  --input-ph:#ccc;
+  --btn-dis-bg:#ccc;--btn-dis-border:#ccc;--btn-dis-fg:#999;
+  --sec-bg:#fff;--sec-border:#000;
+  --free-accent:#1a8917;--free-bg:#f6fff6;--free-border:#c3e6cb;--free-status-bg:#eaffea;
+  --pending-bg:#f5f5f5;--pending-border:#000;
+  --send-bg:#fafafa;--send-border:#eee;
+  --manage-border:#ddd;--manage-bg:#f5f5f5;
+  --link-dim:0.5;
+}
+.dark {
+  --bg:#0a0a0a;--fg:#e8e8e0;--fg-muted:#888;--fg-dim:#666;
+  --border:#333;--border-muted:#333;
+  --surface:#111;--surface-hover:#151515;
+  --btn-bg:#e8e8e0;--btn-fg:#0a0a0a;--btn-hover:#ccc;
+  --link-fg:#e8e8e0;
+  --modal-overlay:rgba(0,0,0,0.85);--modal-bg:#111;--modal-border:#333;
+  --status-error:#1a0000;--status-success:#001a00;--status-warning:#1a1400;
+  --input-ph:#555;
+  --btn-dis-bg:#444;--btn-dis-border:#444;--btn-dis-fg:#666;
+  --sec-bg:#0a0a0a;--sec-border:#333;
+  --free-accent:#2ecc40;--free-bg:#0a1a0a;--free-border:#1a3a1a;--free-status-bg:#0a1a0a;
+  --pending-bg:#111;--pending-border:#333;
+  --send-bg:#111;--send-border:#222;
+  --manage-border:#333;--manage-bg:#151515;
+  --link-dim:0.5;
+}
+.free-cta { margin-top: 10px; font-size: 12px; color: var(--free-accent); cursor: pointer; letter-spacing: 0.03em; }
+.free-cta:hover { text-decoration: underline; }
+.free-panel { display: none; margin-top: 16px; padding: 16px; border: 1px solid var(--free-border); background: var(--free-bg); }
+.free-panel.show { display: block; }
+.free-panel label { color: var(--free-accent); }
+.free-panel .free-input-wrap { display: flex; align-items: baseline; gap: 0; margin-bottom: 12px; }
+.free-panel .free-input-wrap input { flex: 1; font-size: 20px; border-bottom: 1px solid var(--free-accent); min-width: 0; }
+.free-panel .free-input-wrap input:focus { border-bottom-width: 2.5px; margin-bottom: -1px; }
+.free-panel .free-suffix { font-size: 20px; color: var(--fg-dim); white-space: nowrap; }
+.free-panel button { background: var(--free-accent); border-color: var(--free-accent); }
+.free-panel button:hover { background: var(--free-accent); opacity: 0.85; }
+.free-panel button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); }
+.free-panel .free-status { font-size: 13px; margin-top: 12px; padding: 10px; background: var(--free-status-bg); display: none; }
+.free-panel .free-status.show { display: block; }
+.free-panel .free-status.error { background: var(--status-error); }
+.free-panel .free-status.success { background: var(--free-status-bg); }
+
+/* Dark mode toggle */
+.dark-toggle {
+  position:fixed;
+  bottom:max(20px, env(safe-area-inset-bottom, 0px));
+  right:max(20px, env(safe-area-inset-right, 0px));
+  border:none; cursor:pointer; padding:13px; margin:-13px;
+  opacity:0.5; transition:opacity 0.2s; z-index:100;
+  background:#000; border-radius:50%; width:40px; height:40px; background-clip:content-box;
+}
+:root.dark .dark-toggle { background:#fff; }
+.dark-toggle:hover { opacity:1; }
+</style>
+</head>
+<body>
+
+<button class="dark-toggle" onclick="toggleDark()" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
+
+<div class="scroll-names">
+  <div class="scroll-names-inner">
+    <span>satoshi.gwei</span>
+    <span>vitalik.gwei</span>
+    <span>ethereum.gwei</span>
+    <span>defi.gwei</span>
+    <span>crypto.gwei</span>
+    <span>web3.gwei</span>
+    <span>nft.gwei</span>
+    <span>dao.gwei</span>
+    <span>wallet.gwei</span>
+    <span>token.gwei</span>
+    <span>chain.gwei</span>
+    <span>block.gwei</span>
+    <span>swap.gwei</span>
+    <span>stake.gwei</span>
+    <span>yield.gwei</span>
+    <span>alpha.gwei</span>
+    <span>degen.gwei</span>
+    <span>gm.gwei</span>
+    <span>wagmi.gwei</span>
+    <span>moon.gwei</span>
+    <span>bridge.gwei</span>
+    <span>oracle.gwei</span>
+    <span>layer2.gwei</span>
+    <span>mint.gwei</span>
+    <span>gas.gwei</span>
+    <span>vault.gwei</span>
+    <span>pool.gwei</span>
+    <span>airdrop.gwei</span>
+    <span>hodl.gwei</span>
+    <span>satoshi.gwei</span>
+    <span>vitalik.gwei</span>
+    <span>ethereum.gwei</span>
+    <span>defi.gwei</span>
+    <span>crypto.gwei</span>
+    <span>web3.gwei</span>
+    <span>nft.gwei</span>
+    <span>dao.gwei</span>
+    <span>wallet.gwei</span>
+    <span>token.gwei</span>
+    <span>chain.gwei</span>
+    <span>block.gwei</span>
+    <span>swap.gwei</span>
+    <span>stake.gwei</span>
+    <span>yield.gwei</span>
+    <span>alpha.gwei</span>
+    <span>degen.gwei</span>
+    <span>gm.gwei</span>
+    <span>wagmi.gwei</span>
+    <span>moon.gwei</span>
+    <span>bridge.gwei</span>
+    <span>oracle.gwei</span>
+    <span>layer2.gwei</span>
+    <span>mint.gwei</span>
+    <span>gas.gwei</span>
+    <span>vault.gwei</span>
+    <span>pool.gwei</span>
+    <span>airdrop.gwei</span>
+    <span>hodl.gwei</span>
+  </div>
+</div>
+
+<div class="wallet">
+  <button id="walletBtn" onclick="toggleWallet()">connect</button>
+</div>
+
+<h1>gwei name service</h1>
+
+<div id="netBar" class="net-bar"></div>
+
+<div class="section">
+  <label>Name</label>
+  <div class="input-wrap">
+    <input type="text" id="nameInput" placeholder="yourname" oninput="checkName()">
+    <span class="suffix">.gwei</span>
+  </div>
+  <div id="availability" class="availability"></div>
+  <div id="feeDisplay" class="fee"></div>
+  <div class="free-cta" id="freeCta" onclick="toggleFreePanel()" style="display:none;">free names available</div>
+  <div id="freePanel" class="free-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <label style="margin-bottom:0;">Claim your free name</label>
+      <span onclick="toggleFreePanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
+    </div>
+    <div class="free-input-wrap">
+      <input type="text" id="freeLabelInput" placeholder="yourname">
+      <span class="free-suffix">.id.gwei</span>
+    </div>
+    <button id="freeMintBtn" onclick="doFreeMint()">Mint</button>
+    <div id="freeStatus" class="free-status"></div>
+  </div>
+</div>
+
+<div id="pending" class="pending">
+  <h3>Pending Commitment</h3>
+  <div class="name" id="pendingName"></div>
+  <div class="timer" id="pendingTimer"></div>
+  <div class="actions">
+    <button id="revealBtn" onclick="doReveal()">Register</button>
+    <button class="secondary" onclick="clearPending()">Cancel</button>
+  </div>
+  <div style="font-size:10px;opacity:0.5;margin-top:12px;line-height:1.4;">Your secret is stored locally. Don't clear site data or you won't be able to reveal.</div>
+</div>
+
+<div class="section">
+  <button id="commitBtn" onclick="doCommit()" disabled>Commit</button>
+  <div style="font-size:11px;opacity:0.4;margin-top:16px;letter-spacing:0.05em;">a simple namespace on ethereum named after gwei, the unit ethereum gas is priced in</div>
+</div>
+
+<!-- Send ETH -->
+<div id="sendSection" class="send-section">
+  <a href="#" onclick="toggleSend(event)" class="send-toggle" id="sendToggle">send eth →</a>
+  <div id="sendForm" class="send-form">
+    <label>Recipient</label>
+    <input type="text" id="sendTo" placeholder="0x... or name.gwei (empty = self)" oninput="previewSendRecipient()">
+    <div id="sendPreview" style="font-size:12px;margin-bottom:12px;display:none;"></div>
+    <label>Amount (ETH)</label>
+    <input type="text" id="sendAmount" placeholder="0.01">
+    <div id="sendDest">
+    <label>Destination</label>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button type="button" id="netDirect" class="net-btn active" onclick="setNetwork('direct')">Ethereum</button>
+      <button type="button" id="netBase" class="net-btn" onclick="setNetwork('base')">→ Base</button>
+    </div>
+    </div>
+    <button onclick="doSendEth()">Send</button>
+    <button class="secondary" onclick="toggleSend(event)">Cancel</button>
+  </div>
+</div>
+
+<!-- Verify Name (anti-spoof) -->
+<div id="verifySection" class="send-section">
+  <a href="#" onclick="toggleVerify(event)" class="send-toggle" id="verifyToggle">verify name →</a>
+  <div id="verifyForm" class="send-form">
+    <div style="font-size:11px;opacity:0.5;margin-bottom:12px;">Check if a tokenId matches the name you expect. Protects against lookalike spoofs using invisible characters.</div>
+    <label>Token ID</label>
+    <input type="text" id="verifyTokenId" placeholder="From OpenSea URL or NFT" oninput="doVerify()">
+    <label>Expected Name (optional)</label>
+    <input type="text" id="verifyExpected" placeholder="e.g. vitalik" oninput="doVerify()">
+    <div id="verifyResult" style="margin-top:12px;display:none;"></div>
+    <button class="secondary" onclick="toggleVerify(event)" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<div id="manage" class="manage">
+  <h3>Manage Name</h3>
+  <div class="manage-info" id="manageInfo"></div>
+  <div class="manage-actions" id="manageActions"></div>
+  <div class="manage-form" id="manageForm"></div>
+</div>
+
+<div id="status" class="status"></div>
+
+<!-- Wallet Modal -->
+<div class="modal-overlay" id="walletModal" onclick="if(event.target===this)closeWalletModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Connect Wallet</div>
+      <button class="modal-close" onclick="closeWalletModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="walletOptions"></div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="site-footer">
+<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://github.com/lucadonnoh/gwei-names/tree/main/sdk" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+</div>
+
+<script>
+// Global error handler for debugging on mobile
+window.onerror = function(msg, url, line) {
+  const status = document.getElementById('status');
+  if (status) {
+    status.textContent = 'Error: ' + msg;
+    status.className = 'status show error';
+  }
+  console.error('Global error:', msg, 'at', url, line);
+  return false;
+};
+
+// ── networks: supports mainnet + sepolia. Mainnet is disabled until NameNFT is
+//    deployed there; until then the dapp runs on Sepolia so prod stays testable. ──
+const NETWORKS = {
+  ethereum: {
+    key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
+    contract: '0x0000000000000000000000000000000000000000', // TODO: mainnet NameNFT
+    rpc: ['https://eth.llamarpc.com', 'https://ethereum.publicnode.com', 'https://1rpc.io/eth'],
+    explorer: 'https://etherscan.io',
+    nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
+    registrar: '0x0000000000000000000000000000000000000000', // TODO: mainnet SubdomainRegistrar
+    freeRoot: null,
+    enabled: false
+  },
+  sepolia: {
+    key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
+    contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
+    rpc: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://1rpc.io/sepolia', 'https://sepolia.drpc.org'],
+    explorer: 'https://sepolia.etherscan.io',
+    nft: { name: 'Etherscan', asset: 'https://sepolia.etherscan.io/nft', collection: 'https://sepolia.etherscan.io/token' },
+    registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
+    freeRoot: 'id',
+    enabled: true
+  }
+};
+const NET_STORAGE_KEY = 'gwei_network';
+function pickActiveNetwork() {
+  let key = null;
+  try { key = localStorage.getItem(NET_STORAGE_KEY); } catch (e) {}
+  if (!key || !NETWORKS[key] || !NETWORKS[key].enabled) {
+    key = Object.keys(NETWORKS).find(k => NETWORKS[k].enabled) || 'sepolia';
+  }
+  return key;
+}
+const ACTIVE_NET = pickActiveNetwork();
+const NET = NETWORKS[ACTIVE_NET];
+
+const CONTRACT = NET.contract;
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const CHAIN_ID = NET.chainId;
+const CHAIN_ID_HEX = NET.chainIdHex;
+const CHAIN_NAME = NET.label;
+const EXPLORER = NET.explorer;
+const NFT = NET.nft;
+const REGISTRAR = NET.registrar;
+const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id.gwei
+
+function setActiveNetwork(key) {
+  if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
+  try { localStorage.setItem(NET_STORAGE_KEY, key); } catch (e) {}
+  location.reload();
+}
+function renderNetBar() {
+  const bar = document.getElementById('netBar');
+  if (!bar) return;
+  bar.innerHTML = Object.values(NETWORKS).map(n => {
+    const active = n.key === ACTIVE_NET;
+    const cls = 'net-pill' + (active ? ' active' : '') + (n.enabled ? '' : ' disabled');
+    const tag = !n.enabled ? ' · soon' : (n.chainId !== 1 ? ' · testnet' : '');
+    const attr = !n.enabled ? ' disabled' : (active ? '' : ` onclick="setActiveNetwork('${n.key}')"`);
+    return `<button class="${cls}"${attr}>${n.label}${tag}</button>`;
+  }).join('');
+}
+renderNetBar();
+// The "Destination" toggle (direct send vs bridge-to-Base) is a mainnet-only feature.
+if (NET.chainId !== 1) {
+  const _d = document.getElementById('sendDest');
+  if (_d) _d.style.display = 'none';
+}
+// Point the footer OpenSea link at the active network's contract.
+{ const _os = document.getElementById('osFooterLink'); if (_os) { _os.href = NFT.collection + '/' + CONTRACT; _os.textContent = NFT.name; } }
+
+// ── Free names: claim <label>.<FREE_ROOT>.gwei free via the SubdomainRegistrar ──
+const REGISTRAR_ABI = [
+  'function register(uint256 parentId, string label) payable returns (uint256)',
+  'function config(uint256) view returns (address controller, bool enabled, address feeToken, uint96 price, address gateToken, uint96 minGateBalance, address payout)',
+  'function escrowedController(uint256) view returns (address)',
+  'function configure(uint256 parentId, address payout, address feeToken, uint256 price, bool enabled, address gateToken, uint256 minGateBalance)',
+  'function disable(uint256 parentId)',
+  'function withdrawETH(address to)',
+  'function ethBalance(address) view returns (uint256)'
+];
+function regEnabled() { return REGISTRAR && !/^0x0+$/.test(REGISTRAR); }
+function freeEnabled() { return FREE_ROOT && REGISTRAR && !/^0x0+$/.test(REGISTRAR); }
+function initFree() {
+  if (!freeEnabled()) return;
+  const sfx = document.querySelector('#freePanel .free-suffix');
+  if (sfx) sfx.textContent = '.' + FREE_ROOT + '.gwei';
+  const cta = document.getElementById('freeCta'); if (cta) cta.style.display = '';
+  const panel = document.getElementById('freePanel'); if (panel) panel.classList.add('show');
+}
+function toggleFreePanel() {
+  const panel = document.getElementById('freePanel'); if (!panel) return;
+  panel.classList.toggle('show');
+  if (panel.classList.contains('show')) { const fi = document.getElementById('freeLabelInput'); if (fi) fi.focus(); }
+  const st = document.getElementById('freeStatus'); if (st) { st.className = 'free-status'; st.textContent = ''; }
+}
+function showFreeStatus(msg, type) {
+  const el = document.getElementById('freeStatus');
+  el.textContent = msg;
+  el.className = 'free-status show' + (type ? ' ' + type : '');
+}
+async function doFreeMint() {
+  const raw = document.getElementById('freeLabelInput').value;
+  const label = normalizeLabel(raw);
+  if (!label) { showFreeStatus(getNormalizationError(raw) || 'Invalid name', 'error'); return; }
+  const btn = document.getElementById('freeMintBtn'); btn.disabled = true;
+  try {
+    if (!signer) { showFreeStatus('Connect your wallet first', ''); toggleWallet(); btn.disabled = false; return; }
+    const provider = rpcProvider || await getRpc();
+    const parentId = localComputeId(FREE_ROOT);
+    showFreeStatus('Checking availability...', '');
+    const reg = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, provider);
+    const [cfg, parentOwner, escrowed] = await Promise.all([
+      reg.config(parentId),
+      readContract.ownerOf(parentId).catch(() => ethers.ZeroAddress),
+      reg.escrowedController(parentId)
+    ]);
+    const controller = escrowed !== ethers.ZeroAddress ? escrowed : parentOwner;
+    if (!cfg.enabled || cfg.controller.toLowerCase() !== controller.toLowerCase()) { showFreeStatus('Free minting is not currently available', 'error'); btn.disabled = false; return; }
+    if (cfg.price !== 0n) { showFreeStatus('Minting is no longer free', 'error'); btn.disabled = false; return; }
+    if (!(await readContract.isAvailable(label, parentId))) { showFreeStatus(label + '.' + FREE_ROOT + '.gwei is already taken', 'error'); btn.disabled = false; return; }
+    showFreeStatus('Minting ' + label + '.' + FREE_ROOT + '.gwei...', '');
+    const tx = await wcTransaction(new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer).register(parentId, label, { value: 0n }), 'Claim free name');
+    showFreeStatus('Confirming...', '');
+    await waitForTx(tx);
+    showFreeStatus(label + '.' + FREE_ROOT + '.gwei claimed!', 'success');
+    document.getElementById('freeLabelInput').value = '';
+  } catch (e) { showFreeStatus(e.shortMessage || e.reason || e.message || 'Mint failed', 'error'); btn.disabled = false; return; }
+  btn.disabled = false;
+}
+initFree();
+
+// Gateway for .gwei websites - resolves name.gwei.domains to IPFS contenthash
+// URL pattern: https://name.gwei.domains (not name.gwei.gwei.domains)
+const GWEI_GATEWAY = 'gwei.domains';
+
+const ABI = [
+  'function isAvailable(string label, uint256 parentId) view returns (bool)',
+  'function makeCommitment(string label, address owner, bytes32 secret) pure returns (bytes32)',
+  'function commit(bytes32 commitment)',
+  'function reveal(string label, bytes32 secret) payable returns (uint256)',
+  'function getFee(uint256 length) view returns (uint256)',
+  'function getPremium(uint256 tokenId) view returns (uint256)',
+  'function computeId(string fullName) pure returns (uint256)',
+  // Read functions
+  'function ownerOf(uint256 tokenId) view returns (address)',
+  'function resolve(uint256 tokenId) view returns (address)',
+  'function text(uint256 tokenId, string key) view returns (string)',
+  'function contenthash(uint256 tokenId) view returns (bytes)',
+  'function getFullName(uint256 tokenId) view returns (string)',
+  'function expiresAt(uint256 tokenId) view returns (uint256)',
+  'function records(uint256 tokenId) view returns (string label, uint256 parent, uint64 expiresAt, uint64 epoch, uint64 parentEpoch)',
+  // Write functions
+  'function setAddr(uint256 tokenId, address addr)',
+  'function setText(uint256 tokenId, string key, string value)',
+  'function setContenthash(uint256 tokenId, bytes hash)',
+  'function setPrimaryName(uint256 tokenId)',
+  'function renew(uint256 tokenId) payable',
+  'function transferFrom(address from, address to, uint256 tokenId)',
+  'function registerSubdomain(string label, uint256 parentId) returns (uint256)',
+  'function isApprovedForAll(address owner, address operator) view returns (bool)',
+  'function setApprovalForAll(address operator, bool approved)',
+  'function reverseResolve(address addr) view returns (string)'
+];
+
+const MIN_COMMIT_AGE = 60;
+const MAX_COMMIT_AGE = 86400;
+const STORAGE_KEY = 'gwei_pending_commits';
+
+const $ = id => document.getElementById(id);
+const textEncoder = new TextEncoder();
+
+// RPC fallback for read-only calls
+const RPC_ENDPOINTS = NET.rpc;
+let rpcProvider = null;
+let readContract = null;
+
+async function getRpc() {
+  if (rpcProvider) return rpcProvider;
+
+  const NETWORK = ethers.Network.from(CHAIN_ID);
+
+  // Race all RPCs - first to respond wins
+  const racePromises = RPC_ENDPOINTS.map(async (rpc) => {
+    const p = new ethers.JsonRpcProvider(rpc, NETWORK, { staticNetwork: true });
+    await Promise.race([
+      p.getBlockNumber(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+    ]);
+    return p;
+  });
+
+  try {
+    rpcProvider = await Promise.any(racePromises);
+    readContract = new ethers.Contract(CONTRACT, ABI, rpcProvider);
+    return rpcProvider;
+  } catch (e) {
+    throw new Error('All RPC endpoints failed');
+  }
+}
+
+// Initialize RPC on load
+getRpc().catch(() => {});
+
+// Wallet-agnostic tx.wait() - handles wallets that return bad data or hang
+async function waitForTx(tx, timeoutMs = 90000) {
+  const txHash = tx.hash;
+
+  // Helper to poll receipt directly via public RPC (more reliable than wallet provider)
+  async function pollReceipt(maxAttempts = 45) {
+    const p = await getRpc();
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const receipt = await p.getTransactionReceipt(txHash);
+        if (receipt) {
+          if (receipt.status === 0) throw new Error('Transaction reverted');
+          return receipt;
+        }
+      } catch (rpcErr) {
+        if (i === maxAttempts - 1) throw rpcErr;
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    return null;
+  }
+
+  // For WalletConnect, always use polling (tx.wait() is unreliable)
+  if (isWalletConnect) {
+    console.log('WalletConnect: using receipt polling for', txHash);
+    const receipt = await pollReceipt();
+    if (receipt) return receipt;
+    throw new Error('Transaction confirmation timeout');
+  }
+
+  // Race tx.wait() against timeout
+  let receipt = null;
+  let waitError = null;
+
+  try {
+    receipt = await Promise.race([
+      tx.wait(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+    ]);
+  } catch (e) {
+    waitError = e;
+    const msg = (e.message || '').toLowerCase();
+    const shouldPoll = msg.includes('timeout') ||
+                       msg.includes('index') ||
+                       msg.includes('invalid_argument') ||
+                       msg.includes('invalid argument') ||
+                       msg.includes('could not coalesce') ||
+                       msg.includes('missing response');
+
+    if (shouldPoll && txHash) {
+      console.log('tx.wait() failed, falling back to receipt polling:', e.message);
+      receipt = await pollReceipt();
+    }
+  }
+
+  if (receipt) return receipt;
+  throw waitError || new Error('Transaction confirmation timeout');
+}
+
+// Multicall3 for batching RPC calls
+const MULTICALL3_ABI = [
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])'
+];
+const iface = new ethers.Interface(ABI);
+
+// Local tokenId computation (matches contract's computeId for top-level names)
+// Uses namehash: keccak256(GWEI_NODE || keccak256(label))
+// GWEI_NODE = namehash('gwei') - use constant with sanity check for reliability
+const GWEI_NODE = '0xcca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f';
+// Sanity check if ethers is available
+if (typeof ethers !== 'undefined' && ethers.namehash) {
+  const computed = ethers.namehash('gwei');
+  if (computed !== GWEI_NODE) {
+    console.error('GWEI_NODE mismatch! Expected', GWEI_NODE, 'got', computed);
+  }
+}
+
+function localComputeId(name) {
+  const labelHash = ethers.keccak256(ethers.toUtf8Bytes(name));
+  return BigInt(ethers.keccak256(ethers.concat([GWEI_NODE, labelHash])));
+}
+
+// Batch multiple contract calls into one RPC call
+async function multicall(calls) {
+  const provider = rpcProvider || await getRpc();
+  const mc = new ethers.Contract(MULTICALL3, MULTICALL3_ABI, provider);
+  const callData = calls.map(c => ({
+    target: CONTRACT,
+    allowFailure: c.allowFailure || false,
+    callData: iface.encodeFunctionData(c.fn, c.args)
+  }));
+  const results = await mc.aggregate3(callData);
+  return results.map((r, i) => {
+    if (!r.success) return null;
+    try {
+      return iface.decodeFunctionResult(calls[i].fn, r.returnData);
+    } catch {
+      return null;
+    }
+  });
+}
+
+// Wallet state
+let provider = null;
+let signer = null;
+let connectedAddress = null;
+let connectedWalletProvider = null;
+let walletConnectProvider = null;
+let isConnecting = false;
+let contract = null;
+let walletEventHandlers = null;
+let isWalletConnect = false;
+let wcDeepLink = null;
+
+const eip6963Providers = new Map();
+
+// WalletConnect transaction helper - shows notification and handles deep links
+async function wcTransaction(txPromise, message = 'Confirm in your wallet app') {
+  if (!isWalletConnect) return txPromise;
+
+  // Show persistent notification
+  const notif = document.createElement('div');
+  notif.id = 'wcNotif';
+  notif.innerHTML = `
+    <div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:16px;text-align:center;z-index:10000;font-size:14px;">
+      <div style="margin-bottom:8px;">📱 ${message}</div>
+      <div style="font-size:12px;opacity:0.7;">Open your wallet app to approve the transaction</div>
+      ${wcDeepLink ? `<a href="${wcDeepLink}" style="display:inline-block;margin-top:8px;padding:8px 16px;background:#fff;color:#000;border-radius:4px;text-decoration:none;">Open Wallet</a>` : ''}
+    </div>
+  `;
+  document.body.appendChild(notif);
+
+  try {
+    const result = await txPromise;
+    return result;
+  } finally {
+    notif.remove();
+  }
+}
+
+// EIP-6963 listener
+if (typeof window !== 'undefined') {
+  window.addEventListener('eip6963:announceProvider', (event) => {
+    try {
+      const { info, provider } = event.detail || {};
+      if (info?.uuid && provider) {
+        eip6963Providers.set(info.uuid, { info, provider });
+      }
+    } catch (e) {}
+  });
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+}
+
+// Helper to find specific provider from providers array or window.ethereum
+function findProvider(checkFn) {
+  // First check providers array (standard multi-wallet setup)
+  if (window.ethereum?.providers?.length) {
+    for (const p of window.ethereum.providers) {
+      if (checkFn(p)) return p;
+    }
+  }
+  // Fallback to window.ethereum if it matches
+  if (window.ethereum && checkFn(window.ethereum)) return window.ethereum;
+  return null;
+}
+
+const WALLET_CONFIG = {
+  metamask: { name: 'MetaMask', icon: '🦊', detect: () => findProvider(p => p.isMetaMask), getProvider: () => findProvider(p => p.isMetaMask) },
+  coinbase: { name: 'Coinbase', icon: '🔵', detect: () => findProvider(p => p.isCoinbaseWallet), getProvider: () => findProvider(p => p.isCoinbaseWallet) },
+  rabby: { name: 'Rabby', icon: '🐰', detect: () => findProvider(p => p.isRabby), getProvider: () => findProvider(p => p.isRabby) },
+  rainbow: { name: 'Rainbow', icon: '🌈', detect: () => findProvider(p => p.isRainbow), getProvider: () => findProvider(p => p.isRainbow) },
+  walletconnect: { name: 'WalletConnect', icon: '📱' }
+};
+
+function detectWallets() {
+  const detected = [];
+  const seenNames = new Set();
+
+  // 1. EIP-6963 providers first (modern standard, gives us the actual provider directly)
+  for (const [uuid, { info, provider }] of eip6963Providers.entries()) {
+    const name = info?.name || 'Unknown';
+    if (!seenNames.has(name.toLowerCase())) {
+      const safeName = name.replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+      const iconUrl = info.icon && (info.icon.startsWith('data:image/') || info.icon.startsWith('https://')) ? info.icon : null;
+      const safeIconUrl = iconUrl ? iconUrl.replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])) : null;
+      detected.push({
+        key: `eip6963_${uuid}`,
+        name: safeName,
+        icon: safeIconUrl ? `<img src="${safeIconUrl}" style="width:1.5rem;height:1.5rem;border-radius:4px;">` : '🔌',
+        getProvider: () => provider
+      });
+      seenNames.add(name.toLowerCase());
+    }
+  }
+
+  // 2. Check window.ethereum.providers array (multi-wallet setup)
+  if (window.ethereum?.providers?.length) {
+    for (let i = 0; i < window.ethereum.providers.length; i++) {
+      const p = window.ethereum.providers[i];
+      const name = p.isMetaMask ? 'MetaMask' : p.isCoinbaseWallet ? 'Coinbase' : p.isRabby ? 'Rabby' : p.isRainbow ? 'Rainbow' : null;
+      if (name && !seenNames.has(name.toLowerCase())) {
+        detected.push({ key: `provider_${i}`, name, icon: '🔗', getProvider: () => p });
+        seenNames.add(name.toLowerCase());
+      }
+    }
+  }
+
+  // 3. Legacy WALLET_CONFIG detection (fallback for wallets not supporting EIP-6963)
+  for (const [key, config] of Object.entries(WALLET_CONFIG)) {
+    if (key === 'walletconnect') continue;
+    try {
+      if (config.detect && config.detect() && !seenNames.has(config.name.toLowerCase())) {
+        detected.push({ key, ...config });
+        seenNames.add(config.name.toLowerCase());
+      }
+    } catch (e) {}
+  }
+
+  // 4. Fallback: if nothing detected but window.ethereum exists
+  if (detected.length === 0 && window.ethereum) {
+    detected.push({ key: 'injected', name: 'Browser Wallet', icon: '🔗', getProvider: () => window.ethereum });
+  }
+
+  // 5. WalletConnect as mobile/cross-device option
+  const wcModule = (typeof globalThis !== 'undefined' ? globalThis : window)['@walletconnect/ethereum-provider'];
+  if (wcModule?.EthereumProvider) {
+    detected.push({ key: 'walletconnect', name: 'WalletConnect', icon: '📱' });
+  }
+
+  return detected;
+}
+
+function showWalletModal() {
+  $('walletModal').classList.add('active');
+  document.body.classList.add('modal-open');
+  $('walletOptions').innerHTML = '<div style="padding:12px;text-align:center;">Detecting wallets...</div>';
+
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+  const doDetect = (attempt = 1) => {
+    const wallets = detectWallets();
+    const hasBrowserWallet = wallets.some(w => w.key !== 'walletconnect');
+    if (!hasBrowserWallet && attempt < 2) {
+      setTimeout(() => doDetect(attempt + 1), 250);
+    } else {
+      renderWalletModal(wallets);
+    }
+  };
+
+  setTimeout(() => doDetect(), 150);
+}
+
+function renderWalletModal(wallets) {
+  const container = $('walletOptions');
+
+  if (connectedAddress) {
+    const displayName = $('walletBtn').textContent;
+    const showName = displayName && displayName !== 'connect' && !displayName.startsWith('0x');
+    container.innerHTML = `
+      <div style="padding: 12px; border: 1px solid #000; margin-bottom: 12px;">
+        <div style="font-weight: 600; margin-bottom: 6px;">Connected</div>
+        ${showName ? `<div style="font-size: 16px; margin-bottom: 4px;">${escapeHtml(displayName)}</div>` : ''}
+        <div style="font-size: 12px; word-break: break-all; opacity: 0.6;">${connectedAddress}</div>
+      </div>
+      <div class="wallet-option disconnect" onclick="disconnectWallet()">
+        <span class="wallet-option-name">Disconnect</span>
+      </div>
+    `;
+  } else {
+    container.innerHTML = wallets.length > 0 ? wallets.map(w => `
+      <div class="wallet-option" onclick='connectWithWallet(${JSON.stringify(w.key)})'>
+        <span class="wallet-option-icon">${w.icon}</span>
+        <span class="wallet-option-name">${escapeHtml(w.name)}</span>
+      </div>
+    `).join('') : '<div style="padding:12px;text-align:center;">No wallets detected.</div>';
+  }
+}
+
+function closeWalletModal() {
+  $('walletModal').classList.remove('active');
+  document.body.classList.remove('modal-open');
+}
+
+function toggleWallet() {
+  showWalletModal();
+}
+
+async function connectWithWallet(walletKey) {
+  if (isConnecting) return;
+  isConnecting = true;
+
+  try {
+    closeWalletModal();
+    let walletProvider;
+
+    if (walletKey === 'walletconnect') {
+      const wcModule = (typeof globalThis !== 'undefined' ? globalThis : window)['@walletconnect/ethereum-provider'];
+      const WCProvider = wcModule?.EthereumProvider;
+
+      if (!WCProvider?.init) throw new Error('WalletConnect not available');
+
+      if (walletConnectProvider) {
+        try { await walletConnectProvider.disconnect?.(); } catch (e) {}
+        walletConnectProvider = null;
+      }
+
+      walletConnectProvider = await WCProvider.init({
+        projectId: '1e8390ef1c1d8a185e035912a1409749',
+        chains: [CHAIN_ID],
+        showQrModal: true,
+        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
+        metadata: {
+          name: 'Gwei Name Service',
+          description: 'Register .gwei names',
+          url: window.location.origin,
+          icons: []
+        }
+      });
+
+      // Listen for display_uri to capture deep link for mobile
+      walletConnectProvider.on('display_uri', (uri) => {
+        // Extract wallet deep link if available
+        try {
+          const session = walletConnectProvider.session;
+          const peerMeta = session?.peer?.metadata;
+          if (peerMeta?.redirect?.native) {
+            wcDeepLink = peerMeta.redirect.native;
+          } else if (peerMeta?.redirect?.universal) {
+            wcDeepLink = peerMeta.redirect.universal;
+          }
+        } catch (e) {}
+      });
+
+      await walletConnectProvider.enable();
+      walletProvider = walletConnectProvider;
+      isWalletConnect = true;
+
+      // Try to get deep link from connected session
+      try {
+        const session = walletConnectProvider.session;
+        const peerMeta = session?.peer?.metadata;
+        if (peerMeta?.redirect?.native) {
+          wcDeepLink = peerMeta.redirect.native;
+        } else if (peerMeta?.redirect?.universal) {
+          wcDeepLink = peerMeta.redirect.universal;
+        }
+      } catch (e) {}
+    } else if (walletKey.startsWith('eip6963_')) {
+      const uuid = walletKey.replace('eip6963_', '');
+      walletProvider = eip6963Providers.get(uuid)?.provider;
+      // UUID changes per session - fall back to matching by saved name
+      if (!walletProvider) {
+        const savedName = localStorage.getItem('gweins_wallet_name')?.toLowerCase();
+        if (savedName) {
+          for (const [, { info, provider }] of eip6963Providers) {
+            if (info?.name?.toLowerCase() === savedName) {
+              walletProvider = provider;
+              break;
+            }
+          }
+        }
+      }
+      isWalletConnect = false;
+      wcDeepLink = null;
+    } else {
+      walletProvider = WALLET_CONFIG[walletKey]?.getProvider() || window.ethereum;
+      isWalletConnect = false;
+      wcDeepLink = null;
+    }
+
+    if (!walletProvider) throw new Error('Wallet not found');
+
+    if (walletKey !== 'walletconnect') {
+      await walletProvider.request({ method: 'eth_requestAccounts' });
+    }
+
+    // Check/switch chain BEFORE setting globals
+    const chainId = await walletProvider.request({ method: 'eth_chainId' });
+    // Handle both hex string ('0x1') and number (1) formats from different wallets
+    if (BigInt(chainId) !== BigInt(CHAIN_ID)) {
+      try {
+        try {
+          await walletProvider.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: CHAIN_ID_HEX }]
+          });
+        } catch (e) {
+          // 4902 = chain not in wallet — add it (selects it too)
+          if (e && (e.code === 4902 || e.code === -32603)) {
+            await walletProvider.request({
+              method: 'wallet_addEthereumChain',
+              params: [{
+                chainId: CHAIN_ID_HEX,
+                chainName: CHAIN_NAME,
+                nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: RPC_ENDPOINTS,
+                blockExplorerUrls: [EXPLORER]
+              }]
+            });
+          } else { throw e; }
+        }
+        // Verify chain actually switched (some wallets claim success without switching)
+        const newChainId = await walletProvider.request({ method: 'eth_chainId' });
+        if (BigInt(newChainId) !== BigInt(CHAIN_ID)) {
+          throw new Error('Chain switch failed');
+        }
+      } catch (switchErr) {
+        showStatus('Please switch to ' + CHAIN_NAME, 'error');
+        // Reset wallet state uniformly on chain-switch failure
+        if (walletKey === 'walletconnect') {
+          try { walletConnectProvider?.disconnect(); } catch (e) {}
+          walletConnectProvider = null;
+        }
+        isWalletConnect = false;
+        wcDeepLink = null;
+        return; // Don't set globals if wrong chain
+      }
+    }
+
+    // Now safe to initialize globals
+    provider = new ethers.BrowserProvider(walletProvider);
+    signer = await provider.getSigner();
+    connectedAddress = await signer.getAddress();
+    connectedWalletProvider = walletProvider;
+    contract = new ethers.Contract(CONTRACT, ABI, signer);
+    updateWalletDisplay();
+
+    // Store handlers for cleanup on disconnect
+    walletEventHandlers = {
+      accountsChanged: () => window.location.reload(),
+      chainChanged: () => window.location.reload()
+    };
+    walletProvider.on('accountsChanged', walletEventHandlers.accountsChanged);
+    walletProvider.on('chainChanged', walletEventHandlers.chainChanged);
+
+    try {
+      localStorage.setItem('gweins_wallet', walletKey);
+      // Save wallet name for EIP-6963 reconnect (UUIDs change per session)
+      if (walletKey.startsWith('eip6963_')) {
+        const uuid = walletKey.replace('eip6963_', '');
+        const name = eip6963Providers.get(uuid)?.info?.name;
+        if (name) localStorage.setItem('gweins_wallet_name', name);
+      }
+    } catch (e) {}
+
+    await initPending();
+    doCheckName();
+
+  } catch (error) {
+    handleError(error);
+  } finally {
+    isConnecting = false;
+  }
+}
+
+function updateWcBanner() {
+  const existing = $('wcBanner');
+  if (existing) existing.remove();
+
+  if (isWalletConnect && connectedAddress) {
+    const banner = document.createElement('div');
+    banner.id = 'wcBanner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;z-index:9000;font-size:13px;';
+    banner.innerHTML = `
+      <span>📱 Connected via WalletConnect</span>
+      <button onclick="disconnectWallet()" style="background:#fff;color:#000;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Disconnect</button>
+    `;
+    document.body.prepend(banner);
+    document.body.style.paddingTop = '44px';
+  } else {
+    document.body.style.paddingTop = '';
+  }
+}
+
+async function updateWalletDisplay() {
+  if (!connectedAddress) {
+    $('walletBtn').textContent = 'connect';
+    updateWcBanner();
+    return;
+  }
+
+  // Show address initially
+  $('walletBtn').textContent = connectedAddress.slice(0, 6) + '...' + connectedAddress.slice(-4);
+  updateWcBanner();
+
+  // Try to resolve display name
+  try {
+    const rc = readContract || contract;
+    if (rc) {
+      const displayName = await rc.reverseResolve(connectedAddress);
+      if (displayName) {
+        $('walletBtn').textContent = displayName.toLowerCase();
+      }
+    }
+  } catch (e) {
+    // Keep showing address on error
+  }
+}
+
+function disconnectWallet() {
+  // Remove event listeners
+  if (connectedWalletProvider && walletEventHandlers) {
+    try {
+      connectedWalletProvider.removeListener('accountsChanged', walletEventHandlers.accountsChanged);
+      connectedWalletProvider.removeListener('chainChanged', walletEventHandlers.chainChanged);
+    } catch (e) {}
+  }
+  walletEventHandlers = null;
+
+  if (walletConnectProvider) {
+    try { walletConnectProvider.disconnect(); } catch (e) {}
+    walletConnectProvider = null;
+  }
+  provider = null;
+  signer = null;
+  connectedAddress = null;
+  connectedWalletProvider = null;
+  contract = null;
+  isWalletConnect = false;
+  wcDeepLink = null;
+  $('walletBtn').textContent = 'connect';
+  updateWcBanner();
+  closeWalletModal();
+  try { localStorage.removeItem('gweins_wallet'); localStorage.removeItem('gweins_wallet_name'); } catch (e) {}
+  $('commitBtn').disabled = true;
+  hideManage();
+  doCheckName();
+}
+
+function byteLength(str) {
+  return textEncoder.encode(str).length;
+}
+
+function escapeHtml(str) {
+  str = String(str ?? '');
+  return str.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function handleError(e) {
+  const msg = (e.message || e.reason || String(e)).toLowerCase();
+  // Silently ignore user rejections
+  if (msg.includes('user rejected') || msg.includes('user denied') || msg.includes('user cancelled')) {
+    $('status').classList.remove('show');
+    return;
+  }
+  // Extract clean error message
+  let cleanMsg = e.reason || e.shortMessage || e.message || 'Transaction failed';
+  // Remove verbose technical details
+  if (cleanMsg.includes('could not coalesce')) {
+    cleanMsg = 'Transaction failed';
+  }
+  showStatus(cleanMsg, 'error');
+}
+
+// Contract-compatible normalization (matches on-chain validation)
+// Used as fallback when ENSIP-15 rejects a name that the contract allows
+function normalizeLabelContract(s) {
+  s = s.trim();
+  if (!s) return null;
+
+  // Reject control chars, space, dot, DEL (matches contract)
+  if (/[\u0000-\u0020\u007f.]/.test(s)) return null;
+  if (s.startsWith('-') || s.endsWith('-')) return null;
+
+  // Lowercase ASCII only
+  const lowered = s.replace(/[A-Z]/g, ch => ch.toLowerCase());
+
+  const bytes = textEncoder.encode(lowered);
+  if (bytes.length < 1 || bytes.length > 255) return null;
+
+  return lowered;
+}
+
+// Normalize label using ENSIP-15 standard (via @adraffy/ens-normalize)
+// This handles: Unicode NFC, confusables, zero-width chars, emoji, bidirectional text
+// Falls back to contract-compatible normalization for edge cases
+function normalizeLabel(label) {
+  const s = label.trim();
+  if (!s || s.length > 255) return null;
+
+  try {
+    // Use ENSIP-15 normalization - this is the industry standard
+    // ens_normalize throws on invalid input (confusables, invisible chars, etc.)
+    if (typeof ens_normalize !== 'function') {
+      // Fallback if library not loaded yet
+      return normalizeLabelContract(s);
+    }
+
+    const normalized = ens_normalize(s);
+
+    // Our contract expects single label without dots
+    if (normalized.includes('.')) return null;
+
+    // Check byte length for contract compatibility
+    const bytes = textEncoder.encode(normalized);
+    if (bytes.length < 1 || bytes.length > 255) return null;
+
+    return normalized;
+  } catch (e) {
+    // ENSIP-15 rejected it, but contract might allow it
+    // Fall back to contract-compatible normalization for interoperability
+    return normalizeLabelContract(s);
+  }
+}
+
+// Normalize a full name (can include dots for subdomains)
+// Returns null if invalid, otherwise returns normalized full name
+function normalizeFullName(input) {
+  let s = input.trim().toLowerCase();
+  if (!s) return null;
+
+  // Remove .gwei suffix if present
+  if (s.endsWith('.gwei')) s = s.slice(0, -5);
+  if (!s) return null;
+
+  // Split into labels and normalize each
+  const labels = s.split('.');
+  const normalized = [];
+
+  for (const label of labels) {
+    const norm = normalizeLabel(label);
+    if (!norm) return null;
+    normalized.push(norm);
+  }
+
+  return normalized.join('.');
+}
+
+// Check if input looks like a subdomain (has dots, not just .gwei suffix)
+function isSubdomainInput(input) {
+  let s = input.trim().toLowerCase();
+  if (s.endsWith('.gwei')) s = s.slice(0, -5);
+  return s.includes('.');
+}
+
+// Get specific reason why a label is invalid (for better UX)
+function getNormalizationError(label) {
+  const s = label.trim();
+  if (!s) return 'Name cannot be empty';
+  if (s.length > 255) return 'Name too long (max 255 bytes)';
+
+  try {
+    if (typeof ens_normalize !== 'function') {
+      if (/[\s]/.test(s)) return 'Name cannot contain spaces';
+      if (s.startsWith('-') || s.endsWith('-')) return 'Name cannot start or end with hyphen';
+      return null;
+    }
+
+    const normalized = ens_normalize(s);
+    // Don't error on dots here - handled by isSubdomainInput
+
+    const bytes = textEncoder.encode(normalized);
+    if (bytes.length > 255) return 'Name too long (max 255 bytes)';
+
+    return null; // Valid
+  } catch (e) {
+    // ENSIP-15 errors are descriptive
+    const msg = e.message || 'Invalid characters';
+    if (msg.includes('disallowed')) return 'Contains disallowed characters';
+    if (msg.includes('invisible')) return 'Contains invisible characters';
+    if (msg.includes('confus')) return 'Contains confusable characters';
+    if (msg.includes('empty')) return 'Label cannot be empty';
+    if (msg.includes('underscore')) return 'Underscores not allowed';
+    if (msg.includes('hyphen')) return 'Invalid hyphen placement';
+    return msg.length < 50 ? msg : 'Invalid name format';
+  }
+}
+
+let checkDebounce = null;
+let checkVersion = 0;
+
+function checkName() {
+  clearTimeout(checkDebounce);
+  checkDebounce = setTimeout(() => doCheckName(), 350);
+}
+
+async function doCheckName() {
+  const raw = $('nameInput').value;
+  const availEl = $('availability');
+  const feeEl = $('feeDisplay');
+  const commitBtn = $('commitBtn');
+  const hasPending = !!loadPending();
+
+  if (!raw.trim()) {
+    availEl.classList.remove('show');
+    feeEl.textContent = '';
+    commitBtn.style.display = '';
+    commitBtn.disabled = true;
+    hideManage();
+    updateHash('');
+    return;
+  }
+
+  // Check if this is a subdomain lookup (e.g., "test.wns")
+  const isSubdomain = isSubdomainInput(raw);
+
+  if (isSubdomain) {
+    // Subdomain lookup - different flow
+    const fullName = normalizeFullName(raw);
+    if (!fullName) {
+      availEl.innerHTML = '<span class="taken">Invalid name format</span>';
+      availEl.classList.add('show');
+      feeEl.textContent = '';
+      commitBtn.style.display = 'none';
+      hideManage();
+      return;
+    }
+
+    const thisVersion = ++checkVersion;
+
+    try {
+      if (!readContract) await getRpc();
+      if (!readContract) {
+        availEl.innerHTML = '<span class="taken">RPC unavailable</span>';
+        availEl.classList.add('show');
+        return;
+      }
+
+      // Use contract's computeId for full name (handles recursive namehash)
+      const tokenId = await readContract.computeId(fullName + '.gwei');
+
+      if (thisVersion !== checkVersion) return;
+
+      // Check if it exists by trying to get owner
+      let owner = null;
+      try {
+        owner = await readContract.ownerOf(tokenId);
+      } catch (e) {
+        // Doesn't exist
+      }
+
+      if (thisVersion !== checkVersion) return;
+
+      const escaped = escapeHtml(fullName);
+
+      if (!owner) {
+        availEl.innerHTML = '<span class="available">' + escaped + '.gwei is not registered</span>' +
+          '<div class="view-link"><a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
+        feeEl.textContent = 'Subdomains are free (registered by parent owner)';
+      } else {
+        const osLink = `${NFT.asset}/${CONTRACT}/${tokenId}`;
+        availEl.innerHTML = '<span class="taken">' + escaped + '.gwei exists</span>' +
+          '<div class="view-link"><a href="' + osLink + '" target="_blank" rel="noopener">View on ' + NFT.name + ' →</a> · <a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
+        feeEl.textContent = '';
+        await showManage(tokenId, fullName);
+      }
+
+      availEl.classList.add('show');
+      commitBtn.style.display = 'none'; // Can't commit subdomains
+      updateHash(fullName);
+    } catch (e) {
+      if (thisVersion !== checkVersion) return;
+      availEl.innerHTML = '<span class="taken">Error checking subdomain</span>';
+      availEl.classList.add('show');
+      feeEl.textContent = '';
+      commitBtn.style.display = 'none';
+      hideManage();
+    }
+    return;
+  }
+
+  // Top-level name lookup
+  const name = normalizeLabel(raw);
+
+  if (!name) {
+    const reason = getNormalizationError(raw) || 'Invalid name';
+    availEl.innerHTML = '<span class="taken">' + escapeHtml(reason) + '</span>';
+    availEl.classList.add('show');
+    feeEl.textContent = '';
+    commitBtn.style.display = '';
+    commitBtn.disabled = true;
+    hideManage();
+    updateHash('');
+    return;
+  }
+
+  // Track this request version to ignore stale responses
+  const thisVersion = ++checkVersion;
+
+  try {
+    // Use read contract (public RPC) - no wallet needed
+    if (!readContract) await getRpc();
+    if (!readContract) {
+      availEl.innerHTML = '<span class="taken">RPC unavailable</span>';
+      availEl.classList.add('show');
+      return;
+    }
+
+    // Compute tokenId locally to batch all 4 calls into 1 RPC call
+    const tokenId = localComputeId(name);
+    const results = await multicall([
+      { fn: 'isAvailable', args: [name, 0] },
+      { fn: 'getFee', args: [byteLength(name)] },
+      { fn: 'getPremium', args: [tokenId] }
+    ]);
+    if (!results[0] || !results[1] || !results[2]) {
+      throw new Error('Failed to fetch name data');
+    }
+    const [available, fee, premium] = [results[0][0], results[1][0], results[2][0]];
+
+    // Ignore if a newer check has started
+    if (thisVersion !== checkVersion) return;
+
+    const escaped = escapeHtml(name);
+
+    if (available) {
+      availEl.innerHTML = '<span class="available">' + escaped + '.gwei is available</span>' +
+        '<div class="view-link"><a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
+      // Enable commit only if: available + no pending + wallet connected
+      commitBtn.style.display = '';
+      commitBtn.disabled = hasPending || !signer;
+      hideManage();
+
+      let feeText = ethers.formatEther(fee) + ' ETH';
+      if (premium > 0n) {
+        feeText += ' + ' + ethers.formatEther(premium) + ' ETH premium';
+      }
+      feeEl.textContent = 'Fee: ' + feeText;
+    } else {
+      const osLink = `${NFT.asset}/${CONTRACT}/${tokenId}`;
+      availEl.innerHTML = '<span class="taken">' + escaped + '.gwei is taken</span>' +
+        '<div class="view-link"><a href="' + osLink + '" target="_blank" rel="noopener">View on ' + NFT.name + ' →</a> · <a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
+      commitBtn.style.display = 'none';
+      feeEl.textContent = '';
+
+      // Show manage section with owner info
+      await showManage(tokenId, name);
+    }
+    availEl.classList.add('show');
+    updateHash(name);
+  } catch (e) {
+    // Ignore errors from stale requests
+    if (thisVersion !== checkVersion) return;
+    availEl.innerHTML = '<span class="taken">Error checking name</span>';
+    availEl.classList.add('show');
+    feeEl.textContent = '';
+    commitBtn.style.display = '';
+    commitBtn.disabled = true;
+    hideManage();
+    updateHash('');
+  }
+}
+
+async function doCommit() {
+  const name = normalizeLabel($('nameInput').value);
+  if (!name || !signer) return;
+
+  // Disable immediately to prevent double-clicks
+  $('commitBtn').disabled = true;
+
+  try {
+    showStatus('Creating commitment...', '');
+
+    const secret = ethers.hexlify(ethers.randomBytes(32));
+    const userAddr = await signer.getAddress();
+    const rc = readContract || contract;
+    const commitment = await rc.makeCommitment(name, userAddr, secret);
+
+    // Save pending BEFORE tx to persist even if user leaves during confirmation
+    const pending = {
+      name,
+      secret,
+      owner: userAddr,
+      commitment,
+      timestamp: Math.floor(Date.now() / 1000),
+      confirmed: false
+    };
+    savePending(pending);
+    displayPending(pending);
+
+    showStatus('Submitting commitment...', '');
+    const tx = await wcTransaction(contract.commit(commitment), 'Approve commitment');
+
+    // Save tx hash so timer can verify confirmation independently
+    pending.txHash = tx.hash;
+    savePending(pending);
+
+    showStatus('Waiting for confirmation...', '', tx.hash);
+
+    // Wait for confirmation with timeout fallback
+    let confirmed = false;
+    try {
+      await Promise.race([
+        waitForTx(tx).then(() => { confirmed = true; }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000))
+      ]);
+    } catch (e) {
+      // If timeout, the timer will poll for receipt - don't throw
+      if (e.message !== 'timeout') throw e;
+      console.log('waitForTx timed out, timer will poll for receipt');
+      showStatus('Waiting for confirmation... (checking)', '', tx.hash);
+      return; // Let timer handle it
+    }
+
+    // Mark as confirmed
+    if (confirmed) {
+      const currentPending = loadPending();
+      if (currentPending && currentPending.name === name) {
+        currentPending.confirmed = true;
+        currentPending.timestamp = Math.floor(Date.now() / 1000);
+        savePending(currentPending);
+      }
+      showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', tx.hash);
+    }
+  } catch (e) {
+    // Clear pending if tx failed (only if we saved one)
+    if (loadPending()?.name === name) {
+      clearPending();
+    } else {
+      // Re-enable commit if we failed before saving pending
+      $('commitBtn').disabled = false;
+    }
+    handleError(e);
+  }
+}
+
+async function doReveal() {
+  const pending = loadPending();
+  if (!pending || !signer) return;
+
+  try {
+    // Verify same wallet that committed
+    if (pending.owner && connectedAddress &&
+        pending.owner.toLowerCase() !== connectedAddress.toLowerCase()) {
+      showStatus(`Connect the wallet used to commit: ${pending.owner.slice(0,6)}...${pending.owner.slice(-4)}`, 'error');
+      return;
+    }
+
+    // Verify commitment was confirmed on-chain
+    if (pending.confirmed === false) {
+      showStatus('Commitment not yet confirmed. Please wait.', 'error');
+      return;
+    }
+
+    const elapsed = Math.floor(Date.now() / 1000) - pending.timestamp;
+    if (elapsed < MIN_COMMIT_AGE) {
+      showStatus('Wait ' + (MIN_COMMIT_AGE - elapsed) + ' more seconds', 'error');
+      return;
+    }
+    if (elapsed > MAX_COMMIT_AGE) {
+      showStatus('Commitment expired. Please commit again.', 'error');
+      clearPending();
+      return;
+    }
+
+    showStatus('Calculating fee...', '');
+    // Compute tokenId locally to batch all reads into 1 RPC call
+    const tokenId = localComputeId(pending.name);
+    const results = await multicall([
+      { fn: 'getFee', args: [byteLength(pending.name)] },
+      { fn: 'getPremium', args: [tokenId] }
+    ]);
+    if (!results[0] || !results[1]) {
+      throw new Error('Failed to fetch fee data');
+    }
+    const total = results[0][0] + results[1][0];
+
+    showStatus('Registering ' + pending.name + '.gwei...', '');
+    const tx = await wcTransaction(contract.reveal(pending.name, pending.secret, { value: total }), 'Approve registration');
+    const txHash = tx.hash;
+    showStatus('Waiting for confirmation...', '', txHash);
+    await waitForTx(tx);
+
+    clearPending();
+    showStatus(pending.name + '.gwei registered!', 'success', txHash);
+    doCheckName();
+  } catch (e) {
+    handleError(e);
+  }
+}
+
+function savePending(data) {
+  pendingCache = null; // Invalidate cache
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    pendingCache = data;
+    return true;
+  } catch (e) {
+    // iOS private browsing or storage full
+    console.warn('Cannot save pending:', e.message);
+    showStatus('Warning: Could not save commitment data. Do not clear site data or your secret will be lost!', 'error');
+    return false;
+  }
+}
+
+let pendingCache = null;
+
+function loadPending() {
+  if (pendingCache) return pendingCache;
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) return null;
+    pendingCache = JSON.parse(data);
+    return pendingCache;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function initPending() {
+  const pending = loadPending();
+  if (!pending) return null;
+
+  // Check if name is still available - if not, clear stale pending
+  try {
+    if (!readContract) await getRpc();
+    if (readContract) {
+      const available = await readContract.isAvailable(pending.name, 0);
+      if (!available) {
+        console.log('Pending name already registered, clearing');
+        clearPending();
+        return null;
+      }
+    }
+  } catch (e) {
+    console.log('Error checking pending name availability:', e.message);
+  }
+
+  displayPending(pending);
+  return pending;
+}
+
+function clearPending() {
+  pendingCache = null; // Invalidate cache
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  $('pending').classList.remove('show');
+  const oldBtn = $('manualCheckBtn'); if (oldBtn) oldBtn.remove();
+  pendingTimerId++; // Invalidate any running timer callbacks
+  if (pendingTimeoutId) { clearTimeout(pendingTimeoutId); pendingTimeoutId = null; }
+  // Re-enable commit if there was a name entered
+  if ($('nameInput').value.trim() && contract) doCheckName();
+}
+
+let pendingTimerId = 0; // Unique ID to prevent stale timer callbacks
+let pendingTimeoutId = null; // Actual setTimeout ID for cleanup
+
+function displayPending(pending) {
+  const el = $('pending');
+  if (!el) return;
+  el.classList.add('show');
+  $('pendingName').textContent = pending.name + '.gwei';
+  $('commitBtn').disabled = true;
+  // Start new timer chain with fresh ID
+  pendingTimerId++;
+  updateTimer(pendingTimerId);
+  setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+}
+
+async function updateTimer(timerId) {
+  // Stop if this timer chain is stale (new pending started)
+  if (timerId !== pendingTimerId) return;
+
+  const pending = loadPending();
+  if (!pending) return;
+
+  const elapsed = Math.floor(Date.now() / 1000) - pending.timestamp;
+  const remaining = MIN_COMMIT_AGE - elapsed;
+  const timerEl = $('pendingTimer');
+  const revealBtn = $('revealBtn');
+
+  if (pending.confirmed === false) {
+    // Explicitly false means commit tx is still pending
+    timerEl.textContent = 'Waiting for confirmation...';
+    revealBtn.disabled = true;
+
+    // Track poll attempts
+    if (!pending._pollAttempts) pending._pollAttempts = 0;
+
+    // If we have a txHash and have been waiting >15s, poll for receipt
+    if (pending.txHash && elapsed > 15) {
+      pending._pollAttempts++;
+      try {
+        const p = rpcProvider || await getRpc();
+        const receipt = await p.getTransactionReceipt(pending.txHash);
+        if (receipt) {
+          if (receipt.status === 1) {
+            // TX confirmed! Update pending
+            pending.confirmed = true;
+            pending.timestamp = Math.floor(Date.now() / 1000);
+            delete pending._pollAttempts;
+            savePending(pending);
+            showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', pending.txHash);
+          } else {
+            // TX reverted - clear pending and show error
+            showStatus('Commit transaction reverted. Please try again.', 'error', pending.txHash);
+            clearPending();
+            return;
+          }
+        } else if (pending._pollAttempts >= 30) {
+          // After ~30 failed polls, show manual check option
+          const esLink = `${EXPLORER}/tx/${pending.txHash}`;
+          timerEl.innerHTML = 'Could not verify tx. <a href="' + esLink + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">Check Etherscan</a>';
+          // Add manual check button if not already present
+          if (!$('manualCheckBtn')) {
+            const btn = document.createElement('button');
+            btn.id = 'manualCheckBtn';
+            btn.textContent = 'Retry Check';
+            btn.className = 'secondary';
+            btn.style.marginTop = '8px';
+            btn.onclick = () => { pending._pollAttempts = 0; updateTimer(timerId); };
+            timerEl.parentNode.insertBefore(btn, timerEl.nextSibling);
+          }
+          return; // Stop polling
+        }
+      } catch (e) {
+        // Ignore polling errors, will retry next tick
+      }
+    }
+  } else if (remaining > 0) {
+    timerEl.textContent = 'Ready in ' + remaining + 's';
+    revealBtn.disabled = true;
+  } else if (elapsed < MAX_COMMIT_AGE) {
+    const expires = MAX_COMMIT_AGE - elapsed;
+    const hrs = Math.floor(expires / 3600);
+    const mins = Math.floor((expires % 3600) / 60);
+    timerEl.textContent = 'Ready to reveal. Expires in ' + hrs + 'h ' + mins + 'm';
+    revealBtn.disabled = !signer;
+  } else {
+    timerEl.textContent = 'Expired';
+    revealBtn.disabled = true;
+  }
+
+  if (elapsed < MAX_COMMIT_AGE) {
+    pendingTimeoutId = setTimeout(() => updateTimer(timerId), 1000);
+  }
+}
+
+// Pause/resume timer when tab visibility changes
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (pendingTimeoutId) { clearTimeout(pendingTimeoutId); pendingTimeoutId = null; }
+  } else {
+    // Resume timer if there's a pending commitment
+    const pending = loadPending();
+    if (pending) updateTimer(pendingTimerId);
+  }
+});
+
+function showStatus(msg, type, txHash) {
+  const el = $('status');
+  if (txHash) {
+    const link = `${EXPLORER}/tx/${txHash}`;
+    el.innerHTML = escapeHtml(msg) + ` <a href="${link}" target="_blank" rel="noopener" style="color:inherit;">View tx →</a>`;
+  } else {
+    el.textContent = msg;
+  }
+  el.className = 'status show' + (type ? ' ' + type : '');
+}
+
+// Current managed token
+let currentTokenId = null;
+let currentTokenName = null;
+let isProcessing = false; // Prevent double-click on manage actions
+
+function hideManage() {
+  $('manage').classList.remove('show');
+  $('manageForm').classList.remove('show');
+  currentTokenId = null;
+  currentTokenName = null;
+}
+
+let manageVersion = 0;
+
+async function showManage(tokenId, name) {
+  currentTokenId = tokenId;
+  currentTokenName = name;
+  const thisManageVersion = ++manageVersion;
+
+  if (!rpcProvider && !readContract) { hideManage(); return; }
+
+  try {
+    // Common text record keys to display
+    const textKeys = ['url', 'email', 'description', 'com.twitter', 'com.github'];
+
+    // Batch all reads into one RPC call (including text records)
+    const results = await multicall([
+      { fn: 'ownerOf', args: [tokenId], allowFailure: true },
+      { fn: 'resolve', args: [tokenId], allowFailure: true },
+      { fn: 'records', args: [tokenId], allowFailure: true },
+      { fn: 'contenthash', args: [tokenId], allowFailure: true },
+      ...textKeys.map(key => ({ fn: 'text', args: [tokenId, key], allowFailure: true }))
+    ]);
+    const [owner, resolved, record, contentHash] = [
+      results[0]?.[0] || null,
+      results[1]?.[0] || null,
+      results[2] || null,
+      results[3]?.[0] || null
+    ];
+    // Extract text records
+    const textRecords = {};
+    textKeys.forEach((key, i) => {
+      const val = results[4 + i]?.[0];
+      if (val) textRecords[key] = val;
+    });
+
+    // Ignore stale results if user switched names
+    if (thisManageVersion !== manageVersion) return;
+
+    if (!owner) { hideManage(); return; }
+
+    const isOwner = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
+    const expiryDate = record?.expiresAt ? new Date(Number(record.expiresAt) * 1000).toLocaleDateString() : null;
+    const isTopLevel = record?.parent === 0n;
+
+    // Build info section
+    const addrLink = (addr) => `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;">${addr.slice(0, 8)}...${addr.slice(-6)}</a>`;
+    let infoHtml = `<div><span>Owner:</span>${addrLink(owner)}</div>`;
+    if (resolved && resolved !== ethers.ZeroAddress) {
+      infoHtml += `<div><span>Resolves to:</span>${addrLink(resolved)}</div>`;
+    }
+    if (contentHash && contentHash !== '0x' && contentHash.length > 2) {
+      const cid = decodeContenthash(contentHash);
+      if (GWEI_GATEWAY) {
+        const gatewayUrl = `https://${name}.${GWEI_GATEWAY}`;
+        infoHtml += `<div><span>Website:</span><a href="${gatewayUrl}" target="_blank" rel="noopener" style="color:inherit;">${gatewayUrl}</a></div>`;
+      }
+      if (cid) {
+        const short = cid.slice(0, 16) + '...' + cid.slice(-6);
+        infoHtml += `<div><span>Content:</span><a href="https://ipfs.io/ipfs/${escapeHtml(cid)}" target="_blank" rel="noopener" style="color:inherit;font-family:monospace;font-size:11px;">${escapeHtml(short)}</a></div>`;
+      } else if (!GWEI_GATEWAY) {
+        infoHtml += `<div><span>Content:</span><span style="opacity:0.6;font-family:monospace;font-size:11px;">${contentHash.slice(0, 18)}...</span></div>`;
+      }
+    }
+    if (expiryDate && isTopLevel) {
+      const expiryTs = Number(record.expiresAt) * 1000;
+      const daysLeft = Math.floor((expiryTs - Date.now()) / 86400000);
+      const expiryStyle = daysLeft < 30 ? ' style="color:#c00;font-weight:600;"' : '';
+      const daysText = daysLeft > 0 ? ` (${daysLeft} days left)` : ' (expired)';
+      infoHtml += `<div${expiryStyle}><span>Expires:</span>${expiryDate}${daysText}</div>`;
+    }
+    // Display text records
+    const textLabels = { url: 'URL', email: 'Email', description: 'Description', 'com.twitter': 'Twitter', 'com.github': 'GitHub' };
+    for (const [key, val] of Object.entries(textRecords)) {
+      const label = textLabels[key] || key;
+      const escaped = escapeHtml(val);
+      if (key === 'url') {
+        const href = val.startsWith('http') ? val : 'https://' + val;
+        infoHtml += `<div><span>${label}:</span><a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:inherit;">${escaped}</a></div>`;
+      } else if (key === 'com.twitter') {
+        const handle = val.startsWith('@') ? val : '@' + val;
+        infoHtml += `<div><span>${label}:</span><a href="https://x.com/${escapeHtml(val.replace('@',''))}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(handle)}</a></div>`;
+      } else if (key === 'com.github') {
+        infoHtml += `<div><span>${label}:</span><a href="https://github.com/${escaped}" target="_blank" rel="noopener" style="color:inherit;">${escaped}</a></div>`;
+      } else {
+        infoHtml += `<div><span>${label}:</span>${escaped}</div>`;
+      }
+    }
+    $('manageInfo').innerHTML = infoHtml;
+
+    // Build actions if owner
+    if (isOwner) {
+      let actionsHtml = `
+        <button onclick="showManageForm('transfer')">Transfer</button>
+        <button onclick="showManageForm('setAddr')">Set Recipient</button>
+        <button onclick="showManageForm('setContent')">Set Website</button>
+        <button onclick="showManageForm('setText')">Set Text</button>
+        <button onclick="showManageForm('subdomain')">Subdomain</button>
+        <button onclick="doSetPrimary()">Set as Display Name</button>
+      `;
+      if (regEnabled()) {
+        actionsHtml += `<button onclick="showManageForm('subSales')">Subdomain Sales</button>`;
+      }
+      if (isTopLevel) {
+        actionsHtml += `<button onclick="showManageForm('renew')">Renew</button>`;
+      }
+      $('manageActions').innerHTML = actionsHtml;
+    } else {
+      // renew() is permissionless — anyone can extend any name (incl. ones held by the registrar)
+      let nonOwnerHtml = '<span style="font-size:12px;opacity:0.5;">Connect as owner to manage</span>';
+      if (isTopLevel) {
+        nonOwnerHtml += `<button onclick="showManageForm('renew')" style="margin-top:8px;">Renew (anyone)</button>`;
+      }
+      $('manageActions').innerHTML = nonOwnerHtml;
+    }
+
+    $('manage').classList.add('show');
+    $('manageForm').classList.remove('show');
+  } catch (e) {
+    hideManage();
+  }
+}
+
+function showManageForm(action) {
+  const form = $('manageForm');
+  let html = '';
+
+  switch (action) {
+    case 'transfer':
+      html = `
+        <label>Recipient</label>
+        <input type="text" id="transferTo" placeholder="0x... or name.gwei" oninput="previewTransferRecipient()">
+        <div id="transferPreview" style="font-size:12px;margin-bottom:12px;display:none;"></div>
+        <button onclick="doTransfer()">Transfer</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+    case 'setAddr':
+      html = `
+        <label>Recipient Address</label>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Transfers to ${currentTokenName}.gwei will go to this address</div>
+        <input type="text" id="resolveAddr" placeholder="0x... (leave empty for self)">
+        <button onclick="doSetAddr()">Set Recipient</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+    case 'setContent':
+      html = `
+        <label>IPFS Content</label>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Enter IPFS CID to host a website at ${currentTokenName}.gwei</div>
+        <input type="text" id="contentHash" placeholder="QmXxx... bafxxx... or 0x (raw bytes)">
+        ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
+        <button onclick="doSetContent()">Set Website</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+    case 'setText':
+      html = `
+        <label>Key</label>
+        <input type="text" id="textKey" placeholder="e.g. url, email, description">
+        <label>Value</label>
+        <input type="text" id="textValue" placeholder="Value">
+        <button onclick="doSetText()">Set Text</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+    case 'subdomain':
+      html = `
+        <label>Subdomain Label</label>
+        <input type="text" id="subLabel" placeholder="e.g. blog">
+        <div style="font-size:12px;opacity:0.5;margin-bottom:12px;">{label}.${currentTokenName}.gwei</div>
+        <button onclick="doSubdomain()">Register Subdomain</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+    case 'subSales':
+      showSubSalesForm();
+      return;
+    case 'renew':
+      html = `
+        <div style="font-size:13px;margin-bottom:12px;">Extend registration for 1 year</div>
+        <button onclick="doRenew()">Renew</button>
+        <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
+      `;
+      break;
+  }
+
+  form.innerHTML = html;
+  form.classList.add('show');
+}
+
+async function resolveRecipient(input) {
+  // If it's already an address, return it
+  if (ethers.isAddress(input)) return { address: input, name: null };
+
+  // Check if it looks like a .gwei name
+  let name = input.trim();
+  if (name.endsWith('.gwei')) name = name.slice(0, -5);
+
+  // Normalize the name (supports both top-level and subdomains)
+  const normalized = normalizeFullName(name);
+  if (!normalized) return null;
+
+  try {
+    // Ensure we have a contract to query
+    if (!readContract) await getRpc();
+    const rc = readContract || contract;
+    if (!rc) return null;
+
+    // Use contract's computeId for proper subdomain support
+    const tokenId = await rc.computeId(normalized + '.gwei');
+    const resolved = await rc.resolve(tokenId);
+    if (!resolved || resolved === ethers.ZeroAddress) {
+      return null;
+    }
+    return { address: resolved, name: normalized + '.gwei' };
+  } catch (e) {
+    return null;
+  }
+}
+
+let transferPreviewDebounce = null;
+let transferPreviewVersion = 0;
+
+function previewTransferRecipient() {
+  const preview = $('transferPreview');
+  const input = $('transferTo').value.trim();
+
+  // Clear preview if empty or already an address
+  if (!input || ethers.isAddress(input)) {
+    preview.style.display = 'none';
+    return;
+  }
+
+  // Show loading for .gwei names
+  preview.innerHTML = '<span style="opacity:0.5;">Resolving...</span>';
+  preview.style.display = 'block';
+
+  clearTimeout(transferPreviewDebounce);
+  transferPreviewDebounce = setTimeout(async () => {
+    const thisVersion = ++transferPreviewVersion;
+
+    const result = await resolveRecipient(input);
+
+    // Ignore stale responses
+    if (thisVersion !== transferPreviewVersion) return;
+
+    if (result && result.name) {
+      const addrShort = result.address.slice(0, 10) + '...' + result.address.slice(-8);
+      preview.innerHTML = `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
+      preview.style.display = 'block';
+    } else {
+      preview.innerHTML = '<span style="color:#c00;">Could not resolve name</span>';
+      preview.style.display = 'block';
+    }
+  }, 300);
+}
+
+async function doTransfer() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const input = $('transferTo').value.trim();
+  if (!input) { showStatus('Recipient required', 'error'); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Resolving recipient...', '');
+    const result = await resolveRecipient(input);
+    if (!result) { showStatus('Could not resolve recipient', 'error'); return; }
+
+    const to = result.address;
+    const displayTo = result.name ? result.name : to.slice(0, 8) + '...' + to.slice(-4);
+    if (!confirm('Transfer ' + currentTokenName + '.gwei to ' + displayTo + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.')) {
+      return;
+    }
+    showStatus('Transferring to ' + displayTo + '...', '');
+    const tx = await wcTransaction(contract.transferFrom(connectedAddress, to, currentTokenId), 'Approve transfer');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Transferred!', 'success', tx.hash);
+    doCheckName();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doSetAddr() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const addr = $('resolveAddr').value.trim() || connectedAddress;
+  if (!ethers.isAddress(addr)) { showStatus('Invalid address', 'error'); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Setting address...', '');
+    const tx = await wcTransaction(contract.setAddr(currentTokenId, addr), 'Approve address update');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Recipient set!', 'success', tx.hash);
+    doCheckName();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doSetText() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const key = $('textKey').value.trim();
+  const value = $('textValue').value;
+  if (!key) { showStatus('Key required', 'error'); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Setting text record...', '');
+    const tx = await wcTransaction(contract.setText(currentTokenId, key, value), 'Approve text record');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Text record set!', 'success', tx.hash);
+    doCheckName(); // Refresh manage info to show updated text record
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Base58 alphabet (Bitcoin style)
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58Decode(str) {
+  const bytes = [];
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    const value = BASE58_ALPHABET.indexOf(char);
+    if (value === -1) throw new Error('Invalid base58 character');
+
+    let carry = value;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  // Handle leading zeros
+  for (let i = 0; i < str.length && str[i] === '1'; i++) {
+    bytes.push(0);
+  }
+  return new Uint8Array(bytes.reverse());
+}
+
+// RFC 4648 base32 (lowercase, no padding)
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+function base32Decode(str) {
+  str = str.toLowerCase().replace(/=+$/, '');
+  const output = [];
+  let bits = 0;
+  let value = 0;
+
+  for (let i = 0; i < str.length; i++) {
+    const idx = BASE32_ALPHABET.indexOf(str[i]);
+    if (idx === -1) throw new Error('Invalid base32 character');
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      output.push((value >> bits) & 0xff);
+    }
+  }
+  return new Uint8Array(output);
+}
+
+// Encode unsigned varint (used for ENSIP-7 contenthash protoCode)
+function encodeUvarint(x) {
+  let v = BigInt(x);
+  const out = [];
+  while (v >= 0x80n) {
+    out.push(Number((v & 0x7fn) | 0x80n));
+    v >>= 7n;
+  }
+  out.push(Number(v));
+  return Uint8Array.from(out);
+}
+
+function base32Encode(bytes) {
+  let bits = 0, value = 0, out = '';
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += BASE32_ALPHABET[(value >> bits) & 31];
+    }
+  }
+  if (bits > 0) out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  return out;
+}
+
+// Decode ENSIP-7 contenthash to human-readable CID
+function decodeContenthash(hex) {
+  try {
+    const bytes = ethers.getBytes(hex);
+    if (bytes.length < 3) return null;
+    // Read uvarint protocol code
+    let proto = 0, shift = 0, offset = 0;
+    for (; offset < bytes.length; offset++) {
+      proto |= (bytes[offset] & 0x7f) << shift;
+      shift += 7;
+      if (!(bytes[offset] & 0x80)) { offset++; break; }
+    }
+    if (proto !== 0xe3) return null; // only IPFS supported
+    const cidBytes = bytes.slice(offset);
+    // CIDv1: version(1) + codec + multihash
+    if (cidBytes[0] === 0x01) {
+      return 'b' + base32Encode(cidBytes); // base32 multibase prefix
+    }
+    return null;
+  } catch { return null; }
+}
+
+function encodeContenthash(input) {
+  let cid = input.trim();
+
+  // Raw bytes passthrough (for advanced users)
+  if (cid.startsWith('0x')) {
+    return ethers.getBytes(cid);
+  }
+
+  // Strip ipfs:// prefix
+  if (cid.startsWith('ipfs://')) cid = cid.slice(7);
+  if (cid.startsWith('/ipfs/')) cid = cid.slice(6);
+
+  let cidBytes;
+
+  if (cid.startsWith('Qm')) {
+    // CIDv0 - base58 encoded multihash
+    const multihash = base58Decode(cid);
+    // Convert to CIDv1 format: version(1) + codec(0x70=dag-pb) + multihash
+    cidBytes = new Uint8Array([0x01, 0x70, ...multihash]);
+  } else if (cid.startsWith('baf')) {
+    // CIDv1 - base32 encoded (bafy=dag-cbor, bafk=raw, bafyb=dag-pb, etc.)
+    // Remove 'b' multibase prefix and decode
+    cidBytes = base32Decode(cid.slice(1));
+  } else if (cid.startsWith('f')) {
+    // CIDv1 - base16 (hex) encoded
+    cidBytes = ethers.getBytes('0x' + cid.slice(1));
+  } else {
+    throw new Error('Unsupported CID format. Use Qm... or baf...');
+  }
+
+  // ENSIP-7 contenthash format: uvarint(protoCode) + CID bytes
+  // IPFS namespace protoCode = 0xe3, uvarint encoded as 0xe301
+  const IPFS_NS = 0xe3;
+  return ethers.concat([encodeUvarint(IPFS_NS), cidBytes]);
+}
+
+async function doSetContent() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const input = $('contentHash').value.trim();
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  if (!input) {
+    // Clear contenthash
+    try {
+      showStatus('Clearing website...', '');
+      const tx = await wcTransaction(contract.setContenthash(currentTokenId, '0x'), 'Approve clear website');
+      showStatus('Waiting for confirmation...', '', tx.hash);
+      await waitForTx(tx);
+      showStatus('Website cleared!', 'success', tx.hash);
+      $('manageForm').classList.remove('show');
+      doCheckName(); // Refresh to update manage section
+    } catch (e) {
+      handleError(e);
+    } finally {
+      isProcessing = false;
+      if (btn) btn.disabled = false;
+    }
+    return;
+  }
+
+  try {
+    const contenthash = encodeContenthash(input);
+    showStatus('Setting website...', '');
+    const tx = await wcTransaction(contract.setContenthash(currentTokenId, contenthash), 'Approve set website');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Website set!' + (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''), 'success', tx.hash);
+    $('manageForm').classList.remove('show');
+    doCheckName(); // Refresh to show updated website link
+  } catch (e) {
+    if (e.message?.includes('Unsupported CID')) {
+      showStatus(e.message, 'error');
+    } else {
+      handleError(e);
+    }
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doSetPrimary() {
+  if (isProcessing || !contract || !currentTokenId) return;
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Setting ' + currentTokenName + '.gwei as your display name...', '');
+    const tx = await wcTransaction(contract.setPrimaryName(currentTokenId), 'Approve primary name');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus(currentTokenName + '.gwei is now your display name!', 'success', tx.hash);
+    updateWalletDisplay();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doSubdomain() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const label = normalizeLabel($('subLabel').value);
+  if (!label) { showStatus('Invalid subdomain label', 'error'); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Registering subdomain...', '');
+    const tx = await wcTransaction(contract.registerSubdomain(label, currentTokenId), 'Approve subdomain');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus(label + '.' + currentTokenName + '.gwei registered!', 'success', tx.hash);
+    $('manageForm').classList.remove('show');
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ── Subdomain sales: let a name owner sell subdomains via the registrar (flash mode) ──
+// The owner keeps their name; the registrar borrows it per claim (needs operator approval).
+let subSalesFeeType = 'free';
+function selectFeeType(btn) {
+  subSalesFeeType = btn.dataset.feetype;
+  document.querySelectorAll('#manageForm .pay-option').forEach(b => b.classList.toggle('active', b === btn));
+  const pw = $('subSalesPriceWrap');
+  if (pw) pw.style.display = subSalesFeeType === 'eth' ? 'block' : 'none';
+}
+
+async function showSubSalesForm() {
+  const form = $('manageForm');
+  form.innerHTML = '<div style="opacity:0.5;font-size:12px;text-align:center;">Loading config…</div>';
+  form.classList.add('show');
+  try {
+    const provider = rpcProvider || await getRpc();
+    const reg = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, provider);
+    const nft = readContract || new ethers.Contract(CONTRACT, ABI, provider);
+    const [cfg, isApproved, ethBal] = await Promise.all([
+      reg.config(currentTokenId),
+      nft.isApprovedForAll(connectedAddress, REGISTRAR),
+      reg.ethBalance(connectedAddress)
+    ]);
+    const isConfigured = cfg.controller !== ethers.ZeroAddress && cfg.controller.toLowerCase() === connectedAddress.toLowerCase();
+    const hasActiveConfig = isConfigured && cfg.enabled;
+    const isErc20 = cfg.feeToken !== ethers.ZeroAddress;
+
+    let currentFeeType = 'free', currentPriceStr = '', currentPayoutStr = '';
+    if (hasActiveConfig && !isErc20 && cfg.price > 0n) { currentFeeType = 'eth'; currentPriceStr = ethers.formatEther(cfg.price); }
+    if (hasActiveConfig && cfg.payout !== ethers.ZeroAddress && cfg.payout.toLowerCase() !== connectedAddress.toLowerCase()) currentPayoutStr = cfg.payout;
+    subSalesFeeType = currentFeeType;
+
+    let statusHtml = '';
+    if (hasActiveConfig) {
+      const priceDesc = isErc20 ? 'a token fee' : (cfg.price === 0n ? 'Free' : ethers.formatEther(cfg.price) + ' ETH');
+      statusHtml = '<div style="padding:10px;background:var(--status-success);margin-bottom:12px;font-size:12px;">Currently enabled — ' + escapeHtml(priceDesc) + ' per subdomain</div>';
+    } else if (isConfigured) {
+      statusHtml = '<div style="padding:10px;background:var(--surface);margin-bottom:12px;font-size:12px;">Currently disabled</div>';
+    }
+    if (!isApproved) statusHtml += '<div style="padding:10px;background:var(--status-warning);margin-bottom:12px;font-size:11px;">Approval required — the registrar needs permission to use your name for minting. Your name stays in your wallet.</div>';
+    if (ethBal > 0n) statusHtml += '<div style="padding:10px;background:var(--surface);margin-bottom:12px;font-size:12px;">Claimable fees: ' + ethers.formatEther(ethBal) + ' ETH <button onclick="doWithdrawRegFees()" style="margin-left:8px;padding:4px 10px;font-size:11px;">Withdraw</button></div>';
+
+    const showPrice = currentFeeType === 'eth';
+    form.innerHTML = statusHtml +
+      '<label>Price</label>' +
+      '<div style="display:flex;gap:0;margin-bottom:12px;">' +
+        '<button type="button" class="pay-option' + (currentFeeType === 'free' ? ' active' : '') + '" data-feetype="free" onclick="selectFeeType(this)">Free</button>' +
+        '<button type="button" class="pay-option' + (currentFeeType === 'eth' ? ' active' : '') + '" data-feetype="eth" onclick="selectFeeType(this)">ETH</button>' +
+      '</div>' +
+      '<div id="subSalesPriceWrap" style="display:' + (showPrice ? 'block' : 'none') + ';">' +
+        '<label>Price per subdomain (ETH)</label>' +
+        '<input type="text" id="subSalesPrice" placeholder="0.01" value="' + escapeHtml(currentPriceStr) + '">' +
+      '</div>' +
+      '<label>Payout Address</label>' +
+      '<input type="text" id="subSalesPayout" placeholder="Defaults to you" value="' + escapeHtml(currentPayoutStr) + '">' +
+      '<button onclick="doConfigureSubSales()">Enable Subdomain Sales</button>' +
+      (hasActiveConfig ? '<button class="secondary" onclick="doDisableSubSales()">Disable</button>' : '') +
+      '<button class="secondary" onclick="$(\'manageForm\').classList.remove(\'show\')">Cancel</button>' +
+      '<div style="font-size:10px;opacity:0.4;margin-top:12px;">Your name stays in your wallet. The registrar borrows it to mint each subdomain, then returns it in the same transaction.</div>';
+  } catch (e) {
+    form.innerHTML = '<div style="color:#c00;font-size:12px;">Error loading config: ' + escapeHtml(e.message || String(e)) + '</div><button class="secondary" onclick="$(\'manageForm\').classList.remove(\'show\')" style="margin-top:8px;">Close</button>';
+  }
+}
+
+async function doConfigureSubSales() {
+  if (isProcessing || !currentTokenId) return;
+  if (!signer) { showStatus('Connect your wallet first', ''); toggleWallet(); return; }
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    let feeToken = ethers.ZeroAddress, price = 0n;
+    if (subSalesFeeType === 'eth') {
+      const priceStr = $('subSalesPrice')?.value.trim();
+      if (priceStr && priceStr !== '0') price = ethers.parseEther(priceStr);
+    }
+    const payoutAddr = $('subSalesPayout')?.value.trim() || ethers.ZeroAddress;
+    if (payoutAddr !== ethers.ZeroAddress && !ethers.isAddress(payoutAddr)) { showStatus('Invalid payout address', 'error'); return; }
+    // Flash mode needs operator approval so the registrar can borrow the name per claim.
+    const nft = readContract || contract;
+    const isApproved = await nft.isApprovedForAll(connectedAddress, REGISTRAR);
+    if (!isApproved) {
+      showStatus('Approving registrar...', '');
+      const approveTx = await wcTransaction(contract.setApprovalForAll(REGISTRAR, true), 'Approve registrar');
+      showStatus('Waiting for approval...', '', approveTx.hash);
+      await waitForTx(approveTx);
+    }
+    showStatus('Configuring subdomain sales...', '');
+    const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
+    const tx = await wcTransaction(registrar.configure(currentTokenId, payoutAddr, feeToken, price, true, ethers.ZeroAddress, 0), 'Approve configuration');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Subdomain sales enabled!', 'success', tx.hash);
+    $('manageForm').classList.remove('show');
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doDisableSubSales() {
+  if (isProcessing || !signer || !currentTokenId) return;
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Disabling subdomain sales...', '');
+    const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
+    const tx = await wcTransaction(registrar.disable(currentTokenId), 'Approve disable');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Subdomain sales disabled.', 'success', tx.hash);
+    $('manageForm').classList.remove('show');
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doWithdrawRegFees() {
+  if (isProcessing || !signer) return;
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Withdrawing fees...', '');
+    const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
+    const tx = await wcTransaction(registrar.withdrawETH(ethers.ZeroAddress), 'Approve withdrawal');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Fees withdrawn!', 'success', tx.hash);
+    showSubSalesForm();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doRenew() {
+  if (isProcessing || !currentTokenId) return;
+  if (!signer) { showStatus('Connect your wallet to renew', ''); toggleWallet(); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const rc = readContract || contract;
+    const fee = await rc.getFee(byteLength(currentTokenName));
+
+    showStatus('Renewing...', '');
+    const tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Renewed!', 'success', tx.hash);
+    doCheckName();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Send ETH functionality
+function toggleSend(event) {
+  event.preventDefault();
+  const form = $('sendForm');
+  const toggle = $('sendToggle');
+  if (form.classList.contains('show')) {
+    form.classList.remove('show');
+    toggle.textContent = 'send eth →';
+  } else {
+    form.classList.add('show');
+    toggle.textContent = '← hide';
+  }
+}
+
+let sendPreviewDebounce = null;
+let sendPreviewVersion = 0;
+
+function previewSendRecipient() {
+  const preview = $('sendPreview');
+  const input = $('sendTo').value.trim();
+
+  if (!input || ethers.isAddress(input)) {
+    preview.style.display = 'none';
+    return;
+  }
+
+  preview.innerHTML = '<span style="opacity:0.5;">Resolving...</span>';
+  preview.style.display = 'block';
+
+  clearTimeout(sendPreviewDebounce);
+  sendPreviewDebounce = setTimeout(async () => {
+    const thisVersion = ++sendPreviewVersion;
+    const result = await resolveRecipient(input);
+    if (thisVersion !== sendPreviewVersion) return;
+
+    if (result && result.name) {
+      const addrShort = result.address.slice(0, 10) + '...' + result.address.slice(-8);
+      preview.innerHTML = `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
+    } else {
+      preview.innerHTML = '<span style="color:#c00;">Could not resolve name</span>';
+    }
+  }, 300);
+}
+
+// Network selection for send
+let sendNetwork = 'direct';
+
+function setNetwork(net) {
+  sendNetwork = net;
+  $('netDirect').classList.toggle('active', net === 'direct');
+  $('netBase').classList.toggle('active', net === 'base');
+}
+
+// Base OptimismPortal for L1 -> L2 bridging
+const BASE_PORTAL = '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e';
+const BASE_PORTAL_ABI = [
+  'function depositTransaction(address _to, uint256 _value, uint64 _gasLimit, bool _isCreation, bytes _data) payable'
+];
+
+async function doSendEth() {
+  if (!signer) {
+    showStatus('Connect wallet first', 'error');
+    return;
+  }
+
+  const input = $('sendTo').value.trim();
+  const amountStr = $('sendAmount').value.trim();
+
+  // Allow empty recipient for Base (defaults to self)
+  if (!input && sendNetwork === 'direct') { showStatus('Recipient required', 'error'); return; }
+  if (!amountStr) { showStatus('Amount required', 'error'); return; }
+
+  let amount;
+  try {
+    amount = ethers.parseEther(amountStr);
+    if (amount <= 0n) throw new Error('Amount must be positive');
+  } catch (e) {
+    showStatus('Invalid amount', 'error');
+    return;
+  }
+
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    // Resolve recipient (or self if empty for Base)
+    let to, displayTo;
+    if (!input) {
+      to = connectedAddress;
+      displayTo = 'yourself';
+    } else {
+      showStatus('Resolving recipient...', '');
+      const result = await resolveRecipient(input);
+      if (!result) { showStatus('Could not resolve recipient', 'error'); return; }
+      to = result.address;
+      displayTo = result.name ? result.name : to.slice(0, 8) + '...';
+    }
+
+    const networkLabel = sendNetwork === 'base' ? ' on Base' : '';
+    if (!confirm('Send ' + amountStr + ' ETH to ' + displayTo + networkLabel + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.')) {
+      return;
+    }
+
+    if (sendNetwork === 'base') {
+      // Bridge to Base via OptimismPortal
+      showStatus('Bridging ' + amountStr + ' ETH to ' + displayTo + ' on Base...', '');
+      const portal = new ethers.Contract(BASE_PORTAL, BASE_PORTAL_ABI, signer);
+      const tx = await portal.depositTransaction(
+        to,           // recipient on Base
+        amount,       // value to receive on Base
+        100000n,      // gas limit for L2 tx
+        false,        // not a contract creation
+        '0x',         // no calldata
+        { value: amount }
+      );
+      showStatus('Waiting for confirmation...', '', tx.hash);
+      await waitForTx(tx);
+      showStatus('Bridged ' + amountStr + ' ETH to ' + displayTo + ' on Base! (arrives in ~1-2 min)', 'success', tx.hash);
+    } else {
+      // Direct mainnet transfer
+      showStatus('Sending ' + amountStr + ' ETH to ' + displayTo + '...', '');
+      const tx = await wcTransaction(signer.sendTransaction({ to, value: amount }), 'Approve transfer');
+      showStatus('Waiting for confirmation...', '', tx.hash);
+      await waitForTx(tx);
+      showStatus('Sent ' + amountStr + ' ETH to ' + displayTo + '!', 'success', tx.hash);
+    }
+
+    // Clear form
+    $('sendTo').value = '';
+    $('sendAmount').value = '';
+    $('sendPreview').style.display = 'none';
+  } catch (e) {
+    handleError(e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Verify name (anti-spoof)
+function toggleVerify(event) {
+  event.preventDefault();
+  const form = $('verifyForm');
+  const toggle = $('verifyToggle');
+  if (form.classList.contains('show')) {
+    form.classList.remove('show');
+    toggle.textContent = 'verify name →';
+  } else {
+    form.classList.add('show');
+    toggle.textContent = '← hide';
+  }
+}
+
+let verifyDebounce = null;
+let verifyVersion = 0;
+
+function doVerify() {
+  clearTimeout(verifyDebounce);
+  verifyDebounce = setTimeout(doVerifyNow, 300);
+}
+
+// Parse tokenId from various formats (raw number, hex, OpenSea URL, Etherscan URL)
+function parseTokenId(input) {
+  const s = input.trim();
+  if (!s) return null;
+
+  // Try direct BigInt (decimal or hex)
+  try {
+    if (s.startsWith('0x')) return BigInt(s);
+    if (/^\d+$/.test(s)) return BigInt(s);
+  } catch {}
+
+  // Extract from URL - look for last numeric sequence or hex
+  const hexMatch = s.match(/0x[0-9a-fA-F]+/);
+  if (hexMatch) {
+    try { return BigInt(hexMatch[0]); } catch {}
+  }
+
+  // Extract last run of digits (common in OpenSea/Etherscan URLs)
+  const numMatch = s.match(/(\d{10,})(?!.*\d{10,})/); // At least 10 digits to avoid false positives
+  if (numMatch) {
+    try { return BigInt(numMatch[1]); } catch {}
+  }
+
+  return null;
+}
+
+async function doVerifyNow() {
+  const thisVersion = ++verifyVersion;
+  const tokenIdInput = $('verifyTokenId').value.trim();
+  const expectedInput = $('verifyExpected').value.trim().toLowerCase();
+  const result = $('verifyResult');
+
+  if (!tokenIdInput) {
+    result.style.display = 'none';
+    return;
+  }
+
+  const tokenId = parseTokenId(tokenIdInput);
+  if (tokenId === null) {
+    result.innerHTML = '<span style="color:#c00;">Invalid token ID or URL</span>';
+    result.style.display = 'block';
+    return;
+  }
+
+  result.innerHTML = '<span style="opacity:0.5;">Checking...</span>';
+  result.style.display = 'block';
+
+  try {
+    if (!readContract) await getRpc();
+    const fullName = await readContract.getFullName(tokenId);
+
+    // Ignore stale results
+    if (thisVersion !== verifyVersion) return;
+
+    if (!fullName) {
+      result.innerHTML = '<span style="color:#c00;">Name not found for this token ID</span>';
+      return;
+    }
+
+    // Get the label (without .gwei suffix)
+    const label = fullName.endsWith('.gwei') ? fullName.slice(0, -5) : fullName;
+    const bytes = textEncoder.encode(label);
+    const charCount = [...label].length; // Unicode-aware character count
+    const byteCount = bytes.length;
+    const hexBytes = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+
+    // Use ENSIP-15 to check if name is valid/normalized
+    let ensipValid = false;
+    let ensipError = null;
+    let normalizedLabel = null;
+    if (typeof ens_normalize !== 'function') {
+      ensipError = 'ENSIP-15 library not loaded';
+    } else {
+      try {
+        normalizedLabel = ens_normalize(label);
+        ensipValid = (normalizedLabel === label);
+      } catch (e) {
+        ensipError = e.message || 'Invalid name';
+      }
+    }
+
+    let html = `<div style="padding:12px;background:var(--surface);border:1px solid var(--border-muted);">`;
+    html += `<div style="font-size:16px;font-weight:600;margin-bottom:8px;">${escapeHtml(fullName)}</div>`;
+    html += `<div style="font-size:12px;margin-bottom:4px;"><span style="opacity:0.5;">Characters:</span> ${charCount}</div>`;
+    html += `<div style="font-size:12px;margin-bottom:4px;"><span style="opacity:0.5;">Bytes:</span> ${byteCount}</div>`;
+    html += `<div style="font-size:11px;font-family:monospace;word-break:break-all;margin-bottom:8px;"><span style="opacity:0.5;">Hex:</span> ${hexBytes}</div>`;
+
+    // ENSIP-15 validation result
+    if (ensipError) {
+      html += `<div style="color:#c00;font-size:12px;margin-bottom:4px;">⚠️ ENSIP-15: ${escapeHtml(ensipError)} - likely spoof or invalid!</div>`;
+    } else if (!ensipValid) {
+      html += `<div style="color:#c00;font-size:12px;margin-bottom:4px;">⚠️ ENSIP-15: Not normalized (would become "${escapeHtml(normalizedLabel)}") - possible spoof!</div>`;
+    } else {
+      html += `<div style="color:#080;font-size:12px;margin-bottom:4px;">✓ ENSIP-15: Valid and normalized</div>`;
+    }
+
+    // Additional byte warning
+    if (byteCount !== charCount && ensipValid) {
+      html += `<div style="color:#b80;font-size:12px;margin-bottom:4px;">Note: Contains multi-byte characters (emoji or non-ASCII)</div>`;
+    }
+
+    // Compare with expected
+    if (expectedInput) {
+      const expectedNorm = normalizeLabel(expectedInput);
+      if (!expectedNorm) {
+        html += `<div style="color:#c00;font-size:12px;">✗ Expected name "${escapeHtml(expectedInput)}" is invalid</div>`;
+      } else {
+        const computedId = localComputeId(expectedNorm);
+
+        if (computedId === tokenId) {
+          html += `<div style="color:#080;font-size:12px;">✓ Matches expected name "${escapeHtml(expectedInput)}"</div>`;
+        } else {
+          html += `<div style="color:#c00;font-size:12px;">✗ Does NOT match "${escapeHtml(expectedInput)}" - different token ID!</div>`;
+          html += `<div style="font-size:11px;opacity:0.5;">Expected ID: ${computedId.toString().slice(0, 20)}...</div>`;
+        }
+      }
+    }
+
+    html += `</div>`;
+    result.innerHTML = html;
+
+  } catch (e) {
+    if (thisVersion !== verifyVersion) return;
+    result.innerHTML = `<span style="color:#c00;">Error: ${escapeHtml(e.message || 'Failed to fetch')}</span>`;
+  }
+}
+
+// Check for pending commit on page load (before wallet connects)
+initPending();
+
+// Auto-reconnect
+try {
+  const savedWallet = localStorage.getItem('gweins_wallet');
+  if (savedWallet) {
+    setTimeout(() => connectWithWallet(savedWallet), 100);
+  }
+} catch (e) {}
+
+// URL hash support: gwei.domains/#name auto-fills and checks that name
+// Supports both top-level (gwei.domains/#name) and subdomains (gwei.domains/#sub.name)
+function initFromHash() {
+  const hash = window.location.hash.slice(1); // Remove #
+  if (hash) {
+    let name = decodeURIComponent(hash);
+    if (name.endsWith('.gwei')) name = name.slice(0, -5);
+    if (name) {
+      $('nameInput').value = name;
+      checkName();
+    }
+  }
+}
+
+// Update URL hash and page title when name changes
+function updateHash(name) {
+  if (name) {
+    history.replaceState(null, '', '#' + encodeURIComponent(name));
+    document.title = name + '.gwei - GNS';
+  } else {
+    history.replaceState(null, '', window.location.pathname);
+    document.title = 'GNS';
+  }
+}
+
+// Copy share link to clipboard
+function copyShareLink() {
+  const name = normalizeFullName($('nameInput').value);
+  if (!name) return;
+  const url = window.location.origin + window.location.pathname + '#' + encodeURIComponent(name);
+  navigator.clipboard.writeText(url).then(() => {
+    showStatus('Link copied: ' + url, 'success');
+  }).catch(() => {
+    showStatus('Copy failed', 'error');
+  });
+}
+
+// Init from hash on load
+initFromHash();
+
+// Listen for hash changes (back/forward navigation)
+window.addEventListener('hashchange', initFromHash);
+
+// Startup sanity check - log issues for debugging on mobile
+console.log('GNS init:', {
+  ethers: typeof ethers !== 'undefined',
+  BigInt: typeof BigInt !== 'undefined',
+  ens_normalize: typeof ens_normalize === 'function',
+  localStorage: (() => { try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); return true; } catch(e) { return false; } })()
+});
+</script>
+
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
