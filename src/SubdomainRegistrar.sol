@@ -92,9 +92,6 @@ contract SubdomainRegistrar is IERC721Receiver {
         address payout; // receives ERC20 directly; ETH via ethBalance
     }
 
-    /// @dev The Gwei Name Service (NameNFT) this registrar issues subdomains on. Set once at
-    ///      deployment. Unlike the upstream wei-names registrar (which hardcoded a known mainnet
-    ///      address), gwei is deployed fresh, so the address is injected via the constructor.
     INameNFT public immutable name;
 
     mapping(uint256 => Config) public config;

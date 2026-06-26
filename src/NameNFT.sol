@@ -8,14 +8,8 @@ import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {ReentrancyGuard} from "soledge/utils/ReentrancyGuard.sol";
 
 /// @title NameNFT
-/// @notice ENS-style naming system for the .gwei TLD with ERC721 ownership.
+/// @notice ENS-style naming system for .gwei TLD with ERC721 ownership
 /// @dev Token ID = uint256(namehash). ENS-compatible resolution.
-///
-/// Ownerless & neutral by design:
-/// - There is NO owner, no admin, and no upgrade path. Nobody can change fees or pause it.
-/// - Fees are fixed constants and are NEVER collected: ETH paid to register/renew is locked
-///   in the contract forever (there is no withdraw function), i.e. effectively burned. The fee
-///   exists purely as a neutral, un-ruggable anti-squat cost — no party profits from it.
 ///
 /// Unicode Support:
 /// - This contract validates UTF-8 encoding and accepts valid UTF-8 labels (including emoji)
@@ -78,12 +72,6 @@ contract NameNFT is ERC721, ReentrancyGuard {
     uint256 constant GRACE_PERIOD = 90 days;
     uint256 constant MAX_SUBDOMAIN_DEPTH = 10;
     uint256 constant COIN_TYPE_ETH = 60;
-
-    // Fixed, immutable fee schedule — the same length-based schedule the live wei-names uses
-    // (shorter labels cost more, to make squatting premium names expensive). Unlike wei-names,
-    // these are `constant`: they can never be changed (no owner) and are never collected (no
-    // withdraw). ETH paid is locked in the contract forever, i.e. burned. Fee is keyed on the
-    // UTF-8 byte length of the label (so a 4-byte emoji pays the 4-byte tier).
     uint256 constant FEE_LEN1 = 0.5 ether; // 1-byte labels
     uint256 constant FEE_LEN2 = 0.1 ether; // 2-byte labels
     uint256 constant FEE_LEN3 = 0.05 ether; // 3-byte labels
@@ -463,7 +451,7 @@ contract NameNFT is ERC721, ReentrancyGuard {
 
         uint256 len = b.length;
 
-        // Strip .gwei suffix if present (case-insensitive: ".gwei")
+        // Strip .gwei suffix if present
         if (
             len >= 5 && b[len - 5] == 0x2e && (b[len - 4] == 0x67 || b[len - 4] == 0x47)
                 && (b[len - 3] == 0x77 || b[len - 3] == 0x57)
@@ -596,15 +584,9 @@ contract NameNFT is ERC721, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                              FEES (FIXED, BURNED)
+                            FEE MANAGEMENT
     //////////////////////////////////////////////////////////////*/
 
-    // There is intentionally no admin here: no setFee, no setPremium, no withdraw, no owner.
-    // Fees are fixed constants and the ETH they cost is locked in this contract forever.
-
-    /// @notice Registration/renewal fee for a label of `length` UTF-8 bytes.
-    /// @dev Fixed length-based schedule (1B:0.5 / 2B:0.1 / 3B:0.05 / 4B:0.01 / 5B+:0.0005 ETH),
-    ///      immutable and never collected — paid ETH is locked in the contract forever (burned).
     function getFee(uint256 length) public pure returns (uint256) {
         if (length == 1) return FEE_LEN1;
         if (length == 2) return FEE_LEN2;
@@ -613,9 +595,6 @@ contract NameNFT is ERC721, ReentrancyGuard {
         return DEFAULT_FEE;
     }
 
-    /// @notice Anti-snipe premium charged on top of the fee when re-registering a name in the
-    ///         window right after it fully expires. Starts at MAX_PREMIUM and decays linearly to
-    ///         zero over PREMIUM_DECAY_PERIOD. Like the fee, the premium is burned, not collected.
     function getPremium(uint256 tokenId) public view returns (uint256) {
         NameRecord storage record = records[tokenId];
         if (bytes(record.label).length == 0 || record.parent != 0) return 0;
