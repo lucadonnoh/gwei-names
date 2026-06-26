@@ -6,11 +6,11 @@
 //
 // Deploy on a `*.gwei.domains/*` route (see gateway/README.md).
 
-const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (Sepolia)
+const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
 const RPCS = [
-  'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://1rpc.io/sepolia',
-  'https://sepolia.drpc.org',
+  'https://ethereum-rpc.publicnode.com',
+  'https://eth.llamarpc.com',
+  'https://1rpc.io/eth',
 ];
 // Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
