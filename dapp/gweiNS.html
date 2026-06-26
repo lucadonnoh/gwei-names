@@ -733,13 +733,13 @@ window.onerror = function(msg, url, line) {
 const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
-    contract: '0x0000000000000000000000000000000000000000', // TODO: mainnet NameNFT
+    contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
     rpc: ['https://eth.llamarpc.com', 'https://ethereum.publicnode.com', 'https://1rpc.io/eth'],
     explorer: 'https://etherscan.io',
     nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
-    registrar: '0x0000000000000000000000000000000000000000', // TODO: mainnet SubdomainRegistrar
+    registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: null,
-    enabled: false
+    enabled: true
   },
   sepolia: {
     key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
