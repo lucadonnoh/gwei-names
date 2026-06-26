@@ -9,13 +9,13 @@ Zero runtime dependencies. Works in Node.js, browsers, and edge runtimes.
 ## Install
 
 ```bash
-npm install gns-utils
+npm install @donnoh/gns-utils
 ```
 
 ## Usage
 
 ```ts
-import { createGnsClient } from 'gns-utils'
+import { createGnsClient } from '@donnoh/gns-utils'
 
 const gns = createGnsClient()
 
@@ -53,7 +53,7 @@ const gns = createGnsClient({
 Standalone utility functions that don't make any RPC calls:
 
 ```ts
-import { isGwei, isAddress, normalizeName, parseLabel } from 'gns-utils'
+import { isGwei, isAddress, normalizeName, parseLabel } from '@donnoh/gns-utils'
 
 isGwei('alice.gwei')       // true
 isGwei('alice.eth')        // false
@@ -69,7 +69,7 @@ parseLabel('alice.gwei')   // 'alice'
 ## Constants
 
 ```ts
-import { GNS_CONTRACT, BASE_PORTAL, gnsAbi } from 'gns-utils'
+import { GNS_CONTRACT, BASE_PORTAL, gnsAbi } from '@donnoh/gns-utils'
 
 GNS_CONTRACT // '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' (Sepolia)
 BASE_PORTAL  // '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e'
@@ -78,7 +78,7 @@ BASE_PORTAL  // '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e'
 The full contract ABI is exported as `gnsAbi` for use with viem, ethers, wagmi, or any other web3 library:
 
 ```ts
-import { gnsAbi, GNS_CONTRACT } from 'gns-utils'
+import { gnsAbi, GNS_CONTRACT } from '@donnoh/gns-utils'
 import { createPublicClient, http } from 'viem'
 import { sepolia } from 'viem/chains'
 
