@@ -1,0 +1,10 @@
+name = "gwei-gateway"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Runs the worker for every subdomain of gwei.domains. Requires a proxied wildcard
+# DNS record for *.gwei.domains (see README.md). The apex gwei.domains and the
+# diff.gwei.domains service are unaffected (apex isn't matched; diff is proxied through).
+routes = [
+  { pattern = "*.gwei.domains/*", zone_name = "gwei.domains" },
+]
