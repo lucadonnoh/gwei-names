@@ -7,3 +7,6 @@ broadcast/
 test/
 src/
 audit/
+sdk/
+node_modules/
+dist/
