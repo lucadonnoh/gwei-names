@@ -13,12 +13,12 @@ GNS is an ownerless, neutral fork of [wei-names](https://github.com/z0r0z/wei-na
 
 The result is a neutral public good: fixed rules nobody can change, and money nobody can extract.
 
-**Status:** live on **Sepolia** (testnet); mainnet deployment TBD.
+**Status:** live + verified on **Ethereum mainnet** (and Sepolia — same addresses, since the same deployer + nonces produce the same CREATE addresses on both chains).
 
-| Contract | Sepolia address |
+| Contract | Address (mainnet + Sepolia) |
 |---|---|
-| `NameNFT.sol` | [`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`](https://sepolia.etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) |
-| `SubdomainRegistrar.sol` | [`0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c`](https://sepolia.etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) |
+| `NameNFT.sol` | [`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) |
+| `SubdomainRegistrar.sol` | [`0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c`](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) |
 
 `NameNFT` takes no constructor args; `SubdomainRegistrar`'s constructor takes the deployed `NameNFT` address.
 
@@ -670,7 +670,7 @@ AI-assisted audits performed on the upstream codebase:
 
 - **Dapp:** [gwei.domains](https://gwei.domains) (source: `dapp/gweiNS.html`)
 - **JS SDK:** [`gns-utils`](sdk/)
-- **Deployment (Sepolia):** [NameNFT](https://sepolia.etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://sepolia.etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c)
+- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c)
 - **Upstream (wei-names):** https://github.com/z0r0z/wei-names
 - **ENSIP-15:** https://docs.ens.domains/ensip/15/
 - **ens-normalize:** https://github.com/adraffy/ens-normalize.js
