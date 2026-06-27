@@ -494,6 +494,8 @@ body.modal-open { overflow: hidden; }
 .sites-list a:hover { text-decoration: underline; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
+.stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
+@keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
 .net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
 .net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
@@ -734,6 +736,8 @@ body.modal-open { overflow: hidden; }
 
 <!-- Network stats -->
 <div class="stats-section" id="statsSection" style="display:none;">
+  <div class="stats-loading" id="statsLoading">loading stats and recent websites…</div>
+  <div id="statsContent" style="display:none;">
   <div class="stats-label">stats</div>
   <div class="stats-row">
     <div class="stat"><div class="stat-num" id="statNames">—</div><div class="stat-lbl">names</div></div>
@@ -746,6 +750,7 @@ body.modal-open { overflow: hidden; }
     <div class="sites-label">recent websites</div>
     <div class="sites-list" id="sitesList"></div>
     <a class="sites-guide" href="https://gwei.domains/guide/" target="_blank" rel="noopener">→ host your own</a>
+  </div>
   </div>
 </div>
 
@@ -871,6 +876,7 @@ function statsHexUtf8(hex) {
 async function loadStats() {
   const sec = document.getElementById('statsSection');
   if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
+  sec.style.display = ''; // reveal the section with its loading line immediately, before any await
   let burned = null;
   try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
   // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}} }
@@ -902,7 +908,7 @@ async function loadStats() {
   const names = nameVals.filter(function (n) { return n.top; }).length;
   const subs = nameVals.length - names;
   const haveCounts = ok || nameVals.length > 0;
-  if (burned == null && !haveCounts) return;
+  if (burned == null && !haveCounts) { sec.style.display = 'none'; return; }
   document.getElementById('statNames').textContent = haveCounts ? names.toLocaleString() : '—';
   document.getElementById('statSubs').textContent = haveCounts ? subs.toLocaleString() : '—';
   document.getElementById('statBurned').textContent = burned == null ? '—' : (burned >= 0.1 ? burned.toFixed(2) : burned.toFixed(4));
@@ -938,7 +944,8 @@ async function loadStats() {
       sitesEl.style.display = '';
     } else sitesEl.style.display = 'none';
   }
-  sec.style.display = '';
+  const _l = document.getElementById('statsLoading'); if (_l) _l.style.display = 'none';
+  const _c = document.getElementById('statsContent'); if (_c) _c.style.display = '';
 }
 loadStats();
 
