@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Host a website on your .gwei name</title>
+<meta name="description" content="Store a site on IPFS, set it on your .gwei name, and serve it at yourname.gwei.domains — no servers, no DNS.">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; line-height: 1.65;
+    max-width: 680px; margin: 0 auto; padding: 44px 22px 80px; background: #ffffff; color: #1a1a1a;
+    -webkit-font-smoothing: antialiased; }
+  @media (prefers-color-scheme: dark) { body { background: #0a0a0a; color: #e6e6e0; } }
+  a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+  .back { font-size: 13px; opacity: 0.55; text-decoration: none; display: inline-block; margin-bottom: 40px; }
+  .back:hover { opacity: 1; }
+  .logo { width: 28px; height: 28px; display: block; margin-bottom: 18px; }
+  h1 { font-size: 28px; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 8px; }
+  .sub { opacity: 0.6; font-size: 15px; margin: 0 0 8px; }
+  h2 { font-size: 17px; margin: 40px 0 10px; letter-spacing: -0.01em; }
+  h2 .n { display: inline-block; width: 1.5em; opacity: 0.3; font-variant-numeric: tabular-nums; }
+  p, li { font-size: 15px; }
+  li { margin: 4px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+    background: rgba(127,127,127,0.14); padding: 1px 5px; border-radius: 3px; }
+  pre { background: rgba(127,127,127,0.09); border: 1px solid rgba(127,127,127,0.18);
+    padding: 14px 16px; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.75; }
+  .hint { opacity: 0.62; font-size: 13.5px; }
+  hr { border: none; border-top: 1px solid rgba(127,127,127,0.18); margin: 40px 0; }
+  .foot { margin-top: 52px; font-size: 13px; opacity: 0.5; }
+</style>
+</head>
+<body>
+  <a class="back" href="https://gwei.domains">← gwei.domains</a>
+
+  <svg class="logo" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-label="gwei" fill="currentColor">
+    <rect x="3" y="3" width="10" height="2"/>
+    <rect x="3" y="3" width="2" height="11"/>
+    <rect x="3" y="12" width="10" height="2"/>
+    <rect x="11" y="9" width="2" height="5"/>
+    <rect x="8" y="9" width="5" height="2"/>
+  </svg>
+
+  <h1>Host a website on your .gwei name</h1>
+  <p class="sub">No servers, no DNS. Store a site on IPFS, set it on your name once, and it's served at <code>yourname.gwei.domains</code>.</p>
+
+  <h2><span class="n">1</span>Build your site</h2>
+  <p>Make a self-contained site — at minimum an <code>index.html</code>. Keep links relative and put assets (CSS, images) next to it. A single folder is ideal.</p>
+  <pre><code>my-site/
+  index.html
+  style.css</code></pre>
+
+  <h2><span class="n">2</span>Pin it to IPFS</h2>
+  <p>IPFS is <em>content-addressed</em>: uploading produces a <strong>CID</strong> — a hash of the exact content. "Pinning" keeps it hosted so it stays reachable.</p>
+  <p>The easiest free option is <a href="https://bgipfs.com" target="_blank" rel="noopener">BuidlGuidl's IPFS</a> — no account, no key:</p>
+  <pre><code>npx bgipfs upload config init -u https://upload.bgipfs.com   # one-time
+npx bgipfs upload ./my-site                                  # -&gt; CID: bafy...</code></pre>
+  <p class="hint">Save the <strong>CID</strong> — that's all you need. Other options: Pinata, web3.storage, or your own <a href="https://docs.ipfs.tech/install/command-line/" target="_blank" rel="noopener">kubo</a> node (<code>ipfs add -r --cid-version 1 ./my-site</code>). Whatever you use, something has to keep the content <em>pinned</em>, or IPFS eventually garbage-collects it.</p>
+
+  <h2><span class="n">3</span>Set it on your name</h2>
+  <p>In the <a href="https://gwei.domains" target="_blank" rel="noopener">gwei.domains</a> dapp:</p>
+  <ol>
+    <li>Connect the wallet that owns the name.</li>
+    <li>Open your name &rarr; <strong>Set Website</strong>.</li>
+    <li>Paste the <strong>CID</strong> (<code>bafy...</code> or <code>Qm...</code>; an <code>ipfs://...</code> URL works too) and confirm the transaction.</li>
+  </ol>
+  <p>This stores the CID on-chain as an <strong>ENSIP-7 <code>contenthash</code></strong> — the same standard ENS uses. The stored bytes start with <code>0xe301</code>, the multicodec marker that means "this is IPFS."</p>
+
+  <h2><span class="n">4</span>Visit it</h2>
+  <p>Open <strong><code>yourname.gwei.domains</code></strong>. The gateway reads your name's <code>contenthash</code>, decodes the CID, and reverse-proxies the content from a public IPFS gateway. That's the whole stack.</p>
+
+  <hr>
+
+  <h2 style="margin-top:0;">Updating later</h2>
+  <p>IPFS content is immutable, so any edit to your site produces a <strong>new CID</strong>. Re-pin, then <strong>Set Website</strong> again with the new CID — your name always resolves to whatever CID you last set. The old version stays reachable at its old CID.</p>
+
+  <p class="foot">gwei name service &middot; ownerless &middot; <a href="https://gwei.domains">gwei.domains</a></p>
+</body>
+</html>

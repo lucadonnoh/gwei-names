@@ -492,6 +492,8 @@ body.modal-open { overflow: hidden; }
 .sites-list { display: flex; flex-direction: column; gap: 7px; }
 .sites-list a { font-size: 13px; color: var(--fg); text-decoration: none; text-align: center; letter-spacing: 0.01em; }
 .sites-list a:hover { text-decoration: underline; }
+.sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
+.sites-guide:hover { color: var(--fg); }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
 .net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
 .net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
@@ -743,12 +745,13 @@ body.modal-open { overflow: hidden; }
   <div class="stats-sites" id="statsSites" style="display:none;">
     <div class="sites-label">recent websites</div>
     <div class="sites-list" id="sitesList"></div>
+    <a class="sites-guide" href="https://gwei.domains/guide/" target="_blank" rel="noopener">→ host your own</a>
   </div>
 </div>
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
 <script>
