@@ -487,6 +487,11 @@ body.modal-open { overflow: hidden; }
 .hbar-fill { display: block; height: 100%; background: var(--fg-dim); min-width: 0; transition: width 0.5s ease; }
 .hbar-ct { width: 26px; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .stats-note { font-size: 10px; color: var(--fg-muted); text-align: center; margin-top: 14px; opacity: 0.75; }
+.stats-sites { margin-top: 30px; }
+.sites-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 14px; }
+.sites-list { display: flex; flex-direction: column; gap: 7px; }
+.sites-list a { font-size: 13px; color: var(--fg); text-decoration: none; text-align: center; letter-spacing: 0.01em; }
+.sites-list a:hover { text-decoration: underline; }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
 .net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
 .net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
@@ -735,6 +740,10 @@ body.modal-open { overflow: hidden; }
   </div>
   <div class="stats-hist" id="statsHist"></div>
   <div class="stats-note">names by length (bytes) · ★ = premium tier (1–4 chars)</div>
+  <div class="stats-sites" id="statsSites" style="display:none;">
+    <div class="sites-label">recent websites</div>
+    <div class="sites-list" id="sitesList"></div>
+  </div>
 </div>
 
 <!-- Footer -->
@@ -831,10 +840,11 @@ if (NET.chainId !== 1) {
 { const _en = document.getElementById('nftExplorerLink'); if (_en) _en.href = EXPLORER + '/address/' + CONTRACT; }
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
 
-// ── Network stats: scan NameRegistered logs (chunked + cached) for name counts + burn ──
+// ── Network stats: scan NameRegistered + ContenthashChanged logs (chunked + cached) ──
 // Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
 // Burned = NameNFT ETH balance (no withdraw exists, so collected fees are locked = burned).
-const STATS_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28';
+const STATS_NAME_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28'; // NameRegistered
+const STATS_CH_TOPIC = '0xe379c1624ed7e714cc0937528a32359d69d5281337765313dba4e081b72d7578';   // ContenthashChanged
 const STATS_RPCS = NET.logsRpcs || [];
 const STATS_DEPLOY = NET.deployBlock || 0;
 const STATS_KEY = 'gwei_stats_' + CHAIN_ID;
@@ -850,38 +860,51 @@ async function statsRpc(method, params) {
   }
   throw new Error('stats rpc ' + method);
 }
+function statsHexUtf8(hex) {
+  const b = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
+  try { return new TextDecoder().decode(b); } catch (e) { return ''; }
+}
 async function loadStats() {
   const sec = document.getElementById('statsSection');
   if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
   let burned = null;
   try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
-  let cache = { lastBlock: STATS_DEPLOY - 1, top: {}, subs: {} };
-  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
+  // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}} }
+  let cache = { lastBlock: STATS_DEPLOY - 1, names: {}, ch: {} };
+  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.names && c.ch && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
   let ok = false;
   try {
     const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
     for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
       const to = Math.min(from + 9000, latest);
-      const logs = await statsRpc('eth_getLogs', [{ address: CONTRACT, topics: [STATS_TOPIC],
+      const logs = await statsRpc('eth_getLogs', [{ address: CONTRACT,
+        topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC]],
         fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }]);
       for (const log of logs) {
         const h = log.data.slice(2);
-        const expires = BigInt('0x' + h.slice(64, 128));
-        if (expires > 0n) cache.top[log.topics[1]] = parseInt(h.slice(128, 192), 16);
-        else cache.subs[log.topics[1]] = 1;
+        if (log.topics[0] === STATS_NAME_TOPIC) {
+          const expires = BigInt('0x' + h.slice(64, 128));
+          const len = parseInt(h.slice(128, 192), 16);
+          cache.names[log.topics[1]] = { label: statsHexUtf8(h.slice(192, 192 + len * 2)), len: len, top: expires > 0n };
+        } else {
+          cache.ch[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
+        }
       }
     }
     cache.lastBlock = latest; ok = true;
     try { localStorage.setItem(STATS_KEY, JSON.stringify(cache)); } catch (e) {}
   } catch (e) {}
-  const names = Object.keys(cache.top).length, subs = Object.keys(cache.subs).length;
-  const haveCounts = ok || names || subs;
+  const nameVals = Object.values(cache.names);
+  const names = nameVals.filter(function (n) { return n.top; }).length;
+  const subs = nameVals.length - names;
+  const haveCounts = ok || nameVals.length > 0;
   if (burned == null && !haveCounts) return;
   document.getElementById('statNames').textContent = haveCounts ? names.toLocaleString() : '—';
   document.getElementById('statSubs').textContent = haveCounts ? subs.toLocaleString() : '—';
   document.getElementById('statBurned').textContent = burned == null ? '—' : (burned >= 0.1 ? burned.toFixed(2) : burned.toFixed(4));
   const hist = {}; let maxLen = 0, maxCt = 0;
-  for (const len of Object.values(cache.top)) { hist[len] = (hist[len] || 0) + 1; if (len > maxLen) maxLen = len; }
+  for (const n of nameVals) if (n.top) { hist[n.len] = (hist[n.len] || 0) + 1; if (n.len > maxLen) maxLen = n.len; }
   for (const ct of Object.values(hist)) if (ct > maxCt) maxCt = ct;
   const he = document.getElementById('statsHist');
   if (haveCounts && maxLen) {
@@ -892,6 +915,26 @@ async function loadStats() {
     }
     he.innerHTML = rows;
   } else he.innerHTML = '';
+  // recent websites: top-level names with a non-empty contenthash, newest-set first (gateway = mainnet only)
+  const sitesEl = document.getElementById('statsSites'), listEl = document.getElementById('sitesList');
+  if (sitesEl && listEl) {
+    const sites = Object.keys(cache.ch)
+      .filter(function (node) { return cache.ch[node].len > 0 && cache.names[node] && cache.names[node].top; })
+      .sort(function (a, b) { return cache.ch[b].block - cache.ch[a].block; })
+      .slice(0, 20)
+      .map(function (node) { return cache.names[node].label; });
+    if (CHAIN_ID === 1 && sites.length) {
+      listEl.innerHTML = '';
+      for (const label of sites) {
+        const a = document.createElement('a');
+        a.href = 'https://' + encodeURIComponent(label) + '.gwei.domains';
+        a.target = '_blank'; a.rel = 'noopener';
+        a.textContent = label + '.gwei.domains';
+        listEl.appendChild(a);
+      }
+      sitesEl.style.display = '';
+    } else sitesEl.style.display = 'none';
+  }
   sec.style.display = '';
 }
 loadStats();
