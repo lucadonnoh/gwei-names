@@ -473,6 +473,20 @@ body.modal-open { overflow: hidden; }
   text-decoration: underline;
 }
 .site-footer a:hover { opacity: 0.7; }
+.stats-section { margin: 56px 0 8px; }
+.stats-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 16px; }
+.stats-row { display: flex; gap: 12px; margin-bottom: 24px; }
+.stat { flex: 1; text-align: center; padding: 14px 6px; background: var(--surface); border: 1px solid var(--border-muted); }
+.stat-num { font-size: 24px; font-weight: 600; color: var(--fg); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat-lbl { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 6px; }
+.stats-hist { display: flex; flex-direction: column; gap: 4px; }
+.hbar { display: flex; align-items: center; gap: 9px; }
+.hbar-len { width: 34px; text-align: right; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.hbar-prem { color: var(--fg-dim); margin-left: 2px; }
+.hbar-track { flex: 1; height: 12px; background: var(--surface); border: 1px solid var(--border-muted); }
+.hbar-fill { height: 100%; background: var(--fg-dim); min-width: 0; transition: width 0.5s ease; }
+.hbar-ct { width: 26px; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.stats-note { font-size: 10px; color: var(--fg-muted); text-align: center; margin-top: 14px; opacity: 0.75; }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
 .net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
 .net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
@@ -711,6 +725,18 @@ body.modal-open { overflow: hidden; }
   </div>
 </div>
 
+<!-- Network stats -->
+<div class="stats-section" id="statsSection" style="display:none;">
+  <div class="stats-label">network stats</div>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-num" id="statNames">—</div><div class="stat-lbl">names</div></div>
+    <div class="stat"><div class="stat-num" id="statBurned">—</div><div class="stat-lbl">ETH burned</div></div>
+    <div class="stat"><div class="stat-num" id="statSubs">—</div><div class="stat-lbl">free subdomains</div></div>
+  </div>
+  <div class="stats-hist" id="statsHist"></div>
+  <div class="stats-note">names by length (bytes) · ★ = premium tier (1–4 chars)</div>
+</div>
+
 <!-- Footer -->
 <div class="site-footer">
 <a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
@@ -735,6 +761,8 @@ const NETWORKS = {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
     rpc: ['https://eth.llamarpc.com', 'https://ethereum.publicnode.com', 'https://1rpc.io/eth'],
+    logsRpcs: ['https://0xrpc.io/eth', 'https://gateway.tenderly.co/public/mainnet'],
+    deployBlock: 25403689,
     explorer: 'https://etherscan.io',
     nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
@@ -745,6 +773,8 @@ const NETWORKS = {
     key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
     rpc: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://1rpc.io/sepolia', 'https://sepolia.drpc.org'],
+    logsRpcs: ['https://gateway.tenderly.co/public/sepolia'],
+    deployBlock: 11142856,
     explorer: 'https://sepolia.etherscan.io',
     nft: { name: 'Etherscan', asset: 'https://sepolia.etherscan.io/nft', collection: 'https://sepolia.etherscan.io/token' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
@@ -800,6 +830,71 @@ if (NET.chainId !== 1) {
 { const _os = document.getElementById('osFooterLink'); if (_os) { _os.href = NFT.collection + '/' + CONTRACT; _os.textContent = NFT.name; } }
 { const _en = document.getElementById('nftExplorerLink'); if (_en) _en.href = EXPLORER + '/address/' + CONTRACT; }
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
+
+// ── Network stats: scan NameRegistered logs (chunked + cached) for name counts + burn ──
+// Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
+// Burned = NameNFT ETH balance (no withdraw exists, so collected fees are locked = burned).
+const STATS_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28';
+const STATS_RPCS = NET.logsRpcs || [];
+const STATS_DEPLOY = NET.deployBlock || 0;
+const STATS_KEY = 'gwei_stats_' + CHAIN_ID;
+async function statsRpc(method, params) {
+  for (const url of STATS_RPCS) {
+    try {
+      const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j.result !== undefined) return j.result;
+    } catch (e) {}
+  }
+  throw new Error('stats rpc ' + method);
+}
+async function loadStats() {
+  const sec = document.getElementById('statsSection');
+  if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
+  let burned = null;
+  try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
+  let cache = { lastBlock: STATS_DEPLOY - 1, top: {}, subs: {} };
+  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
+  let ok = false;
+  try {
+    const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
+    for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
+      const to = Math.min(from + 9000, latest);
+      const logs = await statsRpc('eth_getLogs', [{ address: CONTRACT, topics: [STATS_TOPIC],
+        fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }]);
+      for (const log of logs) {
+        const h = log.data.slice(2);
+        const expires = BigInt('0x' + h.slice(64, 128));
+        if (expires > 0n) cache.top[log.topics[1]] = parseInt(h.slice(128, 192), 16);
+        else cache.subs[log.topics[1]] = 1;
+      }
+    }
+    cache.lastBlock = latest; ok = true;
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(cache)); } catch (e) {}
+  } catch (e) {}
+  const names = Object.keys(cache.top).length, subs = Object.keys(cache.subs).length;
+  const haveCounts = ok || names || subs;
+  if (burned == null && !haveCounts) return;
+  document.getElementById('statNames').textContent = haveCounts ? names.toLocaleString() : '—';
+  document.getElementById('statSubs').textContent = haveCounts ? subs.toLocaleString() : '—';
+  document.getElementById('statBurned').textContent = burned == null ? '—' : (burned >= 0.1 ? burned.toFixed(2) : burned.toFixed(4));
+  const hist = {}; let maxLen = 0, maxCt = 0;
+  for (const len of Object.values(cache.top)) { hist[len] = (hist[len] || 0) + 1; if (len > maxLen) maxLen = len; }
+  for (const ct of Object.values(hist)) if (ct > maxCt) maxCt = ct;
+  const he = document.getElementById('statsHist');
+  if (haveCounts && maxLen) {
+    let rows = '';
+    for (let l = 1; l <= maxLen; l++) {
+      const ct = hist[l] || 0, w = maxCt ? ct / maxCt * 100 : 0, star = l <= 4 ? '<span class="hbar-prem">★</span>' : '';
+      rows += '<div class="hbar"><span class="hbar-len">' + l + star + '</span><span class="hbar-track"><span class="hbar-fill" style="width:' + w + '%"></span></span><span class="hbar-ct">' + ct + '</span></div>';
+    }
+    he.innerHTML = rows;
+  } else he.innerHTML = '';
+  sec.style.display = '';
+}
+loadStats();
 
 // ── Free names: claim <label>.<FREE_ROOT>.gwei free via the SubdomainRegistrar ──
 const REGISTRAR_ABI = [
