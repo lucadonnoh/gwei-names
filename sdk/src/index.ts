@@ -1,6 +1,7 @@
 export { createGnsClient } from './client.js'
 export type { GnsClient, GnsTx } from './client.js'
 export type { RpcConfig } from './rpc.js'
+export { MAINNET_RPCS, SEPOLIA_RPCS } from './rpc.js'
 export { gnsAbi } from './abi.js'
 export {
   GNS_CONTRACT,

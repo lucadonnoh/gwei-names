@@ -1,4 +1,5 @@
-// Gwei Name Service is currently deployed on Sepolia only; pass a custom contract+rpc via config for other networks.
+// Gwei Name Service is live at this same address on Ethereum mainnet and Sepolia. The default RPC
+// targets mainnet (canonical); pass a custom contract+rpc via config to target another network.
 export const GNS_CONTRACT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' as const
 
 /** Namehash of the `.gwei` TLD node. */

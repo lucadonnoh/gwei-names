@@ -1,10 +1,18 @@
 import { GNS_CONTRACT } from './constants.js'
 
-const DEFAULT_RPCS = [
+// GNS is live at the same address on Ethereum mainnet and Sepolia. The default targets mainnet
+// (canonical); pass `rpc: SEPOLIA_RPCS` — or any endpoint — via config to target Sepolia instead.
+export const MAINNET_RPCS = [
+  'https://ethereum-rpc.publicnode.com',
+  'https://0xrpc.io/eth',
+  'https://gateway.tenderly.co/public/mainnet',
+]
+export const SEPOLIA_RPCS = [
+  'https://gateway.tenderly.co/public/sepolia',
   'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://1rpc.io/sepolia',
   'https://sepolia.drpc.org',
 ]
+const DEFAULT_RPCS = MAINNET_RPCS
 
 const RPC_TIMEOUT = 5_000
 

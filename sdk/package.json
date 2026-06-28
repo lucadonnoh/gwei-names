@@ -1,6 +1,6 @@
 {
   "name": "@donnoh/gns-utils",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Utilities for the Gwei Name Service (GNS) — resolve .gwei names, reverse resolve addresses, and more.",
   "publishConfig": {
     "access": "public"

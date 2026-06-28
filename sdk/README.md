@@ -4,7 +4,7 @@ Utilities for the [Gwei Name Service](https://gwei.domains) (GNS). Resolve `.gwe
 
 Zero runtime dependencies. Works in Node.js, browsers, and edge runtimes.
 
-> Gwei Name Service is currently deployed on **Sepolia** only. Pass a custom `contract` + `rpc` via config to target other networks.
+> Gwei Name Service is live on **Ethereum mainnet** (and Sepolia, at the same address). The client defaults to mainnet; pass `rpc: SEPOLIA_RPCS` — or any endpoint — via config to target Sepolia.
 
 ## Install
 
@@ -36,7 +36,7 @@ The `.gwei` suffix is optional — `gns.resolve('name')` and `gns.resolve('name.
 
 ## Custom RPC
 
-By default, the client uses free public Sepolia RPC endpoints with automatic fallback. You can provide your own:
+By default, the client uses free public **mainnet** RPC endpoints with automatic fallback. Provide your own, or switch networks with the exported presets:
 
 ```ts
 // Single RPC
@@ -46,6 +46,10 @@ const gns = createGnsClient({ rpc: 'https://my-paid-rpc.com' })
 const gns = createGnsClient({
   rpc: ['https://primary-rpc.com', 'https://fallback-rpc.com']
 })
+
+// Target Sepolia instead of mainnet (same contract address)
+import { SEPOLIA_RPCS } from '@donnoh/gns-utils'
+const sepoliaGns = createGnsClient({ rpc: SEPOLIA_RPCS })
 ```
 
 ## Helpers
@@ -71,7 +75,7 @@ parseLabel('alice.gwei')   // 'alice'
 ```ts
 import { GNS_CONTRACT, BASE_PORTAL, gnsAbi } from '@donnoh/gns-utils'
 
-GNS_CONTRACT // '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' (Sepolia)
+GNS_CONTRACT // '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' (same on mainnet + Sepolia)
 BASE_PORTAL  // '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e'
 ```
 
@@ -80,9 +84,9 @@ The full contract ABI is exported as `gnsAbi` for use with viem, ethers, wagmi, 
 ```ts
 import { gnsAbi, GNS_CONTRACT } from '@donnoh/gns-utils'
 import { createPublicClient, http } from 'viem'
-import { sepolia } from 'viem/chains'
+import { mainnet } from 'viem/chains'
 
-const client = createPublicClient({ chain: sepolia, transport: http() })
+const client = createPublicClient({ chain: mainnet, transport: http() })
 
 const owner = await client.readContract({
   address: GNS_CONTRACT,
@@ -100,7 +104,7 @@ Creates a GNS client instance.
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `rpc` | `string \| string[]` | Custom RPC endpoint(s). Defaults to free public Sepolia endpoints with fallback. |
+| `rpc` | `string \| string[]` | Custom RPC endpoint(s). Defaults to free public mainnet endpoints with fallback; `SEPOLIA_RPCS` / `MAINNET_RPCS` presets are exported. |
 | `contract` | `` `0x${string}` `` | Override the GNS contract address. Defaults to `GNS_CONTRACT`. |
 
 Returns a `GnsClient` with the following methods:

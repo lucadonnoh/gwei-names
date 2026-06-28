@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { createGnsClient } from './client.js'
 import { GNS_CONTRACT } from './constants.js'
+import { SEPOLIA_RPCS } from './rpc.js'
 
-// Integration tests — these hit real Ethereum RPC endpoints
-// and resolve against the live GNS contract on Sepolia.
+// Integration tests — these hit real Ethereum RPC endpoints and resolve against the live GNS
+// contract. The default RPC is now mainnet, so these pin to Sepolia, where the fixtures live.
 
-const gns = createGnsClient()
+const gns = createGnsClient({ rpc: SEPOLIA_RPCS })
 
 describe('createGnsClient', () => {
   it('creates a client with default config', () => {
@@ -36,7 +37,7 @@ describe('resolve', () => {
   it('resolves a known .gwei name to an address', async () => {
     // "test.gwei" resolves to a known address on Sepolia
     const result = await gns.resolve('test.gwei')
-    assert.equal(result, '0x30710E0CFF3530bB6D34C5bAAAf9c11267B56FC6')
+    assert.equal(result?.toLowerCase(), '0x30710E0CFF3530bB6D34C5bAAAf9c11267B56FC6'.toLowerCase())
   })
 
   it('resolves with or without .gwei suffix', async () => {
