@@ -930,7 +930,7 @@ async function loadStats() {
     const sites = Object.keys(cache.ch)
       .filter(function (node) { return cache.ch[node].len > 0 && cache.names[node] && cache.names[node].top; })
       .sort(function (a, b) { return cache.ch[b].block - cache.ch[a].block; })
-      .slice(0, 20)
+      .slice(0, 50)
       .map(function (node) { return cache.names[node].label; });
     if (CHAIN_ID === 1 && sites.length) {
       listEl.innerHTML = '';
