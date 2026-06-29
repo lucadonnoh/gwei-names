@@ -1143,7 +1143,8 @@ async function waitForTx(tx, timeoutMs = 90000) {
 
 // Multicall3 for batching RPC calls
 const MULTICALL3_ABI = [
-  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])'
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])',
+  'function aggregate3Value(tuple(address target, bool allowFailure, uint256 value, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])'
 ];
 const iface = new ethers.Interface(ABI);
 
@@ -2236,6 +2237,8 @@ function showStatus(msg, type, txHash) {
 // Current managed token
 let currentTokenId = null;
 let currentTokenName = null;
+let currentExpiry = null;     // bigint unix seconds (top-level names); null otherwise
+let currentRenewFee = null;   // bigint getFee(label byte length), cached per name
 let isProcessing = false; // Prevent double-click on manage actions
 
 function hideManage() {
@@ -2243,6 +2246,8 @@ function hideManage() {
   $('manageForm').classList.remove('show');
   currentTokenId = null;
   currentTokenName = null;
+  currentExpiry = null;
+  currentRenewFee = null;
 }
 
 let manageVersion = 0;
@@ -2250,6 +2255,7 @@ let manageVersion = 0;
 async function showManage(tokenId, name) {
   currentTokenId = tokenId;
   currentTokenName = name;
+  currentRenewFee = null; // fee depends on label length — refetch per name
   const thisManageVersion = ++manageVersion;
 
   if (!rpcProvider && !readContract) { hideManage(); return; }
@@ -2287,6 +2293,7 @@ async function showManage(tokenId, name) {
     const isOwner = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
     const expiryDate = record?.expiresAt ? new Date(Number(record.expiresAt) * 1000).toLocaleDateString() : null;
     const isTopLevel = record?.parent === 0n;
+    currentExpiry = record?.expiresAt != null ? BigInt(record.expiresAt) : null;
 
     // Build info section
     const addrLink = (addr) => `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;">${addr.slice(0, 8)}...${addr.slice(-6)}</a>`;
@@ -2423,7 +2430,9 @@ function showManageForm(action) {
       return;
     case 'renew':
       html = `
-        <div style="font-size:13px;margin-bottom:12px;">Extend registration for 1 year</div>
+        <label>Years to extend</label>
+        <input type="number" id="renewYears" value="1" min="1" max="25" step="1" oninput="previewRenew()">
+        <div id="renewPreview" style="font-size:13px;margin:10px 0;line-height:1.7;opacity:0.85;">…</div>
         <button onclick="doRenew()">Renew</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
       `;
@@ -2432,6 +2441,45 @@ function showManageForm(action) {
 
   form.innerHTML = html;
   form.classList.add('show');
+  if (action === 'renew') previewRenew();
+}
+
+// Read the years input (clamped to 1..25). Each on-chain renew() extends by
+// exactly one REGISTRATION_PERIOD (365 days), so N years = N renew() calls.
+function renewYearsValue() {
+  let years = parseInt(($('renewYears') || {}).value, 10);
+  if (!Number.isFinite(years) || years < 1) years = 1;
+  if (years > 25) years = 25;
+  return years;
+}
+
+// Live projection for the renew form: new expiration date + total cost.
+async function previewRenew() {
+  const el = $('renewPreview');
+  if (!el) return;
+  const years = renewYearsValue();
+  // Fee depends only on label length, so fetch once per name and cache.
+  if (currentRenewFee == null && currentTokenName) {
+    try {
+      const rc = readContract || contract;
+      currentRenewFee = await rc.getFee(byteLength(currentTokenName));
+    } catch { /* leave null; cost line is omitted */ }
+  }
+  const REG_PERIOD = 365n * 24n * 3600n; // matches contract REGISTRATION_PERIOD
+  const lines = [];
+  if (currentExpiry != null && currentExpiry > 0n) {
+    const newExp = currentExpiry + BigInt(years) * REG_PERIOD;
+    const d = new Date(Number(newExp) * 1000);
+    lines.push(`New expiration: <b>${d.toLocaleDateString()}</b>`);
+  }
+  if (currentRenewFee != null) {
+    const total = currentRenewFee * BigInt(years);
+    lines.push(`Total: <b>${ethers.formatEther(total)} ETH</b>`);
+  }
+  if (years > 1) {
+    lines.push(`<span style="opacity:0.6;">${years}× renewal batched into one transaction (Multicall3)</span>`);
+  }
+  el.innerHTML = lines.join('<br>') || '…';
 }
 
 async function resolveRecipient(input) {
@@ -2944,17 +2992,39 @@ async function doRenew() {
   if (isProcessing || !currentTokenId) return;
   if (!signer) { showStatus('Connect your wallet to renew', ''); toggleWallet(); return; }
 
+  const years = renewYearsValue();
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     const rc = readContract || contract;
     const fee = await rc.getFee(byteLength(currentTokenName));
 
-    showStatus('Renewing...', '');
-    const tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
-    showStatus('Waiting for confirmation...', '', tx.hash);
+    showStatus(years > 1 ? `Renewing +${years} years…` : 'Renewing…', '');
+    let tx;
+    if (years === 1) {
+      tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
+    } else {
+      // Batch N renew() calls into a single tx via Multicall3. The sub-calls
+      // run in order within the same tx, so each reads the expiresAt the
+      // previous one wrote → +N years. Exact fee per call means renew()'s
+      // refund branch never fires (no excess stuck in Multicall3).
+      const renewData = iface.encodeFunctionData('renew', [currentTokenId]);
+      const calls = Array.from({ length: years }, () => ({
+        target: CONTRACT,
+        allowFailure: false,
+        value: fee,
+        callData: renewData,
+      }));
+      const mc = new ethers.Contract(MULTICALL3, MULTICALL3_ABI, signer);
+      tx = await wcTransaction(
+        mc.aggregate3Value(calls, { value: fee * BigInt(years) }),
+        `Approve renewal (+${years} years)`
+      );
+    }
+    showStatus('Waiting for confirmation…', '', tx.hash);
     await waitForTx(tx);
-    showStatus('Renewed!', 'success', tx.hash);
+    showStatus(years > 1 ? `Renewed +${years} years!` : 'Renewed!', 'success', tx.hash);
+    currentRenewFee = null;
     doCheckName();
   } catch (e) {
     handleError(e);
