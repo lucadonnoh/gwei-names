@@ -2399,7 +2399,7 @@ function showManageForm(action) {
     case 'setContent':
       html = `
         <label>Website content</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">IPFS CID to host a website at ${currentTokenName}.gwei — Swarm bzz:// also supported</div>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, or a Swarm bzz:// reference.</div>
         <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), or bzz://… (Swarm)">
         ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
