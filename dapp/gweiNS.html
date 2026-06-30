@@ -2398,9 +2398,9 @@ function showManageForm(action) {
       break;
     case 'setContent':
       html = `
-        <label>IPFS Content</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Enter IPFS CID to host a website at ${currentTokenName}.gwei</div>
-        <input type="text" id="contentHash" placeholder="QmXxx... bafxxx... or 0x (raw bytes)">
+        <label>Website content</label>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">IPFS CID to host a website at ${currentTokenName}.gwei — Swarm bzz:// also supported</div>
+        <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), or bzz://… (Swarm)">
         ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -2729,6 +2729,13 @@ function encodeContenthash(input) {
   // Raw bytes passthrough (for advanced users)
   if (cid.startsWith('0x')) {
     return ethers.getBytes(cid);
+  }
+
+  // Swarm (bzz://) reference → swarm-ns contenthash (e4 01 01 fa 01 1b 20 || 32-byte hash)
+  if (cid.startsWith('bzz://')) {
+    const hash = cid.slice(6).replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('Invalid Swarm reference (expected 64 hex characters).');
+    return ethers.getBytes('0xe40101fa011b20' + hash);
   }
 
   // Strip ipfs:// prefix
