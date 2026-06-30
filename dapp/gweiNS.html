@@ -494,6 +494,20 @@ body.modal-open { overflow: hidden; }
 .sites-list a:hover { text-decoration: underline; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
+.integrations { margin: 56px 0 8px; }
+.int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 16px; }
+.int-list { display: flex; flex-direction: column; gap: 12px; }
+.int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease; }
+.int-card:hover { border-color: var(--fg-dim); }
+.int-head { display: flex; align-items: center; gap: 9px; }
+.int-logo svg { width: 18px; height: 18px; display: block; }
+.int-name { font-size: 15px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
+.int-tag { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); border: 1px solid var(--border-muted); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.int-desc { font-size: 12.5px; color: var(--fg-muted); line-height: 1.6; margin: 10px 0 12px; }
+.int-desc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.int-links { display: flex; gap: 14px; flex-wrap: wrap; }
+.int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
+.int-links a:hover { text-decoration: underline; }
 .stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
 @keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
@@ -731,6 +745,26 @@ body.modal-open { overflow: hidden; }
       <button class="modal-close" onclick="closeWalletModal()">&times;</button>
     </div>
     <div class="modal-body" id="walletOptions"></div>
+  </div>
+</div>
+
+<!-- Integrations -->
+<div class="integrations" id="integrations">
+  <div class="int-label">integrations</div>
+  <div class="int-list">
+    <div class="int-card">
+      <div class="int-head">
+        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M16 4 L8 17 L16 13 L24 17 Z" fill="#10b981"/><path d="M16 28 L8 19 L16 15 L24 19 Z" fill="#059669"/></svg></span>
+        <span class="int-name">dapp3</span>
+        <span class="int-tag">browser extension</span>
+      </div>
+      <p class="int-desc">Open <code>.gwei</code> sites like any other website, verified locally. It resolves names against Ethereum with a Helios light client and serves them from your own IPFS node. No public gateway, no hijackable DNS, nothing to trust in the middle.</p>
+      <div class="int-links">
+        <a href="https://dapp3.eth.sh/" target="_blank" rel="noopener">Website ↗</a>
+        <a href="https://chromewebstore.google.com/detail/dapp3eth/gagojfdpbmahciaapdcejmmaeehgpmib" target="_blank" rel="noopener">Chrome Web Store ↗</a>
+        <a href="https://github.com/apoorvlathey/dapp3" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </div>
   </div>
 </div>
 
