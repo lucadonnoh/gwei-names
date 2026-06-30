@@ -2,7 +2,7 @@
 // stored at that name's on-chain `contenthash`.
 //
 // For each request it: reads the label from the Host, asks the NameNFT contract for the name's
-// contenthash, decodes the IPFS CID, and reverse-proxies the content from a public IPFS gateway.
+// contenthash, decodes it (IPFS or Swarm), and reverse-proxies the content from a public gateway.
 // Resolved name→CID lookups and fetched content are cached at the edge (Cloudflare Cache API);
 // every proxied response is hardened with security headers.
 //
@@ -18,6 +18,14 @@ const RPCS = [
 ];
 // Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
+// Public Swarm (bzz) gateways that serve bare-hash content. NB: api.gateway.ethswarm.org
+// blanket-forbids bare-hash access (302 → bzz.link/forbidden); these two don't.
+const SWARM_GATEWAYS = ['https://gateway.ethswarm.org', 'https://download.gateway.ethswarm.org'];
+// Storage protocol → how to fetch + label it. Picked from the contenthash codec.
+const PROTOCOLS = {
+  ipfs: { gateways: IPFS_GATEWAYS, prefix: '/ipfs/', header: 'x-ipfs-cid' },
+  swarm: { gateways: SWARM_GATEWAYS, prefix: '/bzz/', header: 'x-swarm-reference' },
+};
 // Subdomains that are real services, not gwei names — proxied through so the wildcard route
 // doesn't shadow them.
 const RESERVED = {
@@ -102,10 +110,10 @@ function page(title, body, status, cache = 'public, max-age=60') {
 }
 
 // Resolve a gwei name to its contenthash, caching the result. Returns one of:
-//   { cid }                     — IPFS website
-//   { state: 'none' }           — no contenthash set
-//   { state: 'nonipfs' }        — contenthash present but not IPFS
-//   { error: 'rpc' }            — RPC lookup failed (never cached; a retry recovers)
+//   { kind: 'ipfs'|'swarm', ref } — website (IPFS CID or Swarm bzz hash)
+//   { state: 'none' }             — no contenthash set
+//   { state: 'unsupported' }      — contenthash present but not IPFS or Swarm
+//   { error: 'rpc' }              — RPC lookup failed (never cached; a retry recovers)
 async function resolveName(name, rpcs, cache, ctx) {
   const key = new Request(`${CACHE_BASE}/resolve/${encodeURIComponent(name)}`);
   const cached = await cache.match(key);
@@ -119,7 +127,9 @@ async function resolveName(name, rpcs, cache, ctx) {
   const chRes = await ethCall('0x' + SEL_CONTENTHASH + idRes.slice(2), rpcs);
   if (!chRes) return { error: 'rpc' };
 
-  // Decode the contenthash → IPFS CID. ENS contenthash for IPFS = e301 || <cidv1 bytes>.
+  // Decode the contenthash → storage reference.
+  //   IPFS:  e301 || <cidv1 bytes>
+  //   Swarm: e4 01 01 fa 01 1b 20 || <32-byte bzz hash>   (swarm-ns / cidv1 / swarm-manifest / keccak256)
   const b = chRes.slice(2);
   const len = parseInt(b.slice(64, 128), 16) || 0;
   let result;
@@ -127,11 +137,16 @@ async function resolveName(name, rpcs, cache, ctx) {
     result = { state: 'none' };
   } else {
     const chHex = b.slice(128, 128 + len * 2);
-    if (!chHex.startsWith('e301')) result = { state: 'nonipfs' };
-    else result = { cid: 'b' + base32(hexToBytes(chHex.slice(4))) };
+    if (chHex.startsWith('e301')) {
+      result = { kind: 'ipfs', ref: 'b' + base32(hexToBytes(chHex.slice(4))) };
+    } else if (chHex.startsWith('e40101fa011b20')) {
+      result = { kind: 'swarm', ref: chHex.slice(14) };
+    } else {
+      result = { state: 'unsupported' };
+    }
   }
 
-  const ttl = result.cid ? RESOLVE_TTL : RESOLVE_NEG_TTL;
+  const ttl = result.kind ? RESOLVE_TTL : RESOLVE_NEG_TTL;
   ctx.waitUntil(
     cache.put(
       key,
@@ -178,15 +193,15 @@ export default {
     if (r.state === 'none') {
       return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains">set one →</a></p>`, 404);
     }
-    if (r.state === 'nonipfs') {
-      return page(name, '<p>This name points to a non-IPFS contenthash.</p>', 415);
+    if (r.state === 'unsupported') {
+      return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS and Swarm).</p>', 415);
     }
-    const cid = r.cid;
+    const proto = PROTOCOLS[r.kind];
 
-    // 2. Reverse-proxy the content from an IPFS gateway.
-    for (const gw of IPFS_GATEWAYS) {
+    // 2. Reverse-proxy the content from the matching storage gateway (IPFS or Swarm).
+    for (const gw of proto.gateways) {
       try {
-        const upstream = await fetch(`${gw}/ipfs/${cid}${url.pathname}${url.search}`, {
+        const upstream = await fetch(`${gw}${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
           headers: { accept: request.headers.get('accept') || '*/*' },
           redirect: 'follow',
         });
@@ -194,7 +209,7 @@ export default {
           const headers = harden(new Headers(upstream.headers));
           headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
           headers.set('x-gwei-name', name);
-          headers.set('x-ipfs-cid', cid);
+          headers.set(proto.header, r.ref);
           const resp = new Response(upstream.body, { status: upstream.status, headers });
           // Only full 200 GETs are cacheable; failures and partials are not.
           if (request.method === 'GET' && upstream.status === 200) {
@@ -204,6 +219,6 @@ export default {
         }
       } catch (_) {}
     }
-    return page(name, '<p>Content is set but couldn’t be fetched from IPFS right now.</p>', 504, 'no-store');
+    return page(name, '<p>Content is set but couldn’t be fetched right now.</p>', 504, 'no-store');
   },
 };

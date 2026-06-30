@@ -34,7 +34,10 @@ const DONNOH_CID = 'bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644'
 const DONNOH_CH = 'e301' + toHex(base32Decode(DONNOH_CID.slice(1))); // strip 'b' multibase prefix
 const CH_IPFS = abiBytes(DONNOH_CH);                 // e301 || cidv1  → ipfs
 const CH_NONE = abiBytes('');                        // zero-length    → no website
-const CH_NONIPFS = abiBytes('e5010172002408011220'); // e501...        → ipns/non-ipfs codec
+const CH_UNSUP = abiBytes('e5010172002408011220');   // e501...        → ipns (unsupported codec)
+// Swarm: e40101fa011b20 || 32-byte bzz hash. Conall's real conalloreilly.eth hash.
+const SWARM_HASH = '28175db97b612938e66b21834ac6e1355e95602f9726d026b719c58d55880a4b';
+const CH_SWARM = abiBytes('e40101fa011b20' + SWARM_HASH);
 const TOKEN_ID = '0x' + pad32('1234');               // any 32-byte computeId() result
 
 // ---- faithful-ish Cache API mock --------------------------------------------
@@ -69,7 +72,7 @@ function makeCache() {
 // ---- fetch mock -------------------------------------------------------------
 // handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
-  const calls = { rpc: 0, ipfs: 0, reserved: 0, rpcUrls: [], ipfsUrls: [] };
+  const calls = { rpc: 0, ipfs: 0, swarm: 0, reserved: 0, rpcUrls: [], ipfsUrls: [], swarmUrls: [] };
   const fn = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.url;
     if (init && init.method === 'POST' && typeof init.body === 'string' && init.body.includes('eth_call')) {
@@ -83,6 +86,10 @@ function makeFetch(handlers) {
     if (url.includes('/ipfs/')) {
       calls.ipfs++; calls.ipfsUrls.push(url);
       return handlers.ipfs ? handlers.ipfs(url) : new Response('content', { status: 200 });
+    }
+    if (url.includes('/bzz/')) {
+      calls.swarm++; calls.swarmUrls.push(url);
+      return handlers.swarm ? handlers.swarm(url) : new Response('swarm-content', { status: 200 });
     }
     calls.reserved++;
     return handlers.reserved ? handlers.reserved(url) : new Response('reserved-origin', { status: 200 });
@@ -173,12 +180,30 @@ test('no contenthash → 404, escaped, negatively cached', async () => {
   assert.equal(fetchMock.calls.ipfs, 0);
 });
 
-test('non-IPFS contenthash → 415', async () => {
+test('unsupported contenthash codec (e.g. IPNS) → 415', async () => {
   const cache = makeCache();
-  const fetchMock = makeFetch({ rpc: rpcReturning(CH_NONIPFS) });
-  const res = await invoke('https://swarmy.gwei.domains/', { cache, fetchMock });
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_UNSUP) });
+  const res = await invoke('https://ipnsy.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 415);
-  assert.match(await res.text(), /non-IPFS/);
+  assert.match(await res.text(), /unsupported/i);
+});
+
+test('Swarm (bzz) contenthash: resolves + proxies from a Swarm gateway', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_SWARM),
+    swarm: () => new Response('<h1>swarm site</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  });
+  const res = await invoke('https://conall.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>swarm site</h1>');
+  assert.equal(res.headers.get('x-gwei-name'), 'conall.gwei');
+  assert.equal(res.headers.get('x-swarm-reference'), SWARM_HASH);
+  // routed to the Swarm gateway's /bzz/ path with the decoded hash; no IPFS fetch
+  assert.equal(fetchMock.calls.swarmUrls[0], `https://gateway.ethswarm.org/bzz/${SWARM_HASH}/`);
+  assert.equal(fetchMock.calls.ipfs, 0);
+  // security headers apply to Swarm content too
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
 });
 
 test('RPC failure → 502 no-store and is NOT cached (retry re-resolves)', async () => {
