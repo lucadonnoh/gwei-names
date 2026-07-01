@@ -838,7 +838,7 @@ const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
-    rpc: ['https://eth.llamarpc.com', 'https://ethereum.publicnode.com', 'https://1rpc.io/eth'],
+    rpc: ['https://eth.llamarpc.com', 'https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
     logsRpcs: ['https://0xrpc.io/eth', 'https://gateway.tenderly.co/public/mainnet'],
     deployBlock: 25403689,
     explorer: 'https://etherscan.io',
@@ -1454,7 +1454,7 @@ async function connectWithWallet(walletKey) {
         projectId: '1e8390ef1c1d8a185e035912a1409749',
         chains: [CHAIN_ID],
         showQrModal: true,
-        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
+        rpcMap: { [CHAIN_ID]: 'https://ethereum-rpc.publicnode.com' },
         metadata: {
           name: 'Gwei Name Service',
           description: 'Register .gwei names',
