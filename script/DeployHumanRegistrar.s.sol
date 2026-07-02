@@ -37,10 +37,16 @@ contract DeployHumanRegistrar is Script {
 
     function run() external returns (HumanRegistrar hr, uint256 humanId) {
         humanId = INameOps(NAME_NFT).computeId("zkpassport.gwei");
+        // Domain the proof binds to. "gwei.domains" for prod; set HR_DOMAIN=localhost for local testing.
+        string memory hrDomain = vm.envOr("HR_DOMAIN", string("gwei.domains"));
+        // allowDevMode MUST be false on mainnet. Set HR_ALLOW_DEVMODE=true only for a Sepolia mock test.
+        bool allowDevMode = vm.envOr("HR_ALLOW_DEVMODE", false);
 
         vm.startBroadcast();
 
-        hr = new HumanRegistrar(IZKPassportVerifier(VERIFIER), ISubdomainRegistrar(REGISTRAR), humanId);
+        hr = new HumanRegistrar(
+            IZKPassportVerifier(VERIFIER), ISubdomainRegistrar(REGISTRAR), humanId, hrDomain, allowDevMode
+        );
 
         // Re-point zkpassport.gwei's gate at the new registrar: free, flash mode, gate balance 1.
         // payout = address(0) → the registrar defaults it to the caller (the owner).
@@ -53,6 +59,8 @@ contract DeployHumanRegistrar is Script {
         vm.stopBroadcast();
 
         console.log("HumanRegistrar    :", address(hr));
+        console.log("domain            :", hrDomain);
+        console.log("allowDevMode      :", allowDevMode);
         console.log("zkpassport.gwei id     :", humanId);
         console.log("gate reconfigured : gateToken = HumanRegistrar, minGateBalance = 1, free, flash");
     }

@@ -83,7 +83,7 @@ contract HumanRegistrarTest is Test {
         _registerName("zkpassport", owner);
 
         hr = new HumanRegistrar(
-            IZKPassportVerifier(address(mock)), ISubdomainRegistrar(address(registrar)), humanId
+            IZKPassportVerifier(address(mock)), ISubdomainRegistrar(address(registrar)), humanId, "gwei.domains", false
         );
 
         // Owner gates the registrar on the HumanRegistrar: free, flash-mode, minGateBalance 1.
@@ -111,6 +111,11 @@ contract HumanRegistrarTest is Test {
     // Well-formed but empty proof params; MockZKPassport ignores their contents.
     function _params() internal pure returns (ProofVerificationParams memory p) {}
 
+    // Params flagged as dev-mode (a mock passport); claim() must reject these.
+    function _devParams() internal pure returns (ProofVerificationParams memory p) {
+        p.serviceConfig.devMode = true;
+    }
+
     function _sub(string memory label) internal view returns (uint256) {
         return name.computeId(string.concat(label, ".zkpassport.gwei"));
     }
@@ -124,8 +129,7 @@ contract HumanRegistrarTest is Test {
 
         assertEq(subId, _sub("alice"), "returns the subId");
         assertEq(name.ownerOf(_sub("alice")), alice, "alice owns alice.zkpassport.gwei");
-        assertEq(hr.claimedBy(UID_A), alice, "passport recorded to alice");
-        assertEq(hr.claimedName(alice), subId, "name recorded for alice");
+        assertTrue(hr.claimed(UID_A), "passport recorded as claimed");
     }
 
     function test_same_passport_cannot_claim_twice() public {
@@ -187,6 +191,31 @@ contract HumanRegistrarTest is Test {
         hr.claim(_params(), "alice");
     }
 
+    // Dev-mode proofs are rejected in production (the caller-set flag). On mainnet the verifier is the real
+    // backstop, since a mock proof's certificate root is not in the mainnet registry.
+    function test_reverts_on_dev_mode_flag() public {
+        vm.prank(alice);
+        vm.expectRevert(HumanRegistrar.DevModeNotAllowed.selector);
+        hr.claim(_devParams(), "alice");
+    }
+
+    // A dev deployment (allowDevMode=true) accepts dev-mode proofs, for Sepolia integration testing.
+    function test_allowDevMode_accepts_mock_proof() public {
+        HumanRegistrar hrDev = new HumanRegistrar(
+            IZKPassportVerifier(address(mock)), ISubdomainRegistrar(address(registrar)), humanId, "localhost", true
+        );
+        vm.startPrank(owner);
+        name.setApprovalForAll(address(registrar), true);
+        registrar.configure(humanId, owner, address(0), 0, true, address(hrDev), 1);
+        vm.stopPrank();
+
+        // A dev-mode proof (mock passports carry a real hash id, not 1) is tolerated by a dev build.
+        mock.set(true, keccak256("mock-passport"), true, alice, block.chainid);
+        vm.prank(alice);
+        uint256 subId = hrDev.claim(_devParams(), "mockname");
+        assertEq(name.ownerOf(subId), alice, "dev build minted from a dev-mode proof");
+    }
+
     function test_reverts_on_wrong_scope() public {
         mock.set(true, UID_A, false, alice, block.chainid);
         vm.prank(alice);
@@ -219,6 +248,88 @@ contract HumanRegistrarTest is Test {
         vm.prank(alice);
         hr.claim(_params(), "alice");
         assertEq(name.ownerOf(_sub("alice")), alice);
-        assertEq(hr.claimedBy(UID_A), alice);
+        assertTrue(hr.claimed(UID_A));
+    }
+
+    /* ─────────── the fundamental property: one name per passport, from every angle ─────────── */
+
+    // The real sybil case: the SAME passport from a DIFFERENT wallet still gets nothing.
+    function test_same_passport_from_a_different_wallet_is_rejected() public {
+        mock.set(true, UID_A, true, alice, block.chainid);
+        vm.prank(alice);
+        hr.claim(_params(), "alice");
+
+        mock.set(true, UID_A, true, bob, block.chainid); // same passport (UID_A), bound to a new wallet
+        vm.prank(bob);
+        vm.expectRevert(HumanRegistrar.AlreadyClaimed.selector);
+        hr.claim(_params(), "bob");
+    }
+
+    // Transferring the minted name away does NOT free the passport to claim again.
+    function test_transferring_the_name_does_not_free_the_passport() public {
+        mock.set(true, UID_A, true, alice, block.chainid);
+        vm.prank(alice);
+        uint256 subId = hr.claim(_params(), "alice");
+
+        address other = makeAddr("other");
+        vm.prank(alice);
+        nft.transferFrom(alice, other, subId);
+        assertEq(name.ownerOf(subId), other, "name transferred away");
+
+        mock.set(true, UID_A, true, alice, block.chainid);
+        vm.prank(alice);
+        vm.expectRevert(HumanRegistrar.AlreadyClaimed.selector);
+        hr.claim(_params(), "alice-again");
+    }
+
+    // Fuzz: once a passport has claimed, no second claim succeeds, for ANY caller or label.
+    function testFuzz_a_passport_claims_at_most_once(address caller2, string calldata label2) public {
+        vm.assume(caller2 != address(0));
+        mock.set(true, UID_A, true, alice, block.chainid);
+        vm.prank(alice);
+        hr.claim(_params(), "first");
+
+        mock.set(true, UID_A, true, caller2, block.chainid);
+        vm.prank(caller2);
+        vm.expectRevert(HumanRegistrar.AlreadyClaimed.selector);
+        hr.claim(_params(), label2);
+    }
+
+    // A malicious verifier that re-enters claim() cannot double-mint: nonReentrant blocks it.
+    function test_reentrant_verifier_is_blocked() public {
+        ReentrantVerifier evil = new ReentrantVerifier();
+        HumanRegistrar hrEvil = new HumanRegistrar(
+            IZKPassportVerifier(address(evil)), ISubdomainRegistrar(address(registrar)), humanId, "gwei.domains", false
+        );
+        evil.arm(hrEvil);
+        vm.prank(alice);
+        vm.expectRevert(bytes4(0xab143c06)); // soledge ReentrancyGuard: Reentrancy()
+        hrEvil.claim(_params(), "x");
+    }
+}
+
+/// @dev A verifier that re-enters claim() during verify(), to prove the nonReentrant guard holds.
+contract ReentrantVerifier {
+    HumanRegistrar private target;
+    bool private hit;
+
+    function arm(HumanRegistrar t) external {
+        target = t;
+    }
+
+    function verify(ProofVerificationParams calldata p) external returns (bool, bytes32, address) {
+        if (!hit) {
+            hit = true;
+            target.claim(p, "reenter"); // re-enter: must hit the reentrancy guard
+        }
+        return (true, keccak256("reentrant"), address(this));
+    }
+
+    function verifyScopes(bytes32[] calldata, string calldata, string calldata) external pure returns (bool) {
+        return true;
+    }
+
+    function getBoundData(bytes calldata) external view returns (BoundData memory) {
+        return BoundData({senderAddress: msg.sender, chainId: block.chainid, customData: ""});
     }
 }
