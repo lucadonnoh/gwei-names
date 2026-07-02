@@ -67,6 +67,7 @@ npx bgipfs upload ./my-site                                  # -&gt; CID: bafy..
     <li>Paste the <strong>CID</strong> (<code>bafy...</code> or <code>Qm...</code>; an <code>ipfs://...</code> URL works too) and confirm the transaction.</li>
   </ol>
   <p>This stores the CID on-chain as an <strong>ENSIP-7 <code>contenthash</code></strong> — the same standard ENS uses. The stored bytes start with <code>0xe301</code>, the multicodec marker that means "this is IPFS."</p>
+  <p class="hint"><a href="https://www.ethswarm.org/" target="_blank" rel="noopener">Swarm</a> is supported too — if your site lives on Swarm, paste a <code>bzz://…</code> reference in step&nbsp;3 instead. It's stored the same way, with a Swarm codec marker. This guide walks through IPFS.</p>
 
   <h2><span class="n">4</span>Visit it</h2>
   <p>Open <strong><code>yourname.gwei.domains</code></strong>. The gateway reads your name's <code>contenthash</code>, decodes the CID, and reverse-proxies the content from a public IPFS gateway. That's the whole stack.</p>

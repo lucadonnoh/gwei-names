@@ -494,6 +494,21 @@ body.modal-open { overflow: hidden; }
 .sites-list a:hover { text-decoration: underline; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
+.integrations { margin: 56px 0 8px; }
+.int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 16px; }
+.int-list { display: flex; flex-direction: column; gap: 12px; }
+.int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease; }
+.int-card:hover { border-color: var(--fg-dim); }
+.int-head { display: flex; align-items: center; gap: 9px; }
+.int-logo svg { width: 18px; height: 18px; display: block; }
+.int-logo img { width: 18px; height: 18px; display: block; border-radius: 4px; }
+.int-name { font-size: 15px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
+.int-tag { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); border: 1px solid var(--border-muted); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.int-desc { font-size: 12.5px; color: var(--fg-muted); line-height: 1.6; margin: 10px 0 12px; }
+.int-desc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.int-links { display: flex; gap: 14px; flex-wrap: wrap; }
+.int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
+.int-links a:hover { text-decoration: underline; }
 .stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
 @keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
@@ -734,6 +749,52 @@ body.modal-open { overflow: hidden; }
   </div>
 </div>
 
+<!-- Integrations -->
+<div class="integrations" id="integrations">
+  <div class="int-label">integrations</div>
+  <div class="int-list">
+    <div class="int-card">
+      <div class="int-head">
+        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M16 4 L8 17 L16 13 L24 17 Z" fill="#10b981"/><path d="M16 28 L8 19 L16 15 L24 19 Z" fill="#059669"/></svg></span>
+        <span class="int-name">dapp3</span>
+        <span class="int-tag">browser extension</span>
+      </div>
+      <p class="int-desc">Open <code>.gwei</code> (and <code>.eth</code>) sites like any other website, verified locally. It resolves names against Ethereum with a Helios light client and serves them from your own IPFS node. No public gateway, no hijackable DNS, nothing to trust in the middle.</p>
+      <div class="int-links">
+        <a href="https://dapp3.eth.sh/" target="_blank" rel="noopener">Website ↗</a>
+        <a href="https://chromewebstore.google.com/detail/dapp3eth/gagojfdpbmahciaapdcejmmaeehgpmib" target="_blank" rel="noopener">Chrome Web Store ↗</a>
+        <a href="https://github.com/apoorvlathey/dapp3" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </div>
+    <div class="int-card">
+      <div class="int-head">
+        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
+        <span class="int-name">WalletChan</span>
+        <span class="int-tag">wallet extension</span>
+      </div>
+      <p class="int-desc">Use your Bankr address across every dapp, like MetaMask. Send to <code>.gwei</code> (and <code>.eth</code>) names, and look them up in its built-in name browser.</p>
+      <div class="int-links">
+        <a href="https://walletchan.com/" target="_blank" rel="noopener">Website ↗</a>
+        <a href="https://chromewebstore.google.com/detail/walletchan/kofbkhbkfhiollbhjkbebajngppmpbgc" target="_blank" rel="noopener">Chrome Web Store ↗</a>
+        <a href="https://github.com/apoorvlathey/walletchan" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </div>
+    <div class="int-card">
+      <div class="int-head">
+        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
+        <span class="int-name">Kao</span>
+        <span class="int-tag">desktop wallet</span>
+      </div>
+      <p class="int-desc">A cute, secure desktop wallet for Ethereum, built in pure Rust with no telemetry. Resolve, register, and manage <code>.gwei</code> names from its Names app, all verified by a Helios light client.</p>
+      <div class="int-links">
+        <a href="https://kaowallet.com/" target="_blank" rel="noopener">Website ↗</a>
+        <a href="https://github.com/kaowallet/kao/releases/latest" target="_blank" rel="noopener">Download ↗</a>
+        <a href="https://github.com/kaowallet/kao" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Network stats -->
 <div class="stats-section" id="statsSection" style="display:none;">
   <div class="stats-loading" id="statsLoading">loading stats and recent websites…</div>
@@ -777,7 +838,7 @@ const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
-    rpc: ['https://eth.llamarpc.com', 'https://ethereum.publicnode.com', 'https://1rpc.io/eth'],
+    rpc: ['https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
     logsRpcs: ['https://0xrpc.io/eth', 'https://gateway.tenderly.co/public/mainnet'],
     deployBlock: 25403689,
     explorer: 'https://etherscan.io',
@@ -930,7 +991,7 @@ async function loadStats() {
     const sites = Object.keys(cache.ch)
       .filter(function (node) { return cache.ch[node].len > 0 && cache.names[node] && cache.names[node].top; })
       .sort(function (a, b) { return cache.ch[b].block - cache.ch[a].block; })
-      .slice(0, 20)
+      .slice(0, 50)
       .map(function (node) { return cache.names[node].label; });
     if (CHAIN_ID === 1 && sites.length) {
       listEl.innerHTML = '';
@@ -1143,7 +1204,8 @@ async function waitForTx(tx, timeoutMs = 90000) {
 
 // Multicall3 for batching RPC calls
 const MULTICALL3_ABI = [
-  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])'
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])',
+  'function aggregate3Value(tuple(address target, bool allowFailure, uint256 value, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])'
 ];
 const iface = new ethers.Interface(ABI);
 
@@ -1392,7 +1454,7 @@ async function connectWithWallet(walletKey) {
         projectId: '1e8390ef1c1d8a185e035912a1409749',
         chains: [CHAIN_ID],
         showQrModal: true,
-        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
+        rpcMap: { [CHAIN_ID]: 'https://ethereum-rpc.publicnode.com' },
         metadata: {
           name: 'Gwei Name Service',
           description: 'Register .gwei names',
@@ -2236,6 +2298,8 @@ function showStatus(msg, type, txHash) {
 // Current managed token
 let currentTokenId = null;
 let currentTokenName = null;
+let currentExpiry = null;     // bigint unix seconds (top-level names); null otherwise
+let currentRenewFee = null;   // bigint getFee(label byte length), cached per name
 let isProcessing = false; // Prevent double-click on manage actions
 
 function hideManage() {
@@ -2243,6 +2307,8 @@ function hideManage() {
   $('manageForm').classList.remove('show');
   currentTokenId = null;
   currentTokenName = null;
+  currentExpiry = null;
+  currentRenewFee = null;
 }
 
 let manageVersion = 0;
@@ -2250,6 +2316,7 @@ let manageVersion = 0;
 async function showManage(tokenId, name) {
   currentTokenId = tokenId;
   currentTokenName = name;
+  currentRenewFee = null; // fee depends on label length — refetch per name
   const thisManageVersion = ++manageVersion;
 
   if (!rpcProvider && !readContract) { hideManage(); return; }
@@ -2287,6 +2354,7 @@ async function showManage(tokenId, name) {
     const isOwner = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
     const expiryDate = record?.expiresAt ? new Date(Number(record.expiresAt) * 1000).toLocaleDateString() : null;
     const isTopLevel = record?.parent === 0n;
+    currentExpiry = record?.expiresAt != null ? BigInt(record.expiresAt) : null;
 
     // Build info section
     const addrLink = (addr) => `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;">${addr.slice(0, 8)}...${addr.slice(-6)}</a>`;
@@ -2391,9 +2459,9 @@ function showManageForm(action) {
       break;
     case 'setContent':
       html = `
-        <label>IPFS Content</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Enter IPFS CID to host a website at ${currentTokenName}.gwei</div>
-        <input type="text" id="contentHash" placeholder="QmXxx... bafxxx... or 0x (raw bytes)">
+        <label>Website content</label>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, or a Swarm bzz:// reference.</div>
+        <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), or bzz://… (Swarm)">
         ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -2423,7 +2491,9 @@ function showManageForm(action) {
       return;
     case 'renew':
       html = `
-        <div style="font-size:13px;margin-bottom:12px;">Extend registration for 1 year</div>
+        <label>Years to extend</label>
+        <input type="number" id="renewYears" value="1" min="1" max="25" step="1" oninput="previewRenew()">
+        <div id="renewPreview" style="font-size:13px;margin:10px 0;line-height:1.7;opacity:0.85;">…</div>
         <button onclick="doRenew()">Renew</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
       `;
@@ -2432,6 +2502,45 @@ function showManageForm(action) {
 
   form.innerHTML = html;
   form.classList.add('show');
+  if (action === 'renew') previewRenew();
+}
+
+// Read the years input (clamped to 1..25). Each on-chain renew() extends by
+// exactly one REGISTRATION_PERIOD (365 days), so N years = N renew() calls.
+function renewYearsValue() {
+  let years = parseInt(($('renewYears') || {}).value, 10);
+  if (!Number.isFinite(years) || years < 1) years = 1;
+  if (years > 25) years = 25;
+  return years;
+}
+
+// Live projection for the renew form: new expiration date + total cost.
+async function previewRenew() {
+  const el = $('renewPreview');
+  if (!el) return;
+  const years = renewYearsValue();
+  // Fee depends only on label length, so fetch once per name and cache.
+  if (currentRenewFee == null && currentTokenName) {
+    try {
+      const rc = readContract || contract;
+      currentRenewFee = await rc.getFee(byteLength(currentTokenName));
+    } catch { /* leave null; cost line is omitted */ }
+  }
+  const REG_PERIOD = 365n * 24n * 3600n; // matches contract REGISTRATION_PERIOD
+  const lines = [];
+  if (currentExpiry != null && currentExpiry > 0n) {
+    const newExp = currentExpiry + BigInt(years) * REG_PERIOD;
+    const d = new Date(Number(newExp) * 1000);
+    lines.push(`New expiration: <b>${d.toLocaleDateString()}</b>`);
+  }
+  if (currentRenewFee != null) {
+    const total = currentRenewFee * BigInt(years);
+    lines.push(`Total: <b>${ethers.formatEther(total)} ETH</b>`);
+  }
+  if (years > 1) {
+    lines.push(`<span style="opacity:0.6;">${years}× renewal batched into one transaction (Multicall3)</span>`);
+  }
+  el.innerHTML = lines.join('<br>') || '…';
 }
 
 async function resolveRecipient(input) {
@@ -2681,6 +2790,13 @@ function encodeContenthash(input) {
   // Raw bytes passthrough (for advanced users)
   if (cid.startsWith('0x')) {
     return ethers.getBytes(cid);
+  }
+
+  // Swarm (bzz://) reference → swarm-ns contenthash (e4 01 01 fa 01 1b 20 || 32-byte hash)
+  if (cid.startsWith('bzz://')) {
+    const hash = cid.slice(6).replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('Invalid Swarm reference (expected 64 hex characters).');
+    return ethers.getBytes('0xe40101fa011b20' + hash);
   }
 
   // Strip ipfs:// prefix
@@ -2944,17 +3060,39 @@ async function doRenew() {
   if (isProcessing || !currentTokenId) return;
   if (!signer) { showStatus('Connect your wallet to renew', ''); toggleWallet(); return; }
 
+  const years = renewYearsValue();
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     const rc = readContract || contract;
     const fee = await rc.getFee(byteLength(currentTokenName));
 
-    showStatus('Renewing...', '');
-    const tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
-    showStatus('Waiting for confirmation...', '', tx.hash);
+    showStatus(years > 1 ? `Renewing +${years} years…` : 'Renewing…', '');
+    let tx;
+    if (years === 1) {
+      tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
+    } else {
+      // Batch N renew() calls into a single tx via Multicall3. The sub-calls
+      // run in order within the same tx, so each reads the expiresAt the
+      // previous one wrote → +N years. Exact fee per call means renew()'s
+      // refund branch never fires (no excess stuck in Multicall3).
+      const renewData = iface.encodeFunctionData('renew', [currentTokenId]);
+      const calls = Array.from({ length: years }, () => ({
+        target: CONTRACT,
+        allowFailure: false,
+        value: fee,
+        callData: renewData,
+      }));
+      const mc = new ethers.Contract(MULTICALL3, MULTICALL3_ABI, signer);
+      tx = await wcTransaction(
+        mc.aggregate3Value(calls, { value: fee * BigInt(years) }),
+        `Approve renewal (+${years} years)`
+      );
+    }
+    showStatus('Waiting for confirmation…', '', tx.hash);
     await waitForTx(tx);
-    showStatus('Renewed!', 'success', tx.hash);
+    showStatus(years > 1 ? `Renewed +${years} years!` : 'Renewed!', 'success', tx.hash);
+    currentRenewFee = null;
     doCheckName();
   } catch (e) {
     handleError(e);
