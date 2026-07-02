@@ -55,7 +55,7 @@ interface ISubdomainRegistrar {
 }
 
 /// @title  HumanRegistrar
-/// @notice Lets each verified human claim exactly one `*.human.gwei` subdomain — one per passport, forever.
+/// @notice Lets each verified human claim exactly one `*.zkpassport.gwei` subdomain — one per passport, forever.
 /// @dev    A passive `balanceOf` gate can't enforce a per-human *count*: the SubdomainRegistrar's gate
 ///         (`balanceOf(gateToken, msg.sender) >= minGateBalance`) is a stateless threshold, so an address
 ///         whose balance is 1 mints unlimited names. This contract fixes that by being the *sole*
@@ -66,16 +66,16 @@ contract HumanRegistrar is ReentrancyGuard {
     IZKPassportVerifier public immutable verifier;
     /// @dev The gwei SubdomainRegistrar this contract mints through.
     ISubdomainRegistrar public immutable registrar;
-    /// @dev tokenId of `human.gwei` (the parent). Its owner points the registrar's gate at this contract.
+    /// @dev tokenId of `zkpassport.gwei` (the parent). Its owner points the registrar's gate at this contract.
     uint256 public immutable parentId;
 
     /// @dev Must match the (domain, scope) the frontend requests the zkPassport proof for.
     string public constant DOMAIN = "gwei.domains";
-    string public constant SCOPE = "human.gwei";
+    string public constant SCOPE = "zkpassport.gwei";
 
     /// @notice The address that claimed a given passport (0 = unclaimed). One document, one name, forever.
     mapping(bytes32 uniqueIdentifier => address human) public claimedBy;
-    /// @notice The `*.human.gwei` tokenId a human minted (0 = none).
+    /// @notice The `*.zkpassport.gwei` tokenId a human minted (0 = none).
     mapping(address human => uint256 subId) public claimedName;
 
     event HumanNameClaimed(
@@ -94,13 +94,12 @@ contract HumanRegistrar is ReentrancyGuard {
         parentId = _parentId;
     }
 
-    /// @notice Prove humanity with a zkPassport proof bound to `msg.sender`, and mint them `label.human.gwei`.
+    /// @notice Prove humanity with a zkPassport proof bound to `msg.sender`, and mint them `label.zkpassport.gwei`.
     /// @dev    Reverts `AlreadyClaimed` if this passport already claimed a name (one per document, forever).
     /// @param  params zkPassport SDK proof (compressed-evm mode), bound to msg.sender + this chain.
-    /// @param  label  The subdomain label to mint (`<label>.human.gwei`).
+    /// @param  label  The subdomain label to mint (`<label>.zkpassport.gwei`).
     function claim(ProofVerificationParams calldata params, string calldata label)
         external
-        payable
         nonReentrant
         returns (uint256 subId)
     {
@@ -114,20 +113,22 @@ contract HumanRegistrar is ReentrancyGuard {
         if (bound.senderAddress != msg.sender) revert WrongSender();
         if (bound.chainId != block.chainid) revert WrongChain();
 
-        // One passport = one name, forever. Record the claim before the external mint (checks-effects-interactions).
+        // One passport = one name, forever. verify() must run first to produce uniqueIdentifier, so this
+        // write necessarily follows an external call; the nonReentrant guard makes that ordering safe, and
+        // it still precedes the external mint (checks-effects-interactions).
         if (claimedBy[uniqueIdentifier] != address(0)) revert AlreadyClaimed();
         claimedBy[uniqueIdentifier] = msg.sender;
 
         // Mint through the registrar. registerFor gates on msg.sender (this contract, balanceOf == 1) and
-        // mints to `to` (the human). human.gwei is free + flash-mode, so any msg.value just passes through.
-        subId = registrar.registerFor{value: msg.value}(parentId, label, msg.sender);
+        // mints to `to` (the human). zkpassport.gwei is free (flash mode), so there's no fee to forward.
+        subId = registrar.registerFor(parentId, label, msg.sender);
         claimedName[msg.sender] = subId;
 
         emit HumanNameClaimed(uniqueIdentifier, msg.sender, subId, label);
     }
 
     /// @notice The balance the SubdomainRegistrar's gate reads. Returns 1 only for this contract, so
-    ///         `*.human.gwei` can only be minted via `claim` — never by calling the registrar directly.
+    ///         `*.zkpassport.gwei` can only be minted via `claim` — never by calling the registrar directly.
     ///         That's what makes the one-per-passport rule enforceable against an immutable registrar.
     function balanceOf(address account) external view returns (uint256) {
         return account == address(this) ? 1 : 0;

@@ -50,8 +50,8 @@ contract MockZKPassport {
     }
 }
 
-/// @title HumanRegistrar tests — the one-name-per-passport gate for `*.human.gwei`.
-/// @notice Self-contained: deploys a fresh NameNFT + SubdomainRegistrar, registers `human.gwei`,
+/// @title HumanRegistrar tests — the one-name-per-passport gate for `*.zkpassport.gwei`.
+/// @notice Self-contained: deploys a fresh NameNFT + SubdomainRegistrar, registers `zkpassport.gwei`,
 ///         points the registrar's gate at the HumanRegistrar, and mocks the zkPassport verifier.
 contract HumanRegistrarTest is Test {
     NameNFT nft;
@@ -60,11 +60,11 @@ contract HumanRegistrarTest is Test {
     MockZKPassport mock;
     HumanRegistrar hr;
 
-    address owner; // human.gwei owner + registrar controller
+    address owner; // zkpassport.gwei owner + registrar controller
     address alice;
     address bob;
 
-    uint256 humanId; // computeId("human.gwei")
+    uint256 humanId; // computeId("zkpassport.gwei")
 
     bytes32 constant UID_A = keccak256("passport-A");
     bytes32 constant UID_B = keccak256("passport-B");
@@ -79,8 +79,8 @@ contract HumanRegistrarTest is Test {
         registrar = new SubdomainRegistrar(INameNFT(address(nft)));
         mock = new MockZKPassport();
 
-        humanId = name.computeId("human.gwei");
-        _registerName("human", owner);
+        humanId = name.computeId("zkpassport.gwei");
+        _registerName("zkpassport", owner);
 
         hr = new HumanRegistrar(
             IZKPassportVerifier(address(mock)), ISubdomainRegistrar(address(registrar)), humanId
@@ -112,7 +112,7 @@ contract HumanRegistrarTest is Test {
     function _params() internal pure returns (ProofVerificationParams memory p) {}
 
     function _sub(string memory label) internal view returns (uint256) {
-        return name.computeId(string.concat(label, ".human.gwei"));
+        return name.computeId(string.concat(label, ".zkpassport.gwei"));
     }
 
     /* ───────────────── the fix: one name per passport, forever ───────────────── */
@@ -123,7 +123,7 @@ contract HumanRegistrarTest is Test {
         uint256 subId = hr.claim(_params(), "alice");
 
         assertEq(subId, _sub("alice"), "returns the subId");
-        assertEq(name.ownerOf(_sub("alice")), alice, "alice owns alice.human.gwei");
+        assertEq(name.ownerOf(_sub("alice")), alice, "alice owns alice.zkpassport.gwei");
         assertEq(hr.claimedBy(UID_A), alice, "passport recorded to alice");
         assertEq(hr.claimedName(alice), subId, "name recorded for alice");
     }
