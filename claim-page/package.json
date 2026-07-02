@@ -1,5 +1,5 @@
 {
-  "name": "zkpassport-sdk-example",
+  "name": "zkpassport-gwei-claim",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -14,7 +14,6 @@
     "@zkpassport/ui": "0.15.2",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "react-qr-code": "^2.0.15",
     "viem": "^2.27.0"
   },
   "devDependencies": {

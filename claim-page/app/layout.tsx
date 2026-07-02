@@ -5,8 +5,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ZKPassport SDK Example",
-  description: "Example of using the ZKPassport SDK for identity verification",
+  title: "Claim a .zkpassport.gwei name",
+  description:
+    "Prove you are human with zkPassport and claim a .zkpassport.gwei subdomain.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
