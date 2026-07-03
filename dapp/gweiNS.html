@@ -608,6 +608,8 @@ body.modal-open { overflow: hidden; }
 .zk-qr-link a:hover { opacity: 1; }
 .zk-qr-status { font-size: 13px; margin-top: 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border-muted); text-align: left; }
 .zk-qr-status.error { background: var(--status-error); border-color: transparent; }
+.zk-qr-status.zk-working::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 8px; border: 2px solid var(--border-muted); border-top-color: var(--fg); border-radius: 50%; vertical-align: -1px; animation: zk-spin 0.7s linear infinite; }
+@keyframes zk-spin { to { transform: rotate(360deg); } }
 
 /* ZKPassport progress checklist */
 .zk-steps { list-style: none; margin: 18px 0 0; padding: 0; text-align: left; }
@@ -3826,18 +3828,51 @@ window.zkSetQrStatus = (msg, kind) => {
 };
 const setStatus = window.zkSetQrStatus;
 
-// Live elapsed counter for the in-browser verify step (single-threaded WASM, up to a
-// minute). Keeps the status line ticking so the wait doesn't look frozen while bb.js runs.
+// The bb.js verifier is a lazily-imported ~3.5 MB chunk. Preload it with a streaming reader so we can show a
+// real download % (determinate progress), and warm the browser cache so bb.js's own import is instant. Kicking
+// it off when the flow starts overlaps the download with the QR scan / proof generation. The verify itself is a
+// black-box WASM computation, so it's shown as an indeterminate spinner + elapsed.
+const ZK_VERIFIER_URL = '/vendor/barretenberg-6FMVJVVX.js';
+const ZK_VERIFIER_BYTES = 3642105; // the chunk's size; used as the progress total (Content-Length is the
+                                   // gzipped/wire size and would mismatch the decompressed fetch stream)
+let zkVerifierPct = 0, zkVerifierReady = false;
+async function preloadVerifier() {
+  if (zkVerifierReady) return;
+  try {
+    const res = await fetch(ZK_VERIFIER_URL);
+    if (!res.ok || !res.body) { zkVerifierReady = true; return; }
+    const reader = res.body.getReader();
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      loaded += value.length;
+      zkVerifierPct = Math.min(99, Math.round((loaded / ZK_VERIFIER_BYTES) * 100));
+    }
+  } catch (e) { /* fall through — bb.js will fetch it itself */ }
+  zkVerifierPct = 100;
+  zkVerifierReady = true;
+}
+
 let verifyTimer = null;
 function startVerifyTimer() {
   stopVerifyTimer();
+  const el = document.getElementById('zkQrStatus');
   const t0 = performance.now();
-  const tick = () => setStatus("Verifying the proof in your browser (runs locally, can take up to a minute). Elapsed: " + Math.round((performance.now() - t0) / 1000) + "s");
+  if (el) el.className = 'zk-qr-status zk-working'; // set once so the spinner animation doesn't restart each tick
+  const tick = () => {
+    if (!el) return;
+    el.textContent = zkVerifierReady
+      ? ('Verifying your proof in your browser… ' + Math.round((performance.now() - t0) / 1000) + 's (runs locally, can take up to two minutes)')
+      : ('Downloading the verifier… ' + zkVerifierPct + '% (a one-time ~3.5 MB download)');
+  };
   tick();
-  verifyTimer = setInterval(tick, 1000);
+  verifyTimer = setInterval(tick, 500);
 }
 function stopVerifyTimer() {
   if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null; }
+  const el = document.getElementById('zkQrStatus');
+  if (el) el.classList.remove('zk-working');
 }
 
 // Progress checklist: mark each step pending / active / done (green) / error.
@@ -3889,6 +3924,7 @@ window.zkRenderQR = async (url) => {
 const renderQR = window.zkRenderQR;
 
 window.zkStartFlow = async (label) => {
+  preloadVerifier(); // start fetching the ~3.5 MB verifier now so it overlaps the scan + proof generation
   const account = window.connectedAddress; // checksummed 0x… set by the wallet code
   const zkp = new ZKPassport(window.location.hostname); // domain must match the contract's domain ("localhost" locally)
   const builder = await zkp.request({
