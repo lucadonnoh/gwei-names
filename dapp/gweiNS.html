@@ -568,6 +568,23 @@ body.modal-open { overflow: hidden; }
 .free-panel button { background: var(--free-accent); border-color: var(--free-accent); }
 .free-panel button:hover { background: var(--free-accent); opacity: 0.85; }
 .free-panel button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); }
+.share-btn { display: inline-block; margin-top: 10px; background: var(--fg); color: var(--bg); border: 1.5px solid var(--fg); padding: 8px 16px; font-size: 11px; letter-spacing: 0.03em; cursor: pointer; font-family: inherit; }
+.share-btn:hover { opacity: 0.85; }
+.share-modal { max-width: 820px; }
+.share-modal-body { display: flex; gap: 18px; align-items: stretch; }
+.share-preview { flex: 1 1 60%; min-width: 0; }
+.share-preview canvas { width: 100%; height: auto; display: block; border: 1px solid var(--border-muted); }
+.share-controls { flex: 0 0 180px; display: flex; flex-direction: column; gap: 10px; }
+.share-ctrl-label { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.share-bg-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.share-bg { width: 52px; height: 30px; border: 2px solid transparent; cursor: pointer; padding: 0; background-position: center; background-size: cover; }
+.share-bg.active { border-color: var(--fg); }
+.share-actions { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+.share-actions button { width: 100%; padding: 11px; font-size: 12px; cursor: pointer; background: var(--bg); color: var(--fg); border: 1.5px solid var(--border); font-family: inherit; }
+.share-actions button:hover { background: var(--btn-bg); color: var(--btn-fg); }
+.share-actions .share-x-btn { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.share-actions .share-x-btn:hover { opacity: 0.85; background: var(--fg); color: var(--bg); }
+@media (max-width: 620px) { .share-modal-body { flex-direction: column; } .share-controls { flex-basis: auto; } }
 .free-panel .free-status { font-size: 13px; margin-top: 12px; padding: 10px; background: var(--free-status-bg); display: none; }
 .free-panel .free-status.show { display: block; }
 .free-panel .free-status.error { background: var(--status-error); }
@@ -851,6 +868,30 @@ body.modal-open { overflow: hidden; }
       <button class="modal-close" onclick="closeWalletModal()">&times;</button>
     </div>
     <div class="modal-body" id="walletOptions"></div>
+  </div>
+</div>
+
+<!-- Share Card Modal -->
+<div class="modal-overlay" id="shareModal" onclick="if(event.target===this)closeShareModal()">
+  <div class="modal share-modal">
+    <div class="modal-header">
+      <div class="modal-title">Share card</div>
+      <button class="modal-close" onclick="closeShareModal()">&times;</button>
+    </div>
+    <div class="share-modal-body">
+      <div class="share-preview"><canvas id="shareCanvas" width="1200" height="630"></canvas></div>
+      <div class="share-controls">
+        <div class="share-ctrl-label">Background</div>
+        <div class="share-bg-options" id="shareBgOptions"></div>
+        <div class="share-ctrl-label">Pattern</div>
+        <div class="share-bg-options" id="sharePatternOptions"></div>
+        <div class="share-actions">
+          <button type="button" onclick="shareSaveCard()">Save Card</button>
+          <button type="button" id="shareCopyBtn" onclick="shareCopyImage()">Copy Image</button>
+          <button type="button" class="share-x-btn" onclick="shareOnX()">Share on X</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1186,7 +1227,9 @@ async function doFreeMint() {
     const tx = await wcTransaction(new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer).register(parentId, label, { value: 0n }), 'Claim free name');
     showFreeStatus('Confirming...', '');
     await waitForTx(tx);
-    showFreeStatus(label + '.' + FREE_ROOT + '.gwei claimed!', 'success');
+    const claimedName = label + '.' + FREE_ROOT + '.gwei';
+    showFreeStatus(claimedName + ' claimed!', 'success');
+    addShareButton(document.getElementById('freeStatus'), claimedName);
     document.getElementById('freeLabelInput').value = '';
   } catch (e) { showFreeStatus(e.shortMessage || e.reason || e.message || 'Mint failed', 'error'); btn.disabled = false; return; }
   btn.disabled = false;
@@ -1383,9 +1426,11 @@ window.zkSubmitClaim = async (params, label) => {
 };
 
 function zkShowResult(label, hash) {
-  document.getElementById('zkResultName').textContent = label + '.zkpassport.gwei minted';
+  const fullName = label + '.zkpassport.gwei';
+  document.getElementById('zkResultName').textContent = fullName + ' minted';
   const link = EXPLORER + '/tx/' + hash;
   document.getElementById('zkResultLink').innerHTML = '<a href="' + link + '" target="_blank" rel="noopener">View transaction on Etherscan →</a>';
+  addShareButton(document.getElementById('zkResultLink'), fullName);
   document.getElementById('zkResultPanel').classList.add('show');
 }
 
@@ -2648,6 +2693,259 @@ function hideManage() {
 
 let manageVersion = 0;
 
+// ── Shareable name card, shown in a modal with a live preview + background picker (mainly for X). ──
+const SHARE_BGS = [
+  { name: 'Ink',    a: '#161616', b: '#050505' },
+  { name: 'Slate',  a: '#244577', b: '#0a1626', glow: 'rgba(95,155,240,0.32)' },
+  { name: 'Forest', a: '#175640', b: '#081b11', glow: 'rgba(55,205,125,0.30)' },
+  { name: 'Plum',   a: '#402370', b: '#110a22', glow: 'rgba(160,100,245,0.32)' },
+  { name: 'Ember',  a: '#732430', b: '#18090a', glow: 'rgba(245,100,100,0.32)' },
+];
+// Patterns are a separate choice that overlays whatever background colour is picked. null = plain.
+const SHARE_PATTERNS = [
+  { name: 'None',    pattern: null },
+  { name: 'No DAO',  pattern: 'nodao' },
+  { name: 'Own',     pattern: 'own' },
+  { name: 'Take It', pattern: 'cati' },
+];
+function shareNameType(name) {
+  if (name.endsWith('.zkpassport.gwei')) return 'PROOF OF HUMANITY';
+  if (name.endsWith('.id.gwei')) return 'FREE NAME';
+  return null; // a top-level ".gwei" is self-evident from the name — no badge
+}
+function drawShareBackground(ctx, bg, W, H) {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, bg.a); g.addColorStop(1, bg.b);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  if (bg.glow) {
+    const rg = ctx.createRadialGradient(W * 0.72, H * 0.35, 0, W * 0.72, H * 0.35, W * 0.55);
+    rg.addColorStop(0, bg.glow); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.025)'; // faint dot texture
+  for (let y = 30; y < H; y += 20) for (let x = 30; x < W; x += 20) ctx.fillRect(x, y, 2, 2);
+}
+// Tiled "no DAO" motif — DAO inside a crossed-out circle — a fun, meme-y background.
+function drawNoDaoPattern(ctx, W, H) {
+  // Render the tiles at full opacity on an offscreen canvas, then composite the whole thing ONCE at low
+  // alpha, so the slash, ring and letters union into one flat shape instead of stacking into brighter seams.
+  // Hex row pitch (√3/2) keeps every tile equidistant from its neighbours.
+  const off = document.createElement('canvas'); off.width = W; off.height = H;
+  const o = off.getContext('2d');
+  o.lineCap = 'round'; o.lineJoin = 'round';
+  o.strokeStyle = '#fff'; o.fillStyle = '#fff';
+  o.textAlign = 'center'; o.textBaseline = 'middle';
+  o.font = '800 40px Helvetica, Arial, sans-serif';
+  const step = 245, vStep = step * Math.sqrt(3) / 2, r = 64, d = r * Math.SQRT1_2;
+  for (let gy = 0, y = 36; y < H + vStep; y += vStep, gy++) {
+    for (let x = 36 + (gy % 2 ? step / 2 : 0); x < W + step; x += step) {
+      o.fillText('DAO', x, y + 1);
+      o.lineWidth = 6;
+      o.beginPath(); o.arc(x, y, r, 0, Math.PI * 2); o.stroke();
+      o.beginPath(); o.moveTo(x - d, y - d); o.lineTo(x + d, y + d); o.stroke();
+    }
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+}
+// Tiled-text "manifesto": the phrase repeated across staggered rows (each row offset so it drifts
+// diagonally rather than lining up into columns).
+function drawOwnPattern(ctx, W, H) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = '600 30px Helvetica, Arial, sans-serif';
+  const unit = 'you will own something and be happy   ·   ';
+  const unitW = ctx.measureText(unit).width, rowH = 60;
+  for (let gy = 0, y = 30; y < H + rowH; y += rowH, gy++)
+    for (let x = (gy * 137) % unitW - unitW; x < W; x += unitW) ctx.fillText(unit, x, y);
+  ctx.restore();
+}
+function drawSharePattern(ctx, id, W, H) {
+  if (id === 'nodao') drawNoDaoPattern(ctx, W, H);
+  else if (id === 'own') drawOwnPattern(ctx, W, H);
+}
+// Legible preview for the picker swatches: one clear, centred, higher-opacity motif on a 240×126 tile.
+// (The tiled full-card patterns are too faint and small to read once shrunk to swatch size.)
+function drawPatternSwatch(ctx, id) {
+  if (!id) return; // None → plain background
+  ctx.save();
+  ctx.globalAlpha = 0.62;
+  ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const cx = 120, cy = 63;
+  if (id === 'nodao') {
+    ctx.lineCap = 'round'; ctx.lineWidth = 6;
+    ctx.font = '800 34px Helvetica, Arial, sans-serif';
+    const r = 48, d = r * Math.SQRT1_2;
+    ctx.fillText('DAO', cx, cy + 1);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - d, cy - d); ctx.lineTo(cx + d, cy + d); ctx.stroke();
+  } else if (id === 'own') {
+    ctx.font = '700 22px Helvetica, Arial, sans-serif';
+    ctx.fillText('own', cx, cy - 25);
+    ctx.fillText('something', cx, cy);
+    ctx.fillText('be happy', cx, cy + 25);
+  } else if (id === 'cati') {
+    drawStar(ctx, cx, 30, 16);
+    ctx.font = '800 15px Helvetica, Arial, sans-serif';
+    ctx.fillText('COME AND', cx, 72);
+    ctx.fillText('TAKE IT', cx, 92);
+  }
+  ctx.restore();
+}
+function drawStar(ctx, cx, cy, outerR) {
+  const innerR = outerR * 0.382;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rr = i % 2 === 0 ? outerR : innerR, a = -Math.PI / 2 + i * Math.PI / 5;
+    const x = cx + rr * Math.cos(a), y = cy + rr * Math.sin(a);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill();
+}
+// "Come and Take It" theme (Gonzales flag): star up top, the name where the cannon goes, the motto below.
+function drawComeAndTakeIt(ctx, name, W, H, pad) {
+  const cx = W / 2;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff';
+  drawStar(ctx, cx, 116, 54);
+  ctx.textBaseline = 'alphabetic'; ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  ctx.font = '600 30px Helvetica, Arial, sans-serif';
+  ctx.fillText('i just claimed', cx, 214);
+  ctx.fillStyle = '#ffffff'; ctx.textBaseline = 'middle';
+  let fs = 112;
+  do { ctx.font = '700 ' + fs + 'px Helvetica, Arial, sans-serif'; if (ctx.measureText(name).width <= W - pad * 2) break; fs -= 4; } while (fs > 40);
+  ctx.fillText(name, cx, 338);
+  ctx.textBaseline = 'alphabetic';
+  const motto = 'COME AND TAKE IT';
+  let cs = 84;
+  do { ctx.font = '800 ' + cs + 'px Helvetica, Arial, sans-serif'; if (ctx.measureText(motto).width <= W - pad * 1.4) break; cs -= 3; } while (cs > 36);
+  ctx.fillText(motto, cx, H - 108);
+  // keep the site CTA as a small footer under the motto
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '22px Helvetica, Arial, sans-serif';
+  ctx.fillText('claim yours at gwei.domains: the ownerless and unruggable ENS alternative', cx, H - 44);
+}
+function drawShareCard(ctx, name, bgIndex, patternIndex) {
+  const W = 1200, H = 630, pad = 72;
+  drawShareBackground(ctx, SHARE_BGS[bgIndex] || SHARE_BGS[0], W, H);
+  const pat = SHARE_PATTERNS[patternIndex];
+  if (pat && pat.pattern === 'cati') { drawComeAndTakeIt(ctx, name, W, H, pad); return; }
+  if (pat && pat.pattern) drawSharePattern(ctx, pat.pattern, W, H);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '600 26px Helvetica, Arial, sans-serif';
+  ctx.fillText('gwei name service', pad, pad + 24);
+  // type badge (pill) — only for the subdomain types; ".gwei" needs none
+  const badge = shareNameType(name);
+  if (badge) {
+    ctx.font = '600 20px Helvetica, Arial, sans-serif';
+    const bw = ctx.measureText(badge).width, bx = pad, by = pad + 46, bh = 40, bp = 18;
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw + bp * 2, bh, 8); ctx.fill(); }
+    else ctx.fillRect(bx, by, bw + bp * 2, bh);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.textBaseline = 'middle';
+    ctx.fillText(badge, bx + bp, by + bh / 2 + 1);
+  }
+  // hero name (auto-fit to width) with an "i just claimed" lead-in just above it; the pair reads centred
+  let fs = 120;
+  do { ctx.font = '700 ' + fs + 'px Helvetica, Arial, sans-serif'; if (ctx.measureText(name).width <= W - pad * 2) break; fs -= 4; } while (fs > 40);
+  const nameY = H * 0.56;
+  ctx.fillStyle = 'rgba(255,255,255,0.72)'; ctx.textBaseline = 'alphabetic';
+  ctx.font = '600 34px Helvetica, Arial, sans-serif';
+  ctx.fillText('i just claimed', pad, nameY - fs / 2 - 22);
+  ctx.fillStyle = '#ffffff'; ctx.textBaseline = 'middle';
+  ctx.font = '700 ' + fs + 'px Helvetica, Arial, sans-serif';
+  ctx.fillText(name, pad, nameY);
+  // bottom-left CTA
+  ctx.textBaseline = 'alphabetic'; ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '22px Helvetica, Arial, sans-serif';
+  ctx.fillText('claim yours at gwei.domains: the ownerless and unruggable ENS alternative', pad, H - pad + 2);
+}
+
+let shareState = { name: '', bgIndex: 0, patternIndex: 0 };
+function renderShareCard() {
+  const cv = document.getElementById('shareCanvas');
+  if (cv) drawShareCard(cv.getContext('2d'), shareState.name, shareState.bgIndex, shareState.patternIndex);
+}
+function markShareActive(containerId, i) {
+  document.querySelectorAll('#' + containerId + ' .share-bg').forEach((el, idx) => el.classList.toggle('active', idx === i));
+}
+function selectShareBg(i) { shareState.bgIndex = i; markShareActive('shareBgOptions', i); renderShareCard(); }
+function selectSharePattern(i) { shareState.patternIndex = i; markShareActive('sharePatternOptions', i); renderShareCard(); }
+// Build a swatch picker: each option is a mini-canvas preview painted by `paint(ctx, item, i)`.
+function buildSharePicker(containerId, items, active, paint, onSelect) {
+  const box = document.getElementById(containerId);
+  box.innerHTML = '';
+  items.forEach((item, i) => {
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'share-bg' + (i === active ? ' active' : ''); el.title = item.name;
+    const sc = document.createElement('canvas'); sc.width = 240; sc.height = 126;
+    paint(sc.getContext('2d'), item, i);
+    el.style.backgroundImage = 'url(' + sc.toDataURL() + ')'; el.style.backgroundSize = 'cover';
+    el.onclick = () => onSelect(i);
+    box.appendChild(el);
+  });
+}
+function openShareModal(name) {
+  if (!name) return;
+  shareState = { name: name, bgIndex: 0, patternIndex: 0 };
+  buildSharePicker('shareBgOptions', SHARE_BGS, 0,
+    (c, bg) => drawShareBackground(c, bg, 240, 126), selectShareBg);
+  buildSharePicker('sharePatternOptions', SHARE_PATTERNS, 0, (c, pat) => {
+    drawShareBackground(c, SHARE_BGS[0], 240, 126);           // preview each pattern over a neutral bg
+    drawPatternSwatch(c, pat.pattern);
+  }, selectSharePattern);
+  renderShareCard();
+  document.getElementById('shareModal').classList.add('active');
+  document.body.classList.add('modal-open');
+}
+// entry point used by the result row + mint-success panels
+function shareName(name) { openShareModal(name); }
+function closeShareModal() {
+  document.getElementById('shareModal').classList.remove('active');
+  document.body.classList.remove('modal-open');
+}
+function shareCardBlob() { return new Promise((res) => document.getElementById('shareCanvas').toBlob(res, 'image/png')); }
+function shareCardFilename() { return (shareState.name || 'gwei').replace(/\./g, '-') + '.png'; }
+async function shareSaveCard() {
+  const blob = await shareCardBlob(); if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = shareCardFilename();
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+async function shareCopyImage() {
+  try {
+    const blob = await shareCardBlob();
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    flashShareBtn('shareCopyBtn', 'Copied!');
+  } catch (e) { flashShareBtn('shareCopyBtn', "Can't copy"); }
+}
+// Open X's post composer prefilled with text + the "claim yours" CTA (like Lighter's intent share). The card
+// image is attached separately via Save Card / Copy Image (X's web intent can't carry an image).
+function shareOnX() {
+  const text = encodeURIComponent('i just claimed ' + shareState.name + '\n\nclaim yours at gwei.domains');
+  window.open('https://x.com/intent/post?text=' + text, '_blank', 'noopener');
+}
+function flashShareBtn(id, msg) {
+  const b = document.getElementById(id); if (!b) return;
+  const old = b.dataset.label || b.textContent; b.dataset.label = old;
+  b.textContent = msg; setTimeout(() => { b.textContent = old; }, 1500);
+}
+
+// Append a "Share on X" button to a status element (used right after a successful mint).
+function addShareButton(el, name) {
+  if (!el) return;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'share-btn'; b.textContent = 'Share on X';
+  b.onclick = () => shareName(name);
+  el.append(document.createElement('br'), b);
+}
+
 async function showManage(tokenId, name) {
   currentTokenId = tokenId;
   currentTokenName = name;
@@ -2690,6 +2988,19 @@ async function showManage(tokenId, name) {
     const expiryDate = record?.expiresAt ? new Date(Number(record.expiresAt) * 1000).toLocaleDateString() : null;
     const isTopLevel = record?.parent === 0n;
     currentExpiry = record?.expiresAt != null ? BigInt(record.expiresAt) : null;
+
+    // If the connected wallet owns this name, prepend a "Share →" link to the result's link row
+    // ("View on … → · Copy link →"). `name` is bare here, so share the full <name>.gwei.
+    if (isOwner) {
+      const vl = document.querySelector('.view-link');
+      if (vl && !vl.querySelector('.share-inline')) {
+        const displayName = name.endsWith('.gwei') ? name : name + '.gwei';
+        const a = document.createElement('a');
+        a.href = '#'; a.className = 'share-inline'; a.textContent = 'Share social card →';
+        a.addEventListener('click', (e) => { e.preventDefault(); shareName(displayName); });
+        vl.prepend(a, document.createTextNode(' · '));
+      }
+    }
 
     // Build info section
     const addrLink = (addr) => `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;">${addr.slice(0, 8)}...${addr.slice(-6)}</a>`;
