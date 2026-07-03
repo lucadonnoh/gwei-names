@@ -123,6 +123,13 @@ button.secondary:hover { background: var(--surface-hover); }
 .availability.show { display: block; }
 .availability .available { color: var(--fg); }
 .availability .taken { color: var(--fg-dim); }
+/* Subdomain live availability (free / zkpassport panels) — mirrors .availability */
+.sub-avail { font-size: 13px; margin-top: 10px; display: none; letter-spacing: 0.02em; }
+.sub-avail.show { display: block; }
+.sub-avail .available { color: var(--free-accent); }
+.sub-avail .taken { color: #c0392b; }
+:root.dark .sub-avail .taken { color: #f85149; }
+.sub-avail .checking { color: var(--fg-muted); opacity: 0.75; }
 .wallet {
   position: fixed;
   top: max(20px, env(safe-area-inset-top, 0px));
@@ -566,6 +573,62 @@ body.modal-open { overflow: hidden; }
 .free-panel .free-status.error { background: var(--status-error); }
 .free-panel .free-status.success { background: var(--free-status-bg); }
 
+/* ZKPassport claim — mirrors .free-cta / .free-panel, brand color #2039a3 */
+.zk-cta { margin-top: 10px; font-size: 12px; color: #2039a3; cursor: pointer; letter-spacing: 0.03em; }
+:root.dark .zk-cta { color: #6f86e0; }
+.zk-cta:hover { text-decoration: underline; }
+.zk-panel { display: none; margin-top: 16px; padding: 16px; border: 1px solid #c3cbec; background: #f4f6fd; }
+:root.dark .zk-panel { border-color: #26305c; background: #0b0f1f; }
+.zk-panel.show { display: block; }
+.zk-panel label { color: #2039a3; }
+:root.dark .zk-panel label { color: #6f86e0; }
+.zk-panel .zk-intro { font-size: 12px; color: var(--fg); opacity: 0.85; margin-bottom: 6px; line-height: 1.5; }
+.zk-panel .zk-devnote { font-size: 11px; color: var(--fg-muted); margin-bottom: 14px; padding: 8px 10px; border: 1px dashed var(--border-muted); letter-spacing: 0.03em; }
+.zk-panel .zk-input-wrap { display: flex; align-items: baseline; gap: 0; margin-bottom: 12px; }
+.zk-panel .zk-input-wrap input { flex: 1; font-size: 20px; border-bottom: 1px solid #2039a3; min-width: 0; }
+.zk-panel .zk-input-wrap input:focus { border-bottom-width: 2.5px; margin-bottom: -1px; }
+.zk-panel .zk-suffix { font-size: 20px; color: var(--fg-dim); white-space: nowrap; }
+.zk-panel button { background: #2039a3; border-color: #2039a3; color: #fff; }
+.zk-panel button:hover { background: #2039a3; opacity: 0.85; }
+.zk-panel button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); color: var(--btn-dis-fg); }
+.zk-panel .zk-status { font-size: 13px; margin-top: 12px; padding: 10px; background: var(--surface); border: 1px solid var(--border-muted); display: none; }
+.zk-panel .zk-status.show { display: block; }
+.zk-panel .zk-status.error { background: var(--status-error); border-color: transparent; }
+.zk-panel .zk-status.success { background: var(--status-success); border-color: transparent; }
+
+/* ZKPassport QR / status panel */
+.zk-qr-panel { display: none; margin-top: 16px; padding: 16px; border: 1px solid var(--border-muted); background: var(--bg); text-align: center; }
+.zk-qr-panel.show { display: block; }
+.zk-qr-panel h4 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; color: var(--fg); }
+.zk-qr-wrap { display: inline-block; padding: 12px; background: #fff; border-radius: 4px; min-height: 40px; }
+.zk-qr-wrap canvas, .zk-qr-wrap img { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
+.zk-qr-hint { font-size: 11px; color: var(--fg-muted); margin-top: 12px; letter-spacing: 0.03em; }
+.zk-qr-link { font-size: 11px; margin-top: 8px; word-break: break-all; }
+.zk-qr-link a { color: var(--fg); opacity: 0.5; }
+.zk-qr-link a:hover { opacity: 1; }
+.zk-qr-status { font-size: 13px; margin-top: 16px; padding: 12px; background: var(--surface); border: 1px solid var(--border-muted); text-align: left; }
+.zk-qr-status.error { background: var(--status-error); border-color: transparent; }
+
+/* ZKPassport progress checklist */
+.zk-steps { list-style: none; margin: 18px 0 0; padding: 0; text-align: left; }
+.zk-step { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; letter-spacing: 0.02em; }
+.zk-step-ic { flex: 0 0 16px; width: 16px; text-align: center; font-size: 12px; line-height: 1; }
+.zk-step-pending { color: var(--fg-muted); opacity: 0.45; }
+.zk-step-active { color: var(--fg); opacity: 1; }
+.zk-step-active .zk-step-ic { animation: zk-step-pulse 1s ease-in-out infinite; }
+.zk-step-done { color: var(--fg); opacity: 0.85; }
+.zk-step-done .zk-step-ic { color: #3fb950; }
+.zk-step-error { color: #f85149; }
+.zk-step-error .zk-step-ic { color: #f85149; }
+@keyframes zk-step-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ZKPassport result panel */
+.zk-result-panel { display: none; margin-top: 16px; padding: 16px; border: 2px solid var(--pending-border); background: var(--pending-bg); }
+.zk-result-panel.show { display: block; }
+.zk-result-panel .zk-result-name { font-size: 20px; font-weight: 600; margin-bottom: 12px; word-break: break-all; }
+.zk-result-panel a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.zk-result-panel a:hover { opacity: 0.6; }
+
 /* Dark mode toggle */
 .dark-toggle {
   position:fixed;
@@ -670,11 +733,51 @@ body.modal-open { overflow: hidden; }
       <span onclick="toggleFreePanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
     </div>
     <div class="free-input-wrap">
-      <input type="text" id="freeLabelInput" placeholder="yourname">
+      <input type="text" id="freeLabelInput" placeholder="yourname" oninput="onFreeLabelInput()">
       <span class="free-suffix">.id.gwei</span>
     </div>
+    <div id="freeAvail" class="sub-avail"></div>
     <button id="freeMintBtn" onclick="doFreeMint()">Mint</button>
     <div id="freeStatus" class="free-status"></div>
+  </div>
+  <div class="zk-cta" id="zkCta" onclick="toggleZkPanel()" style="display:none;">[new] free zkpassport names available</div>
+  <div id="zkPanel" class="zk-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <label style="margin-bottom:0;">Claim your free zkpassport name</label>
+      <span onclick="toggleZkPanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
+    </div>
+    <div class="zk-intro">You'll scan your passport to prove you're a unique human, but the proof reveals nothing about you or your document. One free name per passport. <a href="https://x.com/ZKPassport" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Learn more about ZKPassport →</a></div>
+    <div class="zk-devnote">Sepolia · dev mode (mock passport).</div>
+    <div class="zk-input-wrap">
+      <input type="text" id="zkLabelInput" placeholder="yourname" oninput="onZkLabelInput()" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <span class="zk-suffix">.zkpassport.gwei</span>
+    </div>
+    <div id="zkAvail" class="sub-avail"></div>
+    <button id="zkClaimBtn" onclick="onZkClaimClick()" disabled>Claim</button>
+    <div id="zkStatus" class="zk-status"></div>
+
+    <!-- QR / status panel (hidden until the flow starts) -->
+    <div id="zkQrPanel" class="zk-qr-panel">
+      <h4>Scan with the ZKPassport app</h4>
+      <div class="zk-qr-wrap"><canvas id="zkQrCanvas"></canvas></div>
+      <div class="zk-qr-hint">Open the ZKPassport app on your phone and scan this code.</div>
+      <div class="zk-qr-applinks" style="font-size:11px;margin-top:6px;opacity:0.55;"><a href="https://apps.apple.com/app/zkpassport/id6477371975" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">App Store</a> · <a href="https://play.google.com/store/apps/details?id=app.zkpassport.zkpassport" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">Google Play</a></div>
+      <div id="zkQrLink" class="zk-qr-link"></div>
+      <div id="zkQrStatus" class="zk-qr-status">Waiting for your phone…</div>
+      <ol id="zkSteps" class="zk-steps">
+        <li class="zk-step zk-step-pending" data-step="scan"><span class="zk-step-ic">○</span><span class="zk-step-label">Scan the QR with the ZKPassport app</span></li>
+        <li class="zk-step zk-step-pending" data-step="prove"><span class="zk-step-ic">○</span><span class="zk-step-label">Generate the proof on your phone</span></li>
+        <li class="zk-step zk-step-pending" data-step="verify"><span class="zk-step-ic">○</span><span class="zk-step-label">Verify the proof in your browser</span></li>
+        <li class="zk-step zk-step-pending" data-step="confirm"><span class="zk-step-ic">○</span><span class="zk-step-label">Confirm the claim in your wallet</span></li>
+        <li class="zk-step zk-step-pending" data-step="mint"><span class="zk-step-ic">○</span><span class="zk-step-label">Mint your .zkpassport.gwei name</span></li>
+      </ol>
+    </div>
+
+    <!-- Result panel -->
+    <div id="zkResultPanel" class="zk-result-panel">
+      <div class="zk-result-name" id="zkResultName"></div>
+      <div id="zkResultLink"></div>
+    </div>
   </div>
 </div>
 
@@ -845,6 +948,7 @@ const NETWORKS = {
     nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
+    humanRegistrar: '', // no HumanRegistrar on mainnet yet
     enabled: true
   },
   sepolia: {
@@ -857,6 +961,7 @@ const NETWORKS = {
     nft: { name: 'Etherscan', asset: 'https://sepolia.etherscan.io/nft', collection: 'https://sepolia.etherscan.io/token' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
+    humanRegistrar: '0xAA6C81c54ecA32e1949b9Ff80eAC21D03261E870', // HumanRegistrar (Sepolia, domain=gwei.domains, allowDevMode)
     enabled: true
   }
 };
@@ -881,6 +986,7 @@ const EXPLORER = NET.explorer;
 const NFT = NET.nft;
 const REGISTRAR = NET.registrar;
 const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id.gwei
+const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
@@ -1027,12 +1133,14 @@ function initFree() {
   const sfx = document.querySelector('#freePanel .free-suffix');
   if (sfx) sfx.textContent = '.' + FREE_ROOT + '.gwei';
   const cta = document.getElementById('freeCta'); if (cta) cta.style.display = '';
-  const panel = document.getElementById('freePanel'); if (panel) panel.classList.add('show');
 }
 function toggleFreePanel() {
   const panel = document.getElementById('freePanel'); if (!panel) return;
   panel.classList.toggle('show');
-  if (panel.classList.contains('show')) { const fi = document.getElementById('freeLabelInput'); if (fi) fi.focus(); }
+  if (panel.classList.contains('show')) {
+    const other = document.getElementById('zkPanel'); if (other) other.classList.remove('show'); // accordion: one open at a time
+    const fi = document.getElementById('freeLabelInput'); if (fi) fi.focus();
+  }
   const st = document.getElementById('freeStatus'); if (st) { st.className = 'free-status'; st.textContent = ''; }
 }
 function showFreeStatus(msg, type) {
@@ -1070,6 +1178,207 @@ async function doFreeMint() {
   btn.disabled = false;
 }
 initFree();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ZKPassport claim: prove you're human with a passport, claim one free
+// <label>.zkpassport.gwei name (one per passport). Targets NET.humanRegistrar,
+// shown only on networks that have one. Ported from the standalone zkpassport page;
+// identifiers are zk-prefixed to avoid clashing with the main dapp's globals.
+// ─────────────────────────────────────────────────────────────────────────────
+const HUMAN_REGISTRAR_ABI = [
+  'function claim((bytes32 version, (bytes32 vkeyHash, bytes proof, bytes32[] publicInputs) proofVerificationData, bytes committedInputs, (uint256 validityPeriodInSeconds, string domain, string scope, bool devMode) serviceConfig) params, string label) returns (uint256 subId)',
+  // Declare the contract's custom errors so a revert decodes to a name instead of "unknown custom error".
+  'error NotVerified()',
+  'error WrongScope()',
+  'error WrongSender()',
+  'error WrongChain()',
+  'error AlreadyClaimed()',
+  'error DevModeNotAllowed()'
+];
+
+function zkEnabled() { return HUMAN_REGISTRAR && !/^0x0+$/.test(HUMAN_REGISTRAR); }
+function initZk() {
+  if (!zkEnabled()) return;
+  const cta = document.getElementById('zkCta'); if (cta) cta.style.display = '';
+}
+initZk();
+
+function toggleZkPanel() {
+  const panel = document.getElementById('zkPanel'); if (!panel) return;
+  panel.classList.toggle('show');
+  if (panel.classList.contains('show')) {
+    const other = document.getElementById('freePanel'); if (other) other.classList.remove('show'); // accordion: one open at a time
+    const zi = document.getElementById('zkLabelInput'); if (zi) zi.focus();
+  }
+  const st = document.getElementById('zkStatus'); if (st) { st.className = 'zk-status'; st.textContent = ''; }
+}
+
+function zkShowStatus(msg, type) {
+  const el = document.getElementById('zkStatus');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'zk-status show' + (type ? ' ' + type : '');
+}
+
+// ── Label: a-z 0-9 hyphen, lowercased, no leading/trailing hyphen ──
+function zkNormalizeLabel(raw) {
+  let s = (raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (/[\u0000-\u0020\u007f.]/.test(s)) return '';
+  if (s.startsWith('-') || s.endsWith('-')) return '';
+  return s;
+}
+
+function onZkLabelInput() {
+  // Live-normalize what the user sees so the label matches what we submit.
+  const el = document.getElementById('zkLabelInput');
+  const cleaned = el.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (cleaned !== el.value) el.value = cleaned;
+  updateZkClaimEnabled();
+  // Live "available / taken" check under the input (display-only; claim still enforces on-chain).
+  clearTimeout(zkAvailDebounce);
+  zkAvailDebounce = setTimeout(() => checkSubAvailability(
+    document.getElementById('zkLabelInput').value, 'zkpassport', '.zkpassport.gwei', 'zkAvail', zkNormalizeLabel
+  ), 350);
+}
+
+// The Claim button enables only once: wallet connected + SDK ready + label non-empty.
+function updateZkClaimEnabled() {
+  const btn = document.getElementById('zkClaimBtn');
+  if (!btn) return;
+  const label = zkNormalizeLabel(document.getElementById('zkLabelInput').value);
+  const ready = !!signer && window.zkpReady === true && !!label && !zkFlowRunning;
+  btn.disabled = !ready;
+}
+
+// ── Live "available / taken" feedback for the free + zkpassport subdomain panels ──
+// Mirrors the top-level #availability behaviour: debounced as you type, races guarded
+// by an incrementing version token so fast typing never paints a stale result.
+// Display-only — the actual claim still enforces availability on-chain.
+let freeAvailDebounce = null; // free panel (.id.gwei) debounce timer
+let zkAvailDebounce = null;   // zk panel (.zkpassport.gwei) debounce timer — kept distinct
+let subAvailVersion = 0;      // shared staleness token across both panels
+
+async function checkSubAvailability(rawLabel, rootLabel, suffix, displayElId, normFn) {
+  const el = document.getElementById(displayElId);
+  if (!el) return;
+  const label = normFn(rawLabel);
+  if (!label) { el.textContent = ''; el.className = 'sub-avail'; return; }
+
+  const thisVersion = ++subAvailVersion;
+  el.innerHTML = '<span class="checking">Checking ' + escapeHtml(label) + suffix + '…</span>';
+  el.className = 'sub-avail show';
+
+  try {
+    if (!readContract) await getRpc();
+    if (thisVersion !== subAvailVersion) return; // a newer keystroke superseded us
+    if (!readContract) { el.textContent = ''; el.className = 'sub-avail'; return; }
+
+    const parentId = localComputeId(rootLabel);
+    const available = await readContract.isAvailable(label, parentId);
+    if (thisVersion !== subAvailVersion) return; // stale — drop the result
+
+    const full = escapeHtml(label) + suffix;
+    el.innerHTML = available
+      ? '<span class="available">' + full + ' is available</span>'
+      : '<span class="taken">' + full + ' is already taken</span>';
+    el.className = 'sub-avail show';
+  } catch (e) {
+    if (thisVersion !== subAvailVersion) return;
+    // RPC can fail — leave the display neutral rather than showing a misleading state.
+    el.textContent = ''; el.className = 'sub-avail';
+  }
+}
+
+function onFreeLabelInput() {
+  clearTimeout(freeAvailDebounce);
+  freeAvailDebounce = setTimeout(() => checkSubAvailability(
+    document.getElementById('freeLabelInput').value, FREE_ROOT, '.' + FREE_ROOT + '.gwei', 'freeAvail', normalizeLabel
+  ), 350);
+}
+
+let zkFlowRunning = false;
+
+async function onZkClaimClick() {
+  const label = zkNormalizeLabel(document.getElementById('zkLabelInput').value);
+  if (!signer) { zkShowStatus('Connect your wallet first', ''); toggleWallet(); return; }
+  if (!label) { zkShowStatus('Enter a name', 'error'); return; }
+  if (window.zkpReady !== true) { zkShowStatus('Still loading the ZKPassport SDK, one moment…', ''); return; }
+
+  zkFlowRunning = true;
+  updateZkClaimEnabled();
+  document.getElementById('zkResultPanel').classList.remove('show');
+  zkShowStatus('Starting proof request…', '');
+  try {
+    await window.zkStartFlow(label);
+  } catch (e) {
+    zkShowStatus(e.shortMessage || e.reason || e.message || 'Claim failed', 'error');
+    zkFlowRunning = false;
+    updateZkClaimEnabled();
+  }
+}
+
+// Turn an ethers error into a readable message. With the custom errors declared in the ABI,
+// a revert decodes to e.revert.name (e.g. "AlreadyClaimed"); map the known ones to plain text.
+function describeClaimError(e) {
+  const friendly = {
+    AlreadyClaimed: 'This passport has already claimed a name. One passport, one name, forever.',
+    NotVerified: 'The passport proof did not verify on-chain.',
+    WrongScope: 'The proof was made for a different app (scope mismatch).',
+    WrongSender: 'The proof is bound to a different wallet than the one connected.',
+    WrongChain: 'The proof is bound to a different chain.',
+    DevModeNotAllowed: 'Dev-mode proofs are not accepted by this contract.',
+  };
+  // ethers decodes custom errors on a staticCall (e.revert.name) but NOT on estimateGas/send, where the
+  // revert only carries the raw selector in e.data. Parse that against our ABI so both paths get a name.
+  let name = e?.revert?.name;
+  const data = e?.data || e?.info?.error?.data;
+  if (!name && typeof data === 'string' && data.length >= 10) {
+    try { name = new ethers.Interface(HUMAN_REGISTRAR_ABI).parseError(data)?.name; } catch (_) {}
+  }
+  if (name) return friendly[name] || (name + ' (contract revert)');
+  return e?.reason || e?.shortMessage || e?.message || 'Claim failed';
+}
+
+// ── The on-chain claim. Called by the module after a proof verifies. ──
+// `params` maps 1:1 onto the `claim` tuple by field name — pass it straight through.
+window.zkSubmitClaim = async (params, label) => {
+  try {
+    if (!signer) { zkShowStatus('Connect your wallet first', 'error'); return; }
+    const c = new ethers.Contract(HUMAN_REGISTRAR, HUMAN_REGISTRAR_ABI, signer);
+    const tx = await wcTransaction(c.claim(params, label), 'Claim name');
+    window.zkSetStep('confirm', 'done');
+    window.zkSetStep('mint', 'active');
+    zkShowStatus('Minting…', '');
+    window.zkSetQrStatus('Minting on Sepolia…');
+    await waitForTx(tx);
+    window.zkSetStep('mint', 'done');
+    zkShowResult(label, tx.hash);
+    zkShowStatus(label + '.zkpassport.gwei minted', 'success');
+  } catch (e) {
+    window.zkFailCurrentStep();
+    const raw = String(e?.message || e?.reason || '').toLowerCase();
+    const cancelled = raw.includes('user rejected') || raw.includes('user denied') || raw.includes('user cancelled');
+    window.zkSetQrStatus(cancelled ? 'Claim cancelled.' : describeClaimError(e), cancelled ? '' : 'error');
+    document.getElementById('zkStatus').classList.remove('show'); // the QR panel carries the outcome; keep the top line clean
+    console.error('[zkp] claim failed', e);
+  } finally {
+    zkFlowRunning = false;
+    updateZkClaimEnabled();
+  }
+};
+
+function zkShowResult(label, hash) {
+  document.getElementById('zkResultName').textContent = label + '.zkpassport.gwei minted';
+  const link = EXPLORER + '/tx/' + hash;
+  document.getElementById('zkResultLink').innerHTML = '<a href="' + link + '" target="_blank" rel="noopener">View transaction on Etherscan →</a>';
+  document.getElementById('zkResultPanel').classList.add('show');
+}
+
+// Enable the Claim button once the SDK module signals readiness.
+window.addEventListener('zkp-ready', updateZkClaimEnabled);
+// In case the module loaded before this listener was attached.
+if (window.zkpReady === true) updateZkClaimEnabled();
 
 // Gateway for .gwei websites - resolves name.gwei.domains to IPFS contenthash
 // URL pattern: https://name.gwei.domains (not name.gwei.gwei.domains)
@@ -1256,6 +1565,14 @@ let isConnecting = false;
 let contract = null;
 let walletEventHandlers = null;
 let isWalletConnect = false;
+
+// Keep the ZKPassport ES-module script in sync with the connected wallet
+// (it reads window.signer / window.connectedAddress).
+function syncWalletGlobals() {
+  window.signer = signer;
+  window.connectedAddress = connectedAddress;
+}
+syncWalletGlobals();
 let wcDeepLink = null;
 
 const eip6963Providers = new Map();
@@ -1569,6 +1886,7 @@ async function connectWithWallet(walletKey) {
     connectedAddress = await signer.getAddress();
     connectedWalletProvider = walletProvider;
     contract = new ethers.Contract(CONTRACT, ABI, signer);
+    syncWalletGlobals();
     updateWalletDisplay();
 
     // Store handlers for cleanup on disconnect
@@ -1591,6 +1909,7 @@ async function connectWithWallet(walletKey) {
 
     await initPending();
     doCheckName();
+    updateZkClaimEnabled();
 
   } catch (error) {
     handleError(error);
@@ -1664,6 +1983,7 @@ function disconnectWallet() {
   contract = null;
   isWalletConnect = false;
   wcDeepLink = null;
+  syncWalletGlobals();
   $('walletBtn').textContent = 'connect';
   updateWcBanner();
   closeWalletModal();
@@ -1671,6 +1991,7 @@ function disconnectWallet() {
   $('commitBtn').disabled = true;
   hideManage();
   doCheckName();
+  updateZkClaimEnabled();
 }
 
 function byteLength(str) {
@@ -2946,6 +3267,10 @@ async function showSubSalesForm() {
     if (hasActiveConfig && !isErc20 && cfg.price > 0n) { currentFeeType = 'eth'; currentPriceStr = ethers.formatEther(cfg.price); }
     if (hasActiveConfig && cfg.payout !== ethers.ZeroAddress && cfg.payout.toLowerCase() !== connectedAddress.toLowerCase()) currentPayoutStr = cfg.payout;
     subSalesFeeType = currentFeeType;
+    // Token gate (advanced): gateToken + minGateBalance. Pre-fill if this name already has one set.
+    const hasGate = hasActiveConfig && cfg.gateToken !== ethers.ZeroAddress;
+    const currentGateTokenStr = hasGate ? cfg.gateToken : '';
+    const currentMinGateStr = hasGate && cfg.minGateBalance > 0n ? cfg.minGateBalance.toString() : '';
 
     let statusHtml = '';
     if (hasActiveConfig) {
@@ -2970,6 +3295,16 @@ async function showSubSalesForm() {
       '</div>' +
       '<label>Payout Address</label>' +
       '<input type="text" id="subSalesPayout" placeholder="Defaults to you" value="' + escapeHtml(currentPayoutStr) + '">' +
+      '<details' + (currentGateTokenStr ? ' open' : '') + ' style="margin-bottom:12px;">' +
+        '<summary style="cursor:pointer;font-size:12px;opacity:0.7;user-select:none;">Advanced — token gate</summary>' +
+        '<div style="margin-top:10px;">' +
+          '<label>Gate token address</label>' +
+          '<input type="text" id="subSalesGateToken" placeholder="0x… — blank means anyone can claim" value="' + escapeHtml(currentGateTokenStr) + '">' +
+          '<label>Minimum balance</label>' +
+          '<input type="text" id="subSalesMinGate" placeholder="1" value="' + escapeHtml(currentMinGateStr) + '">' +
+          '<div style="font-size:10px;opacity:0.4;margin-top:6px;">Only wallets holding at least this many of the token (ERC-20/721/1155) can claim a subdomain. Leave the address blank for no gate.</div>' +
+        '</div>' +
+      '</details>' +
       '<button onclick="doConfigureSubSales()">Enable Subdomain Sales</button>' +
       (hasActiveConfig ? '<button class="secondary" onclick="doDisableSubSales()">Disable</button>' : '') +
       '<button class="secondary" onclick="$(\'manageForm\').classList.remove(\'show\')">Cancel</button>' +
@@ -2992,6 +3327,16 @@ async function doConfigureSubSales() {
     }
     const payoutAddr = $('subSalesPayout')?.value.trim() || ethers.ZeroAddress;
     if (payoutAddr !== ethers.ZeroAddress && !ethers.isAddress(payoutAddr)) { showStatus('Invalid payout address', 'error'); return; }
+    // Token gate (advanced): blank address = no gate. A set address needs a positive minimum balance.
+    const gateInput = $('subSalesGateToken')?.value.trim() || '';
+    const gateToken = gateInput || ethers.ZeroAddress;
+    if (gateToken !== ethers.ZeroAddress && !ethers.isAddress(gateToken)) { showStatus('Invalid gate token address', 'error'); return; }
+    let minGateBalance = 0n;
+    if (gateToken !== ethers.ZeroAddress) {
+      const minStr = $('subSalesMinGate')?.value.trim() || '1';
+      try { minGateBalance = BigInt(minStr); } catch { showStatus('Invalid minimum balance', 'error'); return; }
+      if (minGateBalance < 1n) { showStatus('Minimum balance must be at least 1', 'error'); return; }
+    }
     // Flash mode needs operator approval so the registrar can borrow the name per claim.
     const nft = readContract || contract;
     const isApproved = await nft.isApprovedForAll(connectedAddress, REGISTRAR);
@@ -3003,7 +3348,7 @@ async function doConfigureSubSales() {
     }
     showStatus('Configuring subdomain sales...', '');
     const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
-    const tx = await wcTransaction(registrar.configure(currentTokenId, payoutAddr, feeToken, price, true, ethers.ZeroAddress, 0), 'Approve configuration');
+    const tx = await wcTransaction(registrar.configure(currentTokenId, payoutAddr, feeToken, price, true, gateToken, minGateBalance), 'Approve configuration');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus('Subdomain sales enabled!', 'success', tx.hash);
@@ -3448,6 +3793,131 @@ console.log('GNS init:', {
   ens_normalize: typeof ens_normalize === 'function',
   localStorage: (() => { try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); return true; } catch(e) { return false; } })()
 });
+</script>
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+     ES module: the ZKPassport request/verify lifecycle. Renders the QR,
+     drives the status line, and hands the verifier params to zkSubmitClaim().
+     Imports the vendored SDK same-origin from /vendor/entry.js.
+     ───────────────────────────────────────────────────────────────────────── -->
+<script type="module">
+import { ZKPassport } from "/vendor/entry.js";
+import QRCode from "https://esm.sh/qrcode@1.5.4";
+
+// Update the ZKPassport QR panel's status line (red on error). Defined on window
+// so the classic script can also drive it during the mint step.
+window.zkSetQrStatus = (msg, kind) => {
+  const el = document.getElementById("zkQrStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "zk-qr-status" + (kind === "error" ? " error" : "");
+};
+const setStatus = window.zkSetQrStatus;
+
+// Live elapsed counter for the in-browser verify step (single-threaded WASM, up to a
+// minute). Keeps the status line ticking so the wait doesn't look frozen while bb.js runs.
+let verifyTimer = null;
+function startVerifyTimer() {
+  stopVerifyTimer();
+  const t0 = performance.now();
+  const tick = () => setStatus("Verifying the proof in your browser (runs locally, can take up to a minute). Elapsed: " + Math.round((performance.now() - t0) / 1000) + "s");
+  tick();
+  verifyTimer = setInterval(tick, 1000);
+}
+function stopVerifyTimer() {
+  if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null; }
+}
+
+// Progress checklist: mark each step pending / active / done (green) / error.
+let currentStep = null;
+window.zkSetStep = (id, state) => {
+  const li = document.querySelector('#zkSteps li[data-step="' + id + '"]');
+  if (li) {
+    li.className = 'zk-step zk-step-' + state;
+    const ic = li.querySelector('.zk-step-ic');
+    if (ic) ic.textContent = state === 'done' ? '✓' : state === 'error' ? '✕' : state === 'active' ? '●' : '○';
+  }
+  if (state === 'active') currentStep = id;
+};
+window.zkResetSteps = () => {
+  currentStep = null;
+  document.querySelectorAll('#zkSteps li').forEach((li) => {
+    li.className = 'zk-step zk-step-pending';
+    const ic = li.querySelector('.zk-step-ic');
+    if (ic) ic.textContent = '○';
+  });
+};
+window.zkFailCurrentStep = () => { if (currentStep) window.zkSetStep(currentStep, 'error'); };
+const setStep = window.zkSetStep;
+
+// Render the deep-link as a QR code, revealing the panel.
+window.zkRenderQR = async (url) => {
+  const panel = document.getElementById("zkQrPanel");
+  panel.classList.add("show");
+  const canvas = document.getElementById("zkQrCanvas");
+  // Draw with an INTEGER pixels-per-module `scale` so every module is a uniform square.
+  // (Passing `width` makes qrcode fit a target size, rounding modules to uneven sizes.)
+  const opts = { errorCorrectionLevel: "M", margin: 2 };
+  try {
+    const count = QRCode.create(url, opts).modules.size;
+    const scale = Math.max(2, Math.floor(320 / (count + opts.margin * 2)));
+    await QRCode.toCanvas(canvas, url, Object.assign({ scale }, opts));
+  } catch (e) {
+    // Fallback: swap the canvas for an <img> data URL.
+    try {
+      const dataUrl = await QRCode.toDataURL(url, Object.assign({ scale: 4 }, opts));
+      const img = document.createElement("img");
+      img.src = dataUrl;
+      canvas.replaceWith(img);
+    } catch (e2) {}
+  }
+  const link = document.getElementById("zkQrLink");
+  if (link) link.innerHTML = '<a href="' + url + '" target="_blank" rel="noopener">Open the request link →</a>';
+};
+const renderQR = window.zkRenderQR;
+
+window.zkStartFlow = async (label) => {
+  const account = window.connectedAddress; // checksummed 0x… set by the wallet code
+  const zkp = new ZKPassport(window.location.hostname); // domain must match the contract's domain ("localhost" locally)
+  const builder = await zkp.request({
+    name: "gwei name service",
+    purpose: "Prove you're human to claim a .zkpassport.gwei name",
+    scope: "zkpassport.gwei",
+    mode: "compressed-evm",   // REQUIRED — yields an outer_evm proof
+    devMode: true,            // → Sepolia
+  });
+  const res = builder
+    .bind("user_address", account)
+    .bind("chain", "ethereum_sepolia")
+    .done();
+
+  renderQR(res.url);
+  window.zkResetSteps();
+  setStep("scan", "active");
+  setStatus("Scan the QR code with the ZKPassport app.");
+
+  res.onBridgeConnect(()   => setStatus("Phone connected…"));
+  res.onRequestReceived(() => { setStep("scan", "done"); setStep("prove", "active"); setStatus("Request received on your phone…"); });
+  res.onGeneratingProof(() => { setStep("prove", "active"); setStatus("Generating the proof on your phone… (can take ~30s)"); });
+  res.onProofGenerated(()  => { setStep("prove", "done"); setStep("verify", "active"); startVerifyTimer(); });
+  res.onReject(()          => { stopVerifyTimer(); window.zkFailCurrentStep(); setStatus("Rejected on the phone.", "error"); });
+  res.onError((msg)        => { stopVerifyTimer(); window.zkFailCurrentStep(); setStatus("ZKPassport error: " + msg, "error"); });
+  res.onResult(async ({ verified, proofs, sdkInstance }) => {
+    stopVerifyTimer();
+    if (!verified) { setStep("verify", "error"); return setStatus("Proof did not verify.", "error"); }
+    const evmProof = proofs.find(p => p.name?.startsWith("outer_evm"));
+    if (!evmProof) { setStep("verify", "error"); return setStatus("No outer_evm proof returned.", "error"); }
+    const params = sdkInstance.getSolidityVerifierParameters({ proof: evmProof, scope: "zkpassport.gwei", devMode: true });
+    setStep("verify", "done");
+    setStep("confirm", "active");
+    setStatus("Proof verified. Confirm the claim in your wallet…");
+    await window.zkSubmitClaim(params, label);
+  });
+};
+
+// Signal readiness so the Claim button can enable.
+window.zkpReady = true;
+window.dispatchEvent(new Event("zkp-ready"));
 </script>
 
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
