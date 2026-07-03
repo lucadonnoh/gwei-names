@@ -2704,7 +2704,7 @@ const SHARE_BGS = [
 // Patterns are a separate choice that overlays whatever background colour is picked. null = plain.
 const SHARE_PATTERNS = [
   { name: 'None',    pattern: null },
-  { name: 'No DAO',  pattern: 'nodao' },
+  { name: 'No owners', pattern: 'nodao' },
   { name: 'Own',     pattern: 'own' },
   { name: 'Take It', pattern: 'cati' },
 ];
@@ -2735,11 +2735,11 @@ function drawNoDaoPattern(ctx, W, H) {
   o.lineCap = 'round'; o.lineJoin = 'round';
   o.strokeStyle = '#fff'; o.fillStyle = '#fff';
   o.textAlign = 'center'; o.textBaseline = 'middle';
-  o.font = '800 40px Helvetica, Arial, sans-serif';
+  o.font = '800 26px Helvetica, Arial, sans-serif';
   const step = 245, vStep = step * Math.sqrt(3) / 2, r = 64, d = r * Math.SQRT1_2;
   for (let gy = 0, y = 36; y < H + vStep; y += vStep, gy++) {
     for (let x = 36 + (gy % 2 ? step / 2 : 0); x < W + step; x += step) {
-      o.fillText('DAO', x, y + 1);
+      o.fillText('owners', x, y + 1);
       o.lineWidth = 6;
       o.beginPath(); o.arc(x, y, r, 0, Math.PI * 2); o.stroke();
       o.beginPath(); o.moveTo(x - d, y - d); o.lineTo(x + d, y + d); o.stroke();
@@ -2778,9 +2778,9 @@ function drawPatternSwatch(ctx, id) {
   const cx = 120, cy = 63;
   if (id === 'nodao') {
     ctx.lineCap = 'round'; ctx.lineWidth = 6;
-    ctx.font = '800 34px Helvetica, Arial, sans-serif';
+    ctx.font = '800 20px Helvetica, Arial, sans-serif';
     const r = 48, d = r * Math.SQRT1_2;
-    ctx.fillText('DAO', cx, cy + 1);
+    ctx.fillText('owners', cx, cy + 1);
     ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx - d, cy - d); ctx.lineTo(cx + d, cy + d); ctx.stroke();
   } else if (id === 'own') {
