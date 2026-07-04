@@ -14,15 +14,46 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
 <script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js" integrity="sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM" crossorigin="anonymous"></script>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm" integrity="sha384-wZEz5bl83QiQdUg5m/tIOQtZl9ncAoDleaNxEJNoNRmYLBpEprsT4si9P2xOvSbx" crossorigin="anonymous">
 <script>
-// Load ens-normalize with integrity via modulepreload
+// Load ens-normalize with integrity via modulepreload. Some networks and content
+// blockers block the primary CDN entirely (the +esm module), so fall back to the
+// plain npm dist file on two mirrors, fetched and SHA-384-verified before import
+// so the fallbacks are integrity-pinned too.
 (async () => {
+  const MIRRORS = [
+    'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs',
+    'https://unpkg.com/@adraffy/ens-normalize@1.11.0/dist/index.mjs'
+  ];
+  // sha384 of the npm package's dist/index.mjs (identical bytes on both mirrors)
+  const MIRROR_SHA384 = 'wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13';
+
+  async function importVerified(url) {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
+    let bin = '';
+    for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
+    if (btoa(bin) !== MIRROR_SHA384) throw new Error('integrity mismatch');
+    const blobUrl = URL.createObjectURL(new Blob([buf], { type: 'text/javascript' }));
+    try { return await import(blobUrl); } finally { URL.revokeObjectURL(blobUrl); }
+  }
+
+  let mod = null;
   try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm');
+    mod = await import('https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm');
+  } catch (e) {
+    console.warn('Primary ens-normalize CDN failed, trying mirrors:', e);
+    for (const url of MIRRORS) {
+      try { mod = await importVerified(url); break; } catch (e2) { console.warn('Mirror failed:', url, e2); }
+    }
+  }
+
+  if (mod) {
     window.ens_normalize = mod.ens_normalize;
     window.ens_beautify = mod.ens_beautify;
     window.ensNormalizeReady = true;
-  } catch (e) {
-    console.error('Failed to load ens-normalize:', e);
+  } else {
+    console.error('Failed to load ens-normalize from all sources');
     // Fallback: contract-compatible normalization only
     window.ens_normalize = null;
     window.ensNormalizeReady = false;
@@ -1469,7 +1500,23 @@ const ABI = [
   'function registerSubdomain(string label, uint256 parentId) returns (uint256)',
   'function isApprovedForAll(address owner, address operator) view returns (bool)',
   'function setApprovalForAll(address operator, bool approved)',
-  'function reverseResolve(address addr) view returns (string)'
+  'function reverseResolve(address addr) view returns (string)',
+  'function commitments(bytes32 commitment) view returns (uint256)',
+  // Custom errors, so ethers can decode reverts into readable names
+  'error Expired()',
+  'error TooDeep()',
+  'error EmptyLabel()',
+  'error InvalidName()',
+  'error Unauthorized()',
+  'error InvalidLength()',
+  'error NotParentOwner()',
+  'error InsufficientFee()',
+  'error AlreadyCommitted()',
+  'error CommitmentTooNew()',
+  'error CommitmentTooOld()',
+  'error AlreadyRegistered()',
+  'error CommitmentNotFound()',
+  'error TokenDoesNotExist()'
 ];
 
 const MIN_COMMIT_AGE = 60;
@@ -2064,11 +2111,68 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// Human-readable explanations for the registry's custom errors
+const CONTRACT_ERROR_HELP = {
+  AlreadyRegistered: 'This name is already registered (someone may have just taken it). Try another name.',
+  CommitmentNotFound: 'No matching commitment found. A previous registration attempt may be stuck in your wallet (cancel or speed it up), or you switched accounts. Otherwise, commit again.',
+  CommitmentTooNew: 'Too soon after the commitment. Wait a minute and try again.',
+  CommitmentTooOld: 'The commitment expired (older than 24 hours). Please commit again.',
+  AlreadyCommitted: 'An identical commitment is already pending. Wait 60 seconds, then register.',
+  InsufficientFee: 'The sent amount no longer covers the fee (an expiry premium may apply). Try again.',
+  InvalidName: 'The registry rejected this name: invalid characters, or a leading/trailing hyphen.',
+  InvalidLength: 'The name must be between 1 and 255 bytes.',
+  EmptyLabel: 'The name is empty.',
+  Expired: 'This name is expired.',
+  Unauthorized: 'The connected wallet is not allowed to do this.',
+  NotParentOwner: 'Only the parent name owner can do this.',
+  TooDeep: 'Subdomains can only be nested 10 levels deep.',
+  TokenDoesNotExist: 'This name does not exist.',
+  TransferToNonERC721ReceiverImplementer: 'Your connected account cannot receive NFTs: it is a smart account (or has an EIP-7702 delegation) without NFT support. Remove the delegation in your wallet (revoke smart account / switch back to EOA) or use another address.'
+};
+// 4-byte selectors of the same errors, for raw provider errors ethers cannot decode
+const CONTRACT_ERROR_SELECTORS = {
+  '0x203d82d8': 'Expired',
+  '0x88ac5cad': 'TooDeep',
+  '0xcccf65f5': 'EmptyLabel',
+  '0x430f13b3': 'InvalidName',
+  '0x82b42900': 'Unauthorized',
+  '0x947d5a84': 'InvalidLength',
+  '0x4b11e336': 'NotParentOwner',
+  '0x025dbdd4': 'InsufficientFee',
+  '0xbfec5558': 'AlreadyCommitted',
+  '0xcba3a53b': 'CommitmentTooNew',
+  '0xcfef9a95': 'CommitmentTooOld',
+  '0x3a81d6fc': 'AlreadyRegistered',
+  '0xb6682ad2': 'CommitmentNotFound',
+  '0xceea21b6': 'TokenDoesNotExist',
+  '0xd1a57ed6': 'TransferToNonERC721ReceiverImplementer'
+};
+
+function decodeContractError(e) {
+  // ethers v6 decodes errors that are present in the ABI
+  let name = e && e.revert && e.revert.name;
+  if (!name) {
+    // Selector sniffing as a fallback: look for revert data in the error payload
+    let blob = '';
+    try { blob = JSON.stringify({ d: e && e.data, i: e && e.info, e: e && e.error }); } catch (_) {}
+    const m = blob.match(/0x[0-9a-f]{8}/i);
+    if (m) name = CONTRACT_ERROR_SELECTORS[m[0].toLowerCase()];
+  }
+  if (!name) return null;
+  return { name, help: CONTRACT_ERROR_HELP[name] };
+}
+
 function handleError(e) {
   const msg = (e.message || e.reason || String(e)).toLowerCase();
   // Silently ignore user rejections
   if (msg.includes('user rejected') || msg.includes('user denied') || msg.includes('user cancelled')) {
     $('status').classList.remove('show');
+    return;
+  }
+  // Explain known contract reverts instead of "unknown custom error"
+  const decoded = decodeContractError(e);
+  if (decoded) {
+    showStatus(decoded.help || ('Reverted: ' + decoded.name), 'error');
     return;
   }
   // Extract clean error message
@@ -2369,6 +2473,27 @@ async function doCheckName() {
   }
 }
 
+// reveal() mints with safeMint, which requires accounts that have code (smart
+// accounts, EIP-7702 delegated EOAs) to answer the onERC721Received callback.
+// Probe it up front so users don't pay for a commit they can never reveal.
+const ERC721_RECEIVED_SELECTOR = '0x150b7a02';
+async function canReceiveNfts(addr) {
+  try {
+    const provider = rpcProvider || await getRpc();
+    const code = await provider.getCode(addr);
+    if (code === '0x') return true; // plain EOA: safeMint skips the callback
+    const data = ERC721_RECEIVED_SELECTOR + ethers.AbiCoder.defaultAbiCoder().encode(
+      ['address', 'address', 'uint256', 'bytes'],
+      [CONTRACT, addr, 0, '0x']
+    ).slice(2);
+    const result = await provider.call({ to: addr, data });
+    return result.slice(0, 10) === ERC721_RECEIVED_SELECTOR;
+  } catch (e) {
+    // A revert means the account rejects the callback; on RPC failures don't block
+    return e && e.code === 'CALL_EXCEPTION' ? false : true;
+  }
+}
+
 async function doCommit() {
   const name = normalizeLabel($('nameInput').value);
   if (!name || !signer) return;
@@ -2381,6 +2506,12 @@ async function doCommit() {
 
     const secret = ethers.hexlify(ethers.randomBytes(32));
     const userAddr = await signer.getAddress();
+
+    if (!(await canReceiveNfts(userAddr))) {
+      $('commitBtn').disabled = false;
+      showStatus(CONTRACT_ERROR_HELP.TransferToNonERC721ReceiverImplementer, 'error');
+      return;
+    }
     const rc = readContract || contract;
     const commitment = await rc.makeCommitment(name, userAddr, secret);
 
@@ -2476,11 +2607,37 @@ async function doReveal() {
     const tokenId = localComputeId(pending.name);
     const results = await multicall([
       { fn: 'getFee', args: [byteLength(pending.name)] },
-      { fn: 'getPremium', args: [tokenId] }
+      { fn: 'getPremium', args: [tokenId] },
+      { fn: 'commitments', args: [pending.commitment] },
+      { fn: 'isAvailable', args: [pending.name, 0] }
     ]);
-    if (!results[0] || !results[1]) {
+    if (!results[0] || !results[1] || !results[2] || !results[3]) {
       throw new Error('Failed to fetch fee data');
     }
+
+    // Verify the commitment is actually on-chain: the commit tx may have been
+    // dropped or replaced even if the UI saw it confirmed
+    const committedAt = Number(results[2][0]);
+    if (committedAt === 0) {
+      clearPending();
+      showStatus('Commitment not found on-chain (the commit transaction may have been dropped or replaced). Please commit again.', 'error');
+      return;
+    }
+    // Re-check the timer against the on-chain commit time, in case the device
+    // clock is off (the local check above uses the device clock)
+    const chainElapsed = Math.floor(Date.now() / 1000) - committedAt;
+    if (chainElapsed < MIN_COMMIT_AGE) {
+      showStatus('Wait ' + Math.max(1, MIN_COMMIT_AGE - chainElapsed) + ' more seconds', 'error');
+      return;
+    }
+
+    // Bail out early if the name was registered by someone else mid-flow
+    if (!results[3][0]) {
+      clearPending();
+      showStatus(pending.name + '.gwei was just registered by someone else.', 'error');
+      return;
+    }
+
     const total = results[0][0] + results[1][0];
 
     showStatus('Registering ' + pending.name + '.gwei...', '');
