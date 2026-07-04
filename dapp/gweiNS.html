@@ -797,7 +797,7 @@ body.modal-open { overflow: hidden; }
       <span onclick="toggleZkPanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
     </div>
     <div class="zk-intro">You'll scan your passport to prove you're a unique human, but the proof reveals nothing about you or your document. One free name per passport. <a href="https://x.com/ZKPassport" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Learn more about ZKPassport →</a></div>
-    <div class="zk-devnote">Sepolia · dev mode (mock passport).</div>
+    <div class="zk-devnote" id="zkDevNote">Sepolia · dev mode (mock passport).</div>
     <div class="zk-input-wrap">
       <input type="text" id="zkLabelInput" placeholder="yourname" oninput="onZkLabelInput()" autocomplete="off" autocapitalize="off" spellcheck="false">
       <span class="zk-suffix">.zkpassport.gwei</span>
@@ -1292,6 +1292,12 @@ function zkEnabled() { return HUMAN_REGISTRAR && !/^0x0+$/.test(HUMAN_REGISTRAR)
 function initZk() {
   if (!zkEnabled()) return;
   const cta = document.getElementById('zkCta'); if (cta) cta.style.display = '';
+  // The devnote only applies to testnet (dev-mode mock passports); mainnet verifies real passports.
+  const note = document.getElementById('zkDevNote');
+  if (note) {
+    if (NET.chainId === 1) note.style.display = 'none';
+    else note.textContent = CHAIN_NAME + ' · dev mode (mock passport).';
+  }
   updateZkMintedCount();
 }
 // Count HumanNameClaimed events (chunked to respect RPC block-range limits) and, if any, append
@@ -1462,7 +1468,7 @@ window.zkSubmitClaim = async (params, label) => {
     window.zkSetStep('confirm', 'done');
     window.zkSetStep('mint', 'active');
     zkShowStatus('Minting…', '');
-    window.zkSetQrStatus('Minting on Sepolia…');
+    window.zkSetQrStatus('Minting on ' + CHAIN_NAME + '…');
     await waitForTx(tx);
     window.zkSetStep('mint', 'done');
     zkShowResult(label, tx.hash);
@@ -1985,7 +1991,7 @@ async function connectWithWallet(walletKey) {
               params: [{
                 chainId: CHAIN_ID_HEX,
                 chainName: CHAIN_NAME,
-                nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+                nativeCurrency: { name: NET.chainId === 1 ? 'Ether' : 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
                 rpcUrls: RPC_ENDPOINTS,
                 blockExplorerUrls: [EXPLORER]
               }]
