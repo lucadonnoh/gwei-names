@@ -1283,9 +1283,7 @@ const HUMAN_REGISTRAR_ABI = [
   'error WrongSender()',
   'error WrongChain()',
   'error AlreadyClaimed()',
-  'error DevModeNotAllowed()',
-  // Emitted once per successful claim — counted to show "(N minted)" on the CTA.
-  'event HumanNameClaimed(bytes32 indexed uniqueIdentifier, address indexed human, uint256 indexed subId, string label)'
+  'error DevModeNotAllowed()'
 ];
 
 function zkEnabled() { return HUMAN_REGISTRAR && !/^0x0+$/.test(HUMAN_REGISTRAR); }
@@ -1300,23 +1298,29 @@ function initZk() {
   }
   updateZkMintedCount();
 }
-// Count HumanNameClaimed events (chunked to respect RPC block-range limits) and, if any, append
-// "(N minted)" to the CTA. Best-effort — if the log query fails, the label is left unchanged.
+// Count HumanNameClaimed events and, if any, append "(N minted)" to the CTA. Scans logs the
+// same way the stats section does: raw eth_getLogs against the dedicated logs RPCs (the racing
+// read RPCs throttle getLogs), chunked and cached in localStorage so reloads only scan new blocks.
+// Best-effort — if the log query fails, the label is left unchanged.
+const ZK_CLAIM_TOPIC = '0xbe83f1294333749b7a1d29ed13640d6754be3f262455473ce8776175b12f67ea'; // HumanNameClaimed
+const ZK_COUNT_KEY = 'gwei_zkcount_' + CHAIN_ID;
 async function updateZkMintedCount() {
   const cta = document.getElementById('zkCta');
-  if (!cta || !zkEnabled()) return;
+  if (!cta || !zkEnabled() || !STATS_RPCS.length || !NET.humanRegistrarBlock) return;
+  // cache: { lastBlock, count }
+  let cache = { lastBlock: NET.humanRegistrarBlock - 1, count: 0 };
+  try { const c = JSON.parse(localStorage.getItem(ZK_COUNT_KEY)); if (c && typeof c.count === 'number' && c.lastBlock >= NET.humanRegistrarBlock - 1) cache = c; } catch (e) {}
   try {
-    const provider = rpcProvider || await getRpc();
-    const hr = new ethers.Contract(HUMAN_REGISTRAR, HUMAN_REGISTRAR_ABI, provider);
-    const filter = hr.filters.HumanNameClaimed();
-    const latest = await provider.getBlockNumber();
-    let from = NET.humanRegistrarBlock || 0, count = 0;
-    while (from <= latest) {
+    const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
+    for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
       const to = Math.min(from + 9000, latest);
-      count += (await hr.queryFilter(filter, from, to)).length;
-      from = to + 1;
+      cache.count += (await statsRpc('eth_getLogs', [{ address: HUMAN_REGISTRAR,
+        topics: [ZK_CLAIM_TOPIC],
+        fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }])).length;
     }
-    cta.textContent = '[new] free zkpassport names available (' + count + ' minted)';
+    cache.lastBlock = latest;
+    try { localStorage.setItem(ZK_COUNT_KEY, JSON.stringify(cache)); } catch (e) {}
+    if (cache.count > 0) cta.textContent = '[new] free zkpassport names available (' + cache.count + ' minted)';
   } catch (e) { /* leave the label as-is */ }
 }
 initZk();
