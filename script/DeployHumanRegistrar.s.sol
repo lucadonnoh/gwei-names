@@ -41,6 +41,9 @@ contract DeployHumanRegistrar is Script {
         string memory hrDomain = vm.envOr("HR_DOMAIN", string("gwei.domains"));
         // allowDevMode MUST be false on mainnet. Set HR_ALLOW_DEVMODE=true only for a Sepolia mock test.
         bool allowDevMode = vm.envOr("HR_ALLOW_DEVMODE", false);
+        // HR_DEPLOY_ONLY=true deploys the contract and skips configure + setApprovalForAll — for when the
+        // deployer key is not the zkpassport.gwei owner (mainnet: the owner runs those two calls itself).
+        bool deployOnly = vm.envOr("HR_DEPLOY_ONLY", false);
 
         vm.startBroadcast();
 
@@ -48,13 +51,15 @@ contract DeployHumanRegistrar is Script {
             IZKPassportVerifier(VERIFIER), ISubdomainRegistrar(REGISTRAR), humanId, hrDomain, allowDevMode
         );
 
-        // Re-point zkpassport.gwei's gate at the new registrar: free, flash mode, gate balance 1.
-        // payout = address(0) → the registrar defaults it to the caller (the owner).
-        IRegistrarConfig(REGISTRAR).configure(humanId, address(0), address(0), 0, true, address(hr), 1);
+        if (!deployOnly) {
+            // Re-point zkpassport.gwei's gate at the new registrar: free, flash mode, gate balance 1.
+            // payout = address(0) → the registrar defaults it to the caller (the owner).
+            IRegistrarConfig(REGISTRAR).configure(humanId, address(0), address(0), 0, true, address(hr), 1);
 
-        // Flash mode pulls the parent from the owner at mint time, so the owner must approve the
-        // registrar. Idempotent — a no-op if already approved from the earlier deployment.
-        INameOps(NAME_NFT).setApprovalForAll(REGISTRAR, true);
+            // Flash mode pulls the parent from the owner at mint time, so the owner must approve the
+            // registrar. Idempotent — a no-op if already approved from the earlier deployment.
+            INameOps(NAME_NFT).setApprovalForAll(REGISTRAR, true);
+        }
 
         vm.stopBroadcast();
 

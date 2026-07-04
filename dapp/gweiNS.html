@@ -1034,7 +1034,7 @@ const NETWORKS = {
     nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
-    humanRegistrar: '', // no HumanRegistrar on mainnet yet
+    humanRegistrar: '0xA4283D56f523d05bBd46e483f7861d6D10Cb330A', // HumanRegistrar (mainnet, domain=gwei.domains, allowDevMode=false)
     enabled: true
   },
   sepolia: {
@@ -4394,17 +4394,22 @@ const renderQR = window.zkRenderQR;
 window.zkStartFlow = async (label) => {
   preloadVerifier(); // start fetching the ~3.5 MB verifier now so it overlaps the scan + proof generation
   const account = window.connectedAddress; // checksummed 0x… set by the wallet code
+  // devMode ↔ chain are coupled: mainnet verifies REAL passports (devMode false); Sepolia's verifier registry
+  // only holds ZKR MOCK passports (devMode true). The request and getSolidityVerifierParameters MUST agree.
+  const zkMainnet = NET.chainId === 1;
+  const zkDevMode = !zkMainnet;
+  const zkChain = zkMainnet ? "ethereum" : "ethereum_sepolia";
   const zkp = new ZKPassport(window.location.hostname); // domain must match the contract's domain ("localhost" locally)
   const builder = await zkp.request({
     name: "gwei name service",
     purpose: "Prove you're human to claim a .zkpassport.gwei name",
     scope: "zkpassport.gwei",
     mode: "compressed-evm",   // REQUIRED — yields an outer_evm proof
-    devMode: true,            // → Sepolia
+    devMode: zkDevMode,
   });
   const res = builder
     .bind("user_address", account)
-    .bind("chain", "ethereum_sepolia")
+    .bind("chain", zkChain)
     .done();
 
   renderQR(res.url);
@@ -4423,7 +4428,7 @@ window.zkStartFlow = async (label) => {
     if (!verified) { setStep("verify", "error"); return setStatus("Proof did not verify.", "error"); }
     const evmProof = proofs.find(p => p.name?.startsWith("outer_evm"));
     if (!evmProof) { setStep("verify", "error"); return setStatus("No outer_evm proof returned.", "error"); }
-    const params = sdkInstance.getSolidityVerifierParameters({ proof: evmProof, scope: "zkpassport.gwei", devMode: true });
+    const params = sdkInstance.getSolidityVerifierParameters({ proof: evmProof, scope: "zkpassport.gwei", devMode: zkDevMode });
     setStep("verify", "done");
     setStep("confirm", "active");
     setStatus("Proof verified. Confirm the claim in your wallet…");
