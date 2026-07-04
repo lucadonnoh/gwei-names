@@ -19,6 +19,7 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 |---|---|
 | `NameNFT.sol` | [`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) |
 | `SubdomainRegistrar.sol` | [`0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c`](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) |
+| `GnsUniversalResolver.sol` | [`0xD658131FFB6D732335d37f199374289F1b31564F`](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) |
 
 `NameNFT` takes no constructor args; `SubdomainRegistrar`'s constructor takes the deployed `NameNFT` address.
 
@@ -604,6 +605,40 @@ The gateway is a Cloudflare Worker (or equivalent) on the `gwei.domains` wildcar
 **Root domain** (`gwei.domains`) resolves to `gns.gwei` (the official dapp).
 
 > `gwei.domains` is the project's own gateway domain (the analogue of wei-names' `wei.domains`); it's the one piece of off-chain infrastructure GNS relies on. Until it's registered and the worker is deployed, name websites remain viewable through any public IPFS gateway (e.g. `https://ipfs.io/ipfs/<cid>`).
+
+---
+
+## Universal Resolver (wallets & dapps)
+
+`NameNFT` implements the ENS resolver profile (`addr(bytes32)`, `text`, `contenthash`), but modern ENS tooling never calls resolver contracts directly: viem's `getEnsAddress` / `getEnsName` / `getEnsAvatar` (and everything built on them, including wagmi and wallets like Ambire) talk to a router contract, the "universal resolver", through `resolveWithGateways` / `reverseWithGateways`. `GnsUniversalResolver.sol` is that router for GNS: a stateless, ownerless adapter that forwards resolver-profile calls to `NameNFT` and wraps `reverseResolve` for reverse lookups.
+
+With it, any viem-based app resolves `.gwei` names by passing one option:
+
+```javascript
+import { normalize } from 'viem/ens';
+
+const GNS_UNIVERSAL_RESOLVER = '0xD658131FFB6D732335d37f199374289F1b31564F'; // mainnet + Sepolia
+
+const address = await client.getEnsAddress({
+  name: normalize('alice.gwei'),
+  universalResolverAddress: GNS_UNIVERSAL_RESOLVER
+});
+const name = await client.getEnsName({ address, universalResolverAddress: GNS_UNIVERSAL_RESOLVER });
+const avatar = await client.getEnsAvatar({
+  name: normalize('alice.gwei'),
+  universalResolverAddress: GNS_UNIVERSAL_RESOLVER
+});
+```
+
+Behavior notes:
+
+- Unregistered/expired names and addresses without a primary name yield empty values, which viem maps to `null`. No reverts, so integrators need no error handling.
+- Reverse lookups inherit NameNFT's on-chain forward check (a name that no longer resolves back to the queried address is not returned) and answer coin type 60 (ETH) only.
+- `findResolver(bytes)` (used by viem's `getEnsResolver`) computes the EIP-137 namehash from the DNS-encoded name and always returns `NameNFT`.
+- Gateway parameters are ignored: GNS is fully on-chain, so there is never a CCIP-read round trip.
+- Requires the post-2025 universal resolver call shape (viem >= 2.23). ethers v6 walks the ENS registry directly and cannot be pointed at a custom name service; ethers-based integrators should call `NameNFT.resolve` / `reverseResolve` directly instead.
+
+Deployed and verified at [`0xD658131FFB6D732335d37f199374289F1b31564F`](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) on **Ethereum mainnet and Sepolia** (same address on both, same fresh-deployer/nonce trick as NameNFT; script: `script/DeployGnsUniversalResolver.s.sol`).
 
 ---
 

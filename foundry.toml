@@ -38,4 +38,5 @@ main9 = "https://1rpc.io/eth"
 sepolia = "https://ethereum-sepolia-rpc.publicnode.com"
 
 [etherscan]
+main = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
 sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
