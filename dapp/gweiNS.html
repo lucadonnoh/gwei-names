@@ -1035,6 +1035,7 @@ const NETWORKS = {
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
     humanRegistrar: '0xA4283D56f523d05bBd46e483f7861d6D10Cb330A', // HumanRegistrar (mainnet, domain=gwei.domains, allowDevMode=false)
+    humanRegistrarBlock: 25460588, // deploy block, for counting HumanNameClaimed events
     enabled: true
   },
   sepolia: {
@@ -1048,6 +1049,7 @@ const NETWORKS = {
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
     humanRegistrar: '0xAA6C81c54ecA32e1949b9Ff80eAC21D03261E870', // HumanRegistrar (Sepolia, domain=gwei.domains, allowDevMode)
+    humanRegistrarBlock: 11193242, // deploy block, for counting HumanNameClaimed events
     enabled: true
   }
 };
@@ -1281,13 +1283,35 @@ const HUMAN_REGISTRAR_ABI = [
   'error WrongSender()',
   'error WrongChain()',
   'error AlreadyClaimed()',
-  'error DevModeNotAllowed()'
+  'error DevModeNotAllowed()',
+  // Emitted once per successful claim — counted to show "(N minted)" on the CTA.
+  'event HumanNameClaimed(bytes32 indexed uniqueIdentifier, address indexed human, uint256 indexed subId, string label)'
 ];
 
 function zkEnabled() { return HUMAN_REGISTRAR && !/^0x0+$/.test(HUMAN_REGISTRAR); }
 function initZk() {
   if (!zkEnabled()) return;
   const cta = document.getElementById('zkCta'); if (cta) cta.style.display = '';
+  updateZkMintedCount();
+}
+// Count HumanNameClaimed events (chunked to respect RPC block-range limits) and, if any, append
+// "(N minted)" to the CTA. Best-effort — if the log query fails, the label is left unchanged.
+async function updateZkMintedCount() {
+  const cta = document.getElementById('zkCta');
+  if (!cta || !zkEnabled()) return;
+  try {
+    const provider = rpcProvider || await getRpc();
+    const hr = new ethers.Contract(HUMAN_REGISTRAR, HUMAN_REGISTRAR_ABI, provider);
+    const filter = hr.filters.HumanNameClaimed();
+    const latest = await provider.getBlockNumber();
+    let from = NET.humanRegistrarBlock || 0, count = 0;
+    while (from <= latest) {
+      const to = Math.min(from + 9000, latest);
+      count += (await hr.queryFilter(filter, from, to)).length;
+      from = to + 1;
+    }
+    cta.textContent = '[new] free zkpassport names available (' + count + ' minted)';
+  } catch (e) { /* leave the label as-is */ }
 }
 initZk();
 
