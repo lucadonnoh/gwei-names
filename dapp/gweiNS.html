@@ -1168,15 +1168,18 @@ async function loadStats() {
   document.getElementById('statNames').textContent = haveCounts ? names.toLocaleString() : '—';
   document.getElementById('statSubs').textContent = haveCounts ? subs.toLocaleString() : '—';
   document.getElementById('statBurned').textContent = burned == null ? '—' : (burned >= 0.1 ? burned.toFixed(2) : burned.toFixed(4));
+  // lengths >= 20 collapse into a single "20+" bucket so one very long name can't add rows of empty bars
+  const HIST_CAP = 20;
   const hist = {}; let maxLen = 0, maxCt = 0;
-  for (const n of nameVals) if (n.top) { hist[n.len] = (hist[n.len] || 0) + 1; if (n.len > maxLen) maxLen = n.len; }
+  for (const n of nameVals) if (n.top) { const l = Math.min(n.len, HIST_CAP); hist[l] = (hist[l] || 0) + 1; if (l > maxLen) maxLen = l; }
   for (const ct of Object.values(hist)) if (ct > maxCt) maxCt = ct;
   const he = document.getElementById('statsHist');
   if (haveCounts && maxLen) {
     let rows = '';
     for (let l = 1; l <= maxLen; l++) {
       const ct = hist[l] || 0, w = maxCt ? ct / maxCt * 100 : 0, star = l <= 4 ? '<span class="hbar-prem">★</span>' : '';
-      rows += '<div class="hbar"><span class="hbar-len">' + l + star + '</span><span class="hbar-track"><span class="hbar-fill" style="width:' + w + '%"></span></span><span class="hbar-ct">' + ct + '</span></div>';
+      const lbl = l === HIST_CAP ? HIST_CAP + '+' : l;
+      rows += '<div class="hbar"><span class="hbar-len">' + lbl + star + '</span><span class="hbar-track"><span class="hbar-fill" style="width:' + w + '%"></span></span><span class="hbar-ct">' + ct + '</span></div>';
     }
     he.innerHTML = rows;
   } else he.innerHTML = '';
