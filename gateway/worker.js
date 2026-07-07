@@ -2,7 +2,7 @@
 // stored at that name's on-chain `contenthash`.
 //
 // For each request it: reads the label from the Host, asks the NameNFT contract for the name's
-// contenthash, decodes it (IPFS or Swarm), and reverse-proxies the content from a public gateway.
+// contenthash, decodes it (IPFS, IPNS, or Swarm), and reverse-proxies the content from a public gateway.
 // Resolved name→CID lookups and fetched content are cached at the edge (Cloudflare Cache API);
 // every proxied response is hardened with security headers.
 //
@@ -24,6 +24,7 @@ const SWARM_GATEWAYS = ['https://gateway.ethswarm.org', 'https://download.gatewa
 // Storage protocol → how to fetch + label it. Picked from the contenthash codec.
 const PROTOCOLS = {
   ipfs: { gateways: IPFS_GATEWAYS, prefix: '/ipfs/', header: 'x-ipfs-cid' },
+  ipns: { gateways: IPFS_GATEWAYS, prefix: '/ipns/', header: 'x-ipns-name' },
   swarm: { gateways: SWARM_GATEWAYS, prefix: '/bzz/', header: 'x-swarm-reference' },
 };
 // Subdomains that are real services, not gwei names — proxied through so the wildcard route
@@ -43,6 +44,7 @@ const CACHE_BASE = 'https://gwei-cache.internal'; // synthetic keys for the reso
 const SEL_COMPUTEID = 'fb021939'; // computeId(string)
 const SEL_CONTENTHASH = 'cb323d76'; // contenthash(uint256)
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 const pad32 = (h) => h.padStart(64, '0');
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -83,6 +85,16 @@ function base32(bytes) {
   if (bits > 0) out += B32[(val << (5 - bits)) & 31];
   return out;
 }
+// Base36-encode a byte array using the lowercase alphanumeric alphabet. Used to convert
+// IPNS CIDv1 (libp2p-key codec) bytes to the multibase `k`-prefix string for gateway URLs.
+function base36(bytes) {
+  let num = 0n;
+  for (const b of bytes) num = (num << 8n) | BigInt(b);
+  if (num === 0n) return '0';
+  let out = '';
+  while (num > 0n) { out = B36[Number(num % 36n)] + out; num /= 36n; }
+  return out;
+}
 // Tries each RPC in turn; returns the first non-empty result, or null if all fail.
 async function ethCall(data, rpcs) {
   for (const rpc of rpcs) {
@@ -110,9 +122,9 @@ function page(title, body, status, cache = 'public, max-age=60') {
 }
 
 // Resolve a gwei name to its contenthash, caching the result. Returns one of:
-//   { kind: 'ipfs'|'swarm', ref } — website (IPFS CID or Swarm bzz hash)
+//   { kind: 'ipfs'|'ipns'|'swarm', ref } — website (IPFS CID, IPNS name, or Swarm bzz hash)
 //   { state: 'none' }             — no contenthash set
-//   { state: 'unsupported' }      — contenthash present but not IPFS or Swarm
+//   { state: 'unsupported' }      — contenthash present but not IPFS, IPNS, or Swarm
 //   { error: 'rpc' }              — RPC lookup failed (never cached; a retry recovers)
 async function resolveName(name, rpcs, cache, ctx) {
   const key = new Request(`${CACHE_BASE}/resolve/${encodeURIComponent(name)}`);
@@ -129,6 +141,7 @@ async function resolveName(name, rpcs, cache, ctx) {
 
   // Decode the contenthash → storage reference.
   //   IPFS:  e301 || <cidv1 bytes>
+  //   IPNS:  e501 || <cidv1 libp2p-key bytes>             (base36 multibase `k`-prefix for gateway URLs)
   //   Swarm: e4 01 01 fa 01 1b 20 || <32-byte bzz hash>   (swarm-ns / cidv1 / swarm-manifest / keccak256)
   const b = chRes.slice(2);
   const len = parseInt(b.slice(64, 128), 16) || 0;
@@ -139,6 +152,8 @@ async function resolveName(name, rpcs, cache, ctx) {
     const chHex = b.slice(128, 128 + len * 2);
     if (chHex.startsWith('e301')) {
       result = { kind: 'ipfs', ref: 'b' + base32(hexToBytes(chHex.slice(4))) };
+    } else if (chHex.startsWith('e501')) {
+      result = { kind: 'ipns', ref: 'k' + base36(hexToBytes(chHex.slice(4))) };
     } else if (chHex.startsWith('e40101fa011b20')) {
       result = { kind: 'swarm', ref: chHex.slice(14) };
     } else {
@@ -194,7 +209,7 @@ export default {
       return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains">set one →</a></p>`, 404);
     }
     if (r.state === 'unsupported') {
-      return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS and Swarm).</p>', 415);
+      return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);
     }
     const proto = PROTOCOLS[r.kind];
 
