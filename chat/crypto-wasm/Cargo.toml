@@ -1,0 +1,25 @@
+[package]
+name = "gwei-chat-crypto"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+vodozemac = { version = "0.10.0", default-features = false, features = ["js", "low-level-api"] }
+wasm-bindgen = "0.2"
+
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+
+# wasm-pack's bundled Binaryen currently rejects the bulk-memory instructions
+# emitted by the Rust 1.94 toolchain. The Rust release build is still optimized;
+# this only skips the redundant wasm-opt pass until the bundled tool catches up.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

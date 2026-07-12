@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2023",
+    "types": ["node", "vite/client"],
+    "verbatimModuleSyntax": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "server.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "public/theme-init.js",
+    "vite.config.ts",
+    "playwright.config.ts"
+  ]
+}

@@ -3,6 +3,9 @@ cache
 .env
 .env.*
 *.key
+.gwei-batcher-budget.json
+.gwei-relay-admission.sqlite
+.gwei-relay-admission.sqlite-*
 *.pem
 .password
 keystore/

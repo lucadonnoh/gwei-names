@@ -27,6 +27,8 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 **JS SDK:** [`gns-utils`](sdk/) — resolve `.gwei` names, reverse-resolve, compute IDs and fees. `createGnsClient()` defaults to the Sepolia deployment.
 
+**Private chat prototype:** [`chat/`](chat/) — passkey-protected browser E2EE addressed by `.gwei` text records, with permissionless blob discovery and holder-gated blind relay passes.
+
 **Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS content.
 
 ---

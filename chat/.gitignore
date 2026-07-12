@@ -1,0 +1,3 @@
+crypto-wasm/target/
+playwright-report/
+test-results/

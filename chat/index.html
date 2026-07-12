@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; trusted-types 'none'; require-trusted-types-for 'script'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>gwei chat</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>"
+      type="image/svg+xml"
+    />
+    <script src="/theme-init.js"></script>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <button id="theme-button" class="dark-toggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
+
+    <div class="scroll-names" aria-hidden="true">
+      <div class="scroll-names-inner">
+        <span>satoshi.gwei</span><span>vitalik.gwei</span><span>ethereum.gwei</span>
+        <span>defi.gwei</span><span>crypto.gwei</span><span>web3.gwei</span>
+        <span>dao.gwei</span><span>wallet.gwei</span><span>gas.gwei</span>
+        <span>gm.gwei</span><span>privacy.gwei</span><span>signal.gwei</span>
+        <span>satoshi.gwei</span><span>vitalik.gwei</span><span>ethereum.gwei</span>
+        <span>defi.gwei</span><span>crypto.gwei</span><span>web3.gwei</span>
+        <span>dao.gwei</span><span>wallet.gwei</span><span>gas.gwei</span>
+        <span>gm.gwei</span><span>privacy.gwei</span><span>signal.gwei</span>
+      </div>
+    </div>
+
+    <div id="boot" class="boot" role="status">
+      <div class="boot-mark">gwei chat</div>
+      <p>creating your private chat identity…</p>
+    </div>
+
+    <main id="app" class="app" hidden>
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="gwei chat home">
+          <span>gwei chat</span>
+          <span class="prototype-label">prototype</span>
+        </a>
+        <div class="topbar-status">
+          <div class="connection">
+            <span id="connection-dot" class="connection-dot"></span>
+            <span id="connection-label">connecting</span>
+            <span id="outbox-label"></span>
+          </div>
+          <button id="settings-button" class="network-button" type="button">sepolia · checking</button>
+        </div>
+      </header>
+
+      <div class="shell">
+        <aside class="sidebar">
+          <div class="sidebar-actions">
+            <button id="identity-button" class="button secondary" type="button">Set up identity</button>
+            <button id="add-button" class="button primary" type="button">New chat</button>
+            <button id="request-button" class="button request-button secondary" type="button" hidden>Chat requests</button>
+          </div>
+
+          <div class="sidebar-heading">
+            <h1>Chats</h1>
+            <span id="profile-label" class="profile-label"></span>
+          </div>
+          <nav id="contacts" class="contacts" aria-label="Contacts"></nav>
+
+          <div class="privacy-note">
+            <span class="privacy-icon" aria-hidden="true">◌</span>
+            <p><strong>Ephemeral by design.</strong> Opaque messages expire with Ethereum's blob availability window. gwei provides no archive.</p>
+          </div>
+        </aside>
+
+        <section class="conversation">
+          <div id="empty-state" class="empty-state">
+            <div class="onboarding-progress" aria-label="Getting started">
+              <div id="guide-identity-state" class="onboarding-progress-step" data-state="current">
+                <span>1</span><strong>Identity</strong>
+              </div>
+              <span class="onboarding-progress-line" aria-hidden="true"></span>
+              <div id="guide-people-state" class="onboarding-progress-step" data-state="upcoming">
+                <span>2</span><strong>Person</strong>
+              </div>
+              <span class="onboarding-progress-line" aria-hidden="true"></span>
+              <div id="guide-chat-state" class="onboarding-progress-step" data-state="upcoming">
+                <span>3</span><strong>Chat</strong>
+              </div>
+            </div>
+
+            <section id="setup-identity-step" class="onboarding-step">
+              <p class="empty-label">First, become reachable</p>
+              <h2>Publish your identity</h2>
+              <p>Choose a name you own and publish your public chat keys to GNS. Other people can then find you as <strong>yourname.gwei</strong>.</p>
+              <button id="empty-identity-button" class="button primary" type="button">Publish my .gwei identity</button>
+              <p class="onboarding-assurance">Only public contact keys are published. Your private keys and messages stay in this browser.</p>
+            </section>
+
+            <section id="setup-people-step" class="onboarding-step" hidden>
+              <p class="empty-label">Next, choose someone</p>
+              <h2>Who do you want to message?</h2>
+              <p>These names have publicly opted into chat. Every contact is checked against its current GNS owner before it is added.</p>
+
+              <div class="onboarding-directory-heading">
+                <strong>Available now</strong>
+                <button id="onboarding-directory-refresh" class="text-button" type="button">Refresh</button>
+              </div>
+              <p id="onboarding-directory-status" class="directory-status" role="status">Reading published GNS contacts…</p>
+              <div id="onboarding-directory-list" class="directory-list onboarding-directory-list" role="list"></div>
+
+              <div class="onboarding-or"><span>or choose a specific name</span></div>
+              <form id="onboarding-name-form" class="onboarding-name-form">
+                <label class="sr-only" for="onboarding-contact-name">Gwei name</label>
+                <div class="name-input">
+                  <input id="onboarding-contact-name" placeholder="alice" autocomplete="off" autocapitalize="none" spellcheck="false" required />
+                  <span aria-hidden="true">.gwei</span>
+                </div>
+                <button id="onboarding-resolve-name" class="button primary" type="submit">Find</button>
+              </form>
+              <p id="onboarding-add-error" class="form-error" role="alert"></p>
+              <button id="empty-add-button" class="text-button onboarding-advanced" type="button">Advanced: use a contact code</button>
+            </section>
+          </div>
+
+          <div id="chat" class="chat" hidden>
+            <header class="chat-header">
+              <div>
+                <h2 id="chat-title"></h2>
+                <p id="chat-status">Setting up a private session…</p>
+              </div>
+              <span id="chat-key" class="chat-key"></span>
+            </header>
+            <div id="messages" class="messages" role="log" aria-live="polite"></div>
+            <form id="composer" class="composer">
+              <label class="sr-only" for="message-input">Message</label>
+              <textarea
+                id="message-input"
+                rows="1"
+                placeholder="Write a private message…"
+                autocomplete="off"
+              ></textarea>
+              <button id="send-button" class="send-button" type="submit" aria-label="Send message">↑</button>
+            </form>
+            <p id="composer-hint" class="composer-hint">Messages are not saved as readable history. 600-byte limit.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="vault-dialog" class="dialog vault-dialog">
+      <div class="dialog-card">
+        <p class="eyebrow">Private vault</p>
+        <h2 id="vault-title">Protect your chat keys</h2>
+        <p id="vault-copy" class="dialog-copy">Your passkey will unlock an encrypted local vault. Chat and ratchet keys never become part of the passkey.</p>
+        <div class="vault-diagram" aria-hidden="true">
+          <span>passkey</span><span>→</span><span>encrypted vault</span>
+        </div>
+        <p id="vault-status" class="form-status" role="status"></p>
+        <p id="vault-error" class="form-error" role="alert"></p>
+        <button id="vault-primary" class="button primary wide" type="button">Protect with passkey</button>
+        <p class="settings-footnote">Uses WebAuthn PRF with device verification. The encrypted vault stays in this browser; the passkey is not a remote backup.</p>
+        <button id="vault-reset" class="text-button danger" type="button" hidden>Reset a lost vault</button>
+      </div>
+    </dialog>
+
+    <dialog id="identity-dialog" class="dialog">
+      <div class="dialog-card">
+        <button class="dialog-close" type="button" data-close-identity aria-label="Close">×</button>
+        <p class="eyebrow">Step 1 · your identity</p>
+        <h2 id="identity-title">Publish your chat identity</h2>
+        <p id="identity-copy" class="dialog-copy">Publishing lets other people discover your public encryption keys by typing your `.gwei` name. No private key or message goes onchain.</p>
+        <div id="identity-published" class="identity-published" hidden>
+          <span>Published as</span>
+          <strong id="identity-published-name"></strong>
+          <p>People can now find and verify this identity through GNS.</p>
+        </div>
+        <form id="publish-form" class="embedded-form">
+          <label for="publish-name">Name you own</label>
+          <div class="name-input">
+            <input id="publish-name" placeholder="yourname" autocomplete="off" autocapitalize="none" spellcheck="false" required />
+            <span aria-hidden="true">.gwei</span>
+          </div>
+          <p id="publish-status" class="form-status" role="status"></p>
+          <p id="publish-error" class="form-error" role="alert"></p>
+          <button id="publish-button" class="button primary wide" type="submit">Publish identity</button>
+          <p class="settings-footnote">Your wallet first signs the contact binding, then confirms the GNS text-record transaction.</p>
+        </form>
+
+        <details id="identity-advanced" class="identity-advanced">
+          <summary>Advanced identity options</summary>
+          <div class="identity-advanced-content">
+            <h3>Contact code</h3>
+            <p class="dialog-copy">A portable encoding of your public signing, ratchet identity, and delivery keys. Most people should use your `.gwei` name instead.</p>
+            <textarea id="contact-code" class="code-field" readonly aria-label="Your contact code"></textarea>
+            <button id="copy-code-button" class="button secondary wide" type="button">Copy contact code</button>
+
+            <div class="dialog-section">
+              <h3>Subsidized relay access</h3>
+              <p class="dialog-copy">Obtain blinded one-time passes when the selected batcher is restricted to `.gwei` holders.</p>
+              <button id="relay-access-button" class="button secondary wide" type="button">Get relay passes</button>
+              <p class="settings-footnote">The issuer sees the daily allowance given to a name, but cannot cryptographically link that issuance to a later spent pass.</p>
+            </div>
+
+            <button id="reset-button" class="text-button danger" type="button">Reset this prototype identity</button>
+          </div>
+        </details>
+        <div class="dialog-warning">
+          Prototype keys live in this browser profile. Clearing site data deletes them.
+        </div>
+        <div id="vault-control" class="vault-control" hidden>
+          <span>Passkey vault unlocked</span>
+          <button id="vault-lock" class="text-button" type="button">Lock now</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="add-dialog" class="dialog">
+      <div class="dialog-card">
+        <button class="dialog-close" type="button" data-close-add aria-label="Close">×</button>
+        <p class="eyebrow">Step 2 · choose someone</p>
+        <h2>Start a new chat</h2>
+        <p class="dialog-copy">Choose a published identity or look up one specific `.gwei` name. The browser verifies the current owner and chat keys before adding anyone.</p>
+        <section class="contact-directory" aria-labelledby="directory-title">
+          <div class="contact-directory-heading">
+            <div>
+              <p class="eyebrow">Public discovery</p>
+              <h3 id="directory-title">Names ready to chat</h3>
+            </div>
+            <button id="directory-refresh" class="text-button" type="button">Refresh</button>
+          </div>
+          <p id="directory-status" class="directory-status" role="status">Reading published GNS contacts…</p>
+          <div id="directory-list" class="directory-list" role="list"></div>
+        </section>
+
+        <div class="onboarding-or"><span>or choose a specific name</span></div>
+        <form id="add-name-form" class="embedded-form">
+          <label for="new-contact-name">Gwei name</label>
+          <div class="name-input">
+            <input id="new-contact-name" placeholder="alice" autocomplete="off" autocapitalize="none" spellcheck="false" required />
+            <span aria-hidden="true">.gwei</span>
+          </div>
+          <button id="resolve-name-button" class="button primary wide" type="submit">Find and message</button>
+        </form>
+
+        <p id="add-error" class="form-error" role="alert"></p>
+        <details id="manual-contact" class="manual-contact">
+          <summary>Advanced: use a contact code</summary>
+          <form id="add-form" class="embedded-form manual-contact-form">
+            <p class="dialog-copy">Use this fallback when a contact has not published to GNS yet.</p>
+            <label for="new-contact-code">Contact code</label>
+            <textarea id="new-contact-code" class="code-field" required></textarea>
+            <label for="new-contact-label">Local name <span>(optional)</span></label>
+            <input id="new-contact-label" maxlength="40" placeholder="Alice" />
+            <button class="button secondary wide" type="submit">Verify and add</button>
+          </form>
+        </details>
+      </div>
+    </dialog>
+
+    <dialog id="request-dialog" class="dialog">
+      <div class="dialog-card">
+        <button class="dialog-close" type="button" data-close-requests aria-label="Close">×</button>
+        <p class="eyebrow">Private introductions</p>
+        <h2>Chat requests</h2>
+        <p class="dialog-copy">Only requests whose signed identity matches the current `.gwei` record appear here. Ignoring a request sends nothing back.</p>
+        <div id="request-list" class="request-list"></div>
+        <p id="request-status" class="form-status" role="status"></p>
+      </div>
+    </dialog>
+
+    <dialog id="settings-dialog" class="dialog">
+      <form id="settings-form" class="dialog-card">
+        <button class="dialog-close" type="button" data-close-settings aria-label="Close">×</button>
+        <p class="eyebrow">Transport settings</p>
+        <h2>Choose your endpoints</h2>
+        <p class="dialog-copy">The browser gives your batcher only opaque 2 KB envelopes. The batcher's transaction key never enters this browser. Your RPC independently discovers blobs posted by every batcher.</p>
+
+        <label for="settings-batcher-url">Batcher URL</label>
+        <input id="settings-batcher-url" class="endpoint-field" autocomplete="off" spellcheck="false" required />
+
+        <label for="settings-execution-rpc">Sepolia execution RPC</label>
+        <input id="settings-execution-rpc" class="endpoint-field" autocomplete="off" spellcheck="false" required />
+
+        <label for="settings-beacon-api">Sepolia Beacon API</label>
+        <input id="settings-beacon-api" class="endpoint-field" autocomplete="off" spellcheck="false" required />
+
+        <label class="toggle-row" for="settings-onchain-enabled">
+          <input id="settings-onchain-enabled" type="checkbox" />
+          <span>Read finalized onchain batches</span>
+        </label>
+
+        <div id="settings-status" class="settings-status" role="status"></div>
+        <p id="settings-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="settings-defaults" class="button secondary" type="button">Use defaults</button>
+          <button class="button primary" type="submit">Save &amp; reconnect</button>
+        </div>
+        <p class="settings-footnote">Endpoint URLs are stored only in this browser. Remote endpoints must use HTTPS.</p>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/app.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "name": "gwei-chat-prototype",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench:cold-start": "tsx scripts/benchmark-cold-start.ts",
+    "batcher:key": "tsx scripts/create-batcher-key.ts",
+    "blob:fixture": "tsx scripts/write-cast-blob-payload.ts",
+    "build": "vite build",
+    "crypto:build": "npx --yes wasm-pack build crypto-wasm --target web --out-dir ../src/wasm --out-name gwei_chat_crypto --release --no-pack && rm -f src/wasm/.gitignore",
+    "crypto:test": "cargo test --manifest-path crypto-wasm/Cargo.toml",
+    "dev": "vite",
+    "onchain:roundtrip": "tsx scripts/publish-roundtrip.ts",
+    "relay": "tsx server.ts",
+    "test": "vitest run src",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@blobkit/kzg-wasm": "^2.3.0",
+    "@cloudflare/privacypass-ts": "0.9.0",
+    "@signinwithethereum/siwe": "4.2.0",
+    "buffer": "6.0.3",
+    "ethers": "^6.17.0",
+    "hpke-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^24.13.3",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@cloudflare/blindrsa-ts": {
+      "sjcl": "1.0.9"
+    }
+  }
+}
