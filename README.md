@@ -29,7 +29,7 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 **Private chat prototype:** [`chat/`](chat/) — passkey-protected browser E2EE addressed by `.gwei` text records, with permissionless blob discovery and holder-gated blind relay passes.
 
-**Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS content.
+**Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS or Swarm content.
 
 ---
 
@@ -601,7 +601,7 @@ The gateway is a Cloudflare Worker (or equivalent) on the `gwei.domains` wildcar
 
 1. Extracts name from subdomain (`name.gwei.domains`)
 2. Queries contract for contenthash
-3. Decodes CID and fetches from IPFS
+3. Decodes the IPFS or Swarm reference and fetches it from the matching public gateway
 4. Serves content with caching
 
 **Root domain** (`gwei.domains`) resolves to `gns.gwei` (the official dapp).

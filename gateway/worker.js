@@ -3,7 +3,7 @@
 //
 // For each request it: reads the label from the Host, asks the NameNFT contract for the name's
 // contenthash, decodes it (IPFS or Swarm), and reverse-proxies the content from a public gateway.
-// Resolved name→CID lookups and fetched content are cached at the edge (Cloudflare Cache API);
+// Resolved name→content-reference lookups and fetched content are cached at the edge (Cloudflare Cache API);
 // every proxied response is hardened with security headers.
 //
 // Deploy on a `*.gwei.domains/*` route (see gateway/README.md).
@@ -18,9 +18,11 @@ const RPCS = [
 ];
 // Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
-// Public Swarm (bzz) gateways that serve bare-hash content. NB: api.gateway.ethswarm.org
-// blanket-forbids bare-hash access (302 → bzz.link/forbidden); these two don't.
-const SWARM_GATEWAYS = ['https://gateway.ethswarm.org', 'https://download.gateway.ethswarm.org'];
+// Public Swarm (bzz) endpoint that serves the referenced content bytes. gateway.ethswarm.org is
+// a sharing-app UI (its /bzz/* routes return the same app shell), while api.gateway.ethswarm.org
+// redirects bare hashes to bzz.link moderation. The download endpoint marks responses as
+// attachments; that header is removed below so websites and their assets render inline.
+const SWARM_GATEWAYS = ['https://download.gateway.ethswarm.org'];
 // Storage protocol → how to fetch + label it. Picked from the contenthash codec.
 const PROTOCOLS = {
   ipfs: { gateways: IPFS_GATEWAYS, prefix: '/ipfs/', header: 'x-ipfs-cid' },
@@ -33,10 +35,10 @@ const RESERVED = {
 };
 
 // How long resolved records / content stay cached at the edge. Contenthash edits become visible
-// within RESOLVE_TTL. Negatives ("no website", "non-IPFS") expire faster so a freshly-set site
-// shows up sooner. Transient RPC/IPFS failures are never cached.
-const RESOLVE_TTL = 300;     // name → CID (seconds)
-const RESOLVE_NEG_TTL = 60;  // name → "none"/"non-ipfs" (seconds)
+// within RESOLVE_TTL. Negatives ("no website", "unsupported") expire faster so a freshly-set site
+// shows up sooner. Transient RPC/upstream failures are never cached.
+const RESOLVE_TTL = 300;     // name → content reference (seconds)
+const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
 const CONTENT_TTL = 300;     // proxied content (seconds)
 const CACHE_BASE = 'https://gwei-cache.internal'; // synthetic keys for the resolution cache
 
@@ -207,6 +209,7 @@ export default {
         });
         if (upstream.ok || upstream.status === 304) {
           const headers = harden(new Headers(upstream.headers));
+          if (r.kind === 'swarm') headers.delete('content-disposition');
           headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
           headers.set('x-gwei-name', name);
           headers.set(proto.header, r.ref);

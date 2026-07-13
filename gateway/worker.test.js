@@ -70,7 +70,8 @@ function makeCache() {
 }
 
 // ---- fetch mock -------------------------------------------------------------
-// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, reserved(url) -> Response }
+// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response,
+//             swarm(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
   const calls = { rpc: 0, ipfs: 0, swarm: 0, reserved: 0, rpcUrls: [], ipfsUrls: [], swarmUrls: [] };
   const fn = async (input, init = {}) => {
@@ -188,22 +189,52 @@ test('unsupported contenthash codec (e.g. IPNS) → 415', async () => {
   assert.match(await res.text(), /unsupported/i);
 });
 
-test('Swarm (bzz) contenthash: resolves + proxies from a Swarm gateway', async () => {
+test('Swarm (bzz) contenthash: uses the raw endpoint and renders content inline', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({
     rpc: rpcReturning(CH_SWARM),
-    swarm: () => new Response('<h1>swarm site</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    swarm: () => new Response('<h1>swarm site</h1>', {
+      status: 200,
+      headers: {
+        'content-type': 'text/html',
+        'content-disposition': 'attachment',
+      },
+    }),
   });
   const res = await invoke('https://conall.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 200);
   assert.equal(await res.text(), '<h1>swarm site</h1>');
   assert.equal(res.headers.get('x-gwei-name'), 'conall.gwei');
   assert.equal(res.headers.get('x-swarm-reference'), SWARM_HASH);
-  // routed to the Swarm gateway's /bzz/ path with the decoded hash; no IPFS fetch
-  assert.equal(fetchMock.calls.swarmUrls[0], `https://gateway.ethswarm.org/bzz/${SWARM_HASH}/`);
+  assert.equal(res.headers.get('content-type'), 'text/html');
+  assert.equal(res.headers.get('content-disposition'), null, 'forced download header is stripped');
+  // Routed to the raw Swarm endpoint, never the sharing-app UI; no IPFS fetch.
+  assert.equal(fetchMock.calls.swarmUrls[0], `https://download.gateway.ethswarm.org/bzz/${SWARM_HASH}/`);
   assert.equal(fetchMock.calls.ipfs, 0);
   // security headers apply to Swarm content too
   assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+});
+
+test('Swarm asset paths retain their MIME type and render inline', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_SWARM),
+    swarm: () => new Response('export const ready = true;', {
+      status: 200,
+      headers: {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-disposition': 'attachment',
+      },
+    }),
+  });
+  const res = await invoke('https://conall.gwei.domains/assets/app.js', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  assert.equal(res.headers.get('content-disposition'), null);
+  assert.equal(
+    fetchMock.calls.swarmUrls[0],
+    `https://download.gateway.ethswarm.org/bzz/${SWARM_HASH}/assets/app.js`,
+  );
 });
 
 test('RPC failure → 502 no-store and is NOT cached (retry re-resolves)', async () => {
