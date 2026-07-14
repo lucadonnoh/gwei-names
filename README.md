@@ -27,7 +27,7 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 **JS SDK:** [`gns-utils`](sdk/) — resolve `.gwei` names, reverse-resolve, compute IDs and fees. `createGnsClient()` defaults to the Sepolia deployment.
 
-**Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS content.
+**Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS, IPNS, or Swarm content.
 
 ---
 
@@ -35,7 +35,7 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 GNS provides `.gwei` names as NFTs (ERC-721). Names can:
 - Resolve to an Ethereum address (receive payments)
-- Host a website via IPFS contenthash
+- Host a website via IPFS, IPNS, or Swarm contenthash
 - Have unlimited free subdomains
 - Store multi-coin addresses and text records (ENS-compatible resolver)
 - Display as your wallet's identity (reverse resolution)
@@ -567,7 +567,7 @@ struct NameRecord {
 
 ---
 
-## IPFS Contenthash
+## IPFS and IPNS Contenthash
 
 To host a website at `name.gwei.domains`:
 
@@ -577,7 +577,7 @@ To host a website at `name.gwei.domains`:
 
 **Encoding:**
 ```javascript
-// Contenthash = 0xe3 (IPFS namespace) + CID bytes
+// Contenthash = varint(0xe3) (IPFS namespace) + CID bytes
 function encodeContenthash(cid) {
   let cidBytes;
   if (cid.startsWith('Qm')) {
@@ -587,9 +587,12 @@ function encodeContenthash(cid) {
     // CIDv1 base32
     cidBytes = base32Decode(cid.slice(1));
   }
-  return ethers.concat(['0xe3', cidBytes]);
+  return ethers.concat(['0xe301', cidBytes]);
 }
 ```
+
+IPNS records use the ENSIP-7 encoding `0xe501 || CIDv1(libp2p-key)`. The gateway validates that
+CID and renders its IPNS name in the conventional lowercase base36 form (`k...`) before fetching it.
 
 ---
 
@@ -599,7 +602,7 @@ The gateway is a Cloudflare Worker (or equivalent) on the `gwei.domains` wildcar
 
 1. Extracts name from subdomain (`name.gwei.domains`)
 2. Queries contract for contenthash
-3. Decodes CID and fetches from IPFS
+3. Decodes the IPFS, IPNS, or Swarm reference and fetches it from the matching public gateway
 4. Serves content with caching
 
 **Root domain** (`gwei.domains`) resolves to `gns.gwei` (the official dapp).
