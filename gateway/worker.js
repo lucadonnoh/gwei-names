@@ -3,7 +3,7 @@
 //
 // For each request it: reads the label from the Host, asks the NameNFT contract for the name's
 // contenthash, decodes it (IPFS, IPNS, or Swarm), and reverse-proxies the content from a public gateway.
-// Resolved name→CID lookups and fetched content are cached at the edge (Cloudflare Cache API);
+// Resolved name→content-reference lookups and fetched content are cached at the edge (Cloudflare Cache API);
 // every proxied response is hardened with security headers.
 //
 // Deploy on a `*.gwei.domains/*` route (see gateway/README.md).
@@ -18,9 +18,11 @@ const RPCS = [
 ];
 // Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
-// Public Swarm (bzz) gateways that serve bare-hash content. NB: api.gateway.ethswarm.org
-// blanket-forbids bare-hash access (302 → bzz.link/forbidden); these two don't.
-const SWARM_GATEWAYS = ['https://gateway.ethswarm.org', 'https://download.gateway.ethswarm.org'];
+// Public Swarm (bzz) endpoint that serves the referenced content bytes. gateway.ethswarm.org is
+// a sharing-app UI (its /bzz/* routes return the same app shell), while api.gateway.ethswarm.org
+// redirects bare hashes to bzz.link moderation. The download endpoint marks responses as
+// attachments; that header is removed below so websites and their assets render inline.
+const SWARM_GATEWAYS = ['https://download.gateway.ethswarm.org'];
 // Storage protocol → how to fetch + label it. Picked from the contenthash codec.
 const PROTOCOLS = {
   ipfs: { gateways: IPFS_GATEWAYS, prefix: '/ipfs/', header: 'x-ipfs-cid' },
@@ -34,10 +36,10 @@ const RESERVED = {
 };
 
 // How long resolved records / content stay cached at the edge. Contenthash edits become visible
-// within RESOLVE_TTL. Negatives ("no website", "non-IPFS") expire faster so a freshly-set site
-// shows up sooner. Transient RPC/IPFS failures are never cached.
-const RESOLVE_TTL = 300;     // name → CID (seconds)
-const RESOLVE_NEG_TTL = 60;  // name → "none"/"non-ipfs" (seconds)
+// within RESOLVE_TTL. Negatives ("no website", "unsupported") expire faster so a freshly-set site
+// shows up sooner. Transient RPC/upstream failures are never cached.
+const RESOLVE_TTL = 300;     // name → content reference (seconds)
+const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
 const CONTENT_TTL = 300;     // proxied content (seconds)
 const CACHE_BASE = 'https://gwei-cache.internal'; // synthetic keys for the resolution cache
 
@@ -48,7 +50,7 @@ const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 const pad32 = (h) => h.padStart(64, '0');
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+const hexToBytes = (h) => Uint8Array.from((h.match(/../g) || []).map((x) => parseInt(x, 16)));
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -85,15 +87,48 @@ function base32(bytes) {
   if (bits > 0) out += B32[(val << (5 - bits)) & 31];
   return out;
 }
-// Base36-encode a byte array using the lowercase alphanumeric alphabet. Used to convert
-// IPNS CIDv1 (libp2p-key codec) bytes to the multibase `k`-prefix string for gateway URLs.
 function base36(bytes) {
-  let num = 0n;
-  for (const b of bytes) num = (num << 8n) | BigInt(b);
-  if (num === 0n) return '0';
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
   let out = '';
-  while (num > 0n) { out = B36[Number(num % 36n)] + out; num /= 36n; }
-  return out;
+  while (value > 0n) {
+    out = B36[Number(value % 36n)] + out;
+    value /= 36n;
+  }
+  return 'k' + (out || '0');
+}
+// Decode an unsigned varint, rejecting truncated, overlong, and impractically large values.
+function readVarint(bytes, offset) {
+  let value = 0n;
+  let shift = 0n;
+  for (let i = offset; i < bytes.length && i - offset < 10; i++) {
+    const byte = bytes[i];
+    value |= BigInt(byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) {
+      if (i > offset && byte === 0) return null; // non-canonical/overlong encoding
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      return { value: Number(value), next: i + 1 };
+    }
+    shift += 7n;
+  }
+  return null;
+}
+// IPNS contenthash values contain a CIDv1 with the libp2p-key codec. Gateways conventionally
+// expect that CID in base36. Inline identity multihashes shorter than a real public-key protobuf
+// are rejected, matching the security validation in the ENS content-hash implementation.
+function decodeIpns(cidHex) {
+  if (!cidHex || cidHex.length % 2 !== 0) return null;
+  const bytes = hexToBytes(cidHex);
+  const version = readVarint(bytes, 0);
+  if (!version || version.value !== 1) return null;
+  const codec = readVarint(bytes, version.next);
+  if (!codec || codec.value !== 0x72) return null; // libp2p-key
+  const hashCode = readVarint(bytes, codec.next);
+  if (!hashCode) return null;
+  const hashSize = readVarint(bytes, hashCode.next);
+  if (!hashSize || hashSize.value === 0 || hashSize.next + hashSize.value !== bytes.length) return null;
+  if (hashCode.value === 0 && hashSize.value < 36) return null; // unsafe identity multihash
+  return base36(bytes);
 }
 // Tries each RPC in turn; returns the first non-empty result, or null if all fail.
 async function ethCall(data, rpcs) {
@@ -124,7 +159,7 @@ function page(title, body, status, cache = 'public, max-age=60') {
 // Resolve a gwei name to its contenthash, caching the result. Returns one of:
 //   { kind: 'ipfs'|'ipns'|'swarm', ref } — website (IPFS CID, IPNS name, or Swarm bzz hash)
 //   { state: 'none' }             — no contenthash set
-//   { state: 'unsupported' }      — contenthash present but not IPFS, IPNS, or Swarm
+//   { state: 'unsupported' }      — contenthash present but unsupported or malformed
 //   { error: 'rpc' }              — RPC lookup failed (never cached; a retry recovers)
 async function resolveName(name, rpcs, cache, ctx) {
   const key = new Request(`${CACHE_BASE}/resolve/${encodeURIComponent(name)}`);
@@ -141,7 +176,7 @@ async function resolveName(name, rpcs, cache, ctx) {
 
   // Decode the contenthash → storage reference.
   //   IPFS:  e301 || <cidv1 bytes>
-  //   IPNS:  e501 || <cidv1 libp2p-key bytes>             (base36 multibase `k`-prefix for gateway URLs)
+  //   IPNS:  e501 || <cidv1 libp2p-key bytes>
   //   Swarm: e4 01 01 fa 01 1b 20 || <32-byte bzz hash>   (swarm-ns / cidv1 / swarm-manifest / keccak256)
   const b = chRes.slice(2);
   const len = parseInt(b.slice(64, 128), 16) || 0;
@@ -153,7 +188,8 @@ async function resolveName(name, rpcs, cache, ctx) {
     if (chHex.startsWith('e301')) {
       result = { kind: 'ipfs', ref: 'b' + base32(hexToBytes(chHex.slice(4))) };
     } else if (chHex.startsWith('e501')) {
-      result = { kind: 'ipns', ref: 'k' + base36(hexToBytes(chHex.slice(4))) };
+      const ref = decodeIpns(chHex.slice(4));
+      result = ref ? { kind: 'ipns', ref } : { state: 'unsupported' };
     } else if (chHex.startsWith('e40101fa011b20')) {
       result = { kind: 'swarm', ref: chHex.slice(14) };
     } else {
@@ -213,7 +249,7 @@ export default {
     }
     const proto = PROTOCOLS[r.kind];
 
-    // 2. Reverse-proxy the content from the matching storage gateway (IPFS or Swarm).
+    // 2. Reverse-proxy the content from the matching storage gateway (IPFS, IPNS, or Swarm).
     for (const gw of proto.gateways) {
       try {
         const upstream = await fetch(`${gw}${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
@@ -222,6 +258,7 @@ export default {
         });
         if (upstream.ok || upstream.status === 304) {
           const headers = harden(new Headers(upstream.headers));
+          if (r.kind === 'swarm') headers.delete('content-disposition');
           headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
           headers.set('x-gwei-name', name);
           headers.set(proto.header, r.ref);
