@@ -2,8 +2,8 @@
 
 A Cloudflare Worker that serves `<name>.gwei.domains` from the website stored at that name's
 on-chain `contenthash`. Per request it reads the label from the `Host`, asks the NameNFT contract
-for the name's `contenthash`, decodes the IPFS CID, and reverse-proxies the content from a public
-IPFS gateway.
+for the name's `contenthash`, decodes its IPFS, IPNS, or Swarm reference, and reverse-proxies the content
+from a public protocol gateway.
 
 This is the one piece of off-chain infrastructure GNS relies on — the upstream wei-names repo
 doesn't include a gateway (it's run, not open-sourced), so this is written from scratch and kept
@@ -38,4 +38,7 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - Names with no `contenthash` set return a friendly 404 linking to the dapp.
 - Network/contract addresses live at the top of `worker.js` — update `NAMENFT` (currently the
   Sepolia deployment) and `RPCS` when GNS moves to another network.
-- Content is fetched from `ipfs.io` (with `dweb.link` fallback). Responses are cached for 5 min.
+- IPFS and IPNS content is fetched from `ipfs.io` (with `dweb.link` fallback). IPNS Peer IDs are
+  validated and converted to canonical CIDv1 base36 names before they reach an upstream. Swarm content is fetched from
+  `download.gateway.ethswarm.org`; its forced attachment header is removed so websites render
+  inline. Responses are cached for 5 min, so an IPNS update may take up to 5 min to become visible.

@@ -2,7 +2,7 @@
 // Run: `node --test worker.test.js` (Node 18+; uses global fetch/Request/Response/Headers).
 //
 // Strategy: import the real worker and drive it with a faithful Cache API mock and a fetch mock
-// that intercepts RPC / IPFS / reserved upstreams, counts calls, and records URLs — so we can
+// that intercepts RPC / IPFS / IPNS / reserved upstreams, counts calls, and records URLs — so we can
 // assert cache hits skip upstreams, failures aren't cached, and the CID decode is byte-correct.
 
 import { test } from 'node:test';
@@ -34,7 +34,16 @@ const DONNOH_CID = 'bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644'
 const DONNOH_CH = 'e301' + toHex(base32Decode(DONNOH_CID.slice(1))); // strip 'b' multibase prefix
 const CH_IPFS = abiBytes(DONNOH_CH);                 // e301 || cidv1  → ipfs
 const CH_NONE = abiBytes('');                        // zero-length    → no website
-const CH_UNSUP = abiBytes('e5010172002408011220');   // e501...        → ipns (unsupported codec)
+const CH_UNSUP = abiBytes('e6010102');               // unknown namespace codec
+// Active mainnet IPNS records using both Peer ID encodings accepted by ENS content-hash tooling.
+const XAV_IPNS = 'k2k4r8ng8uzrtqb5ham8kao889m8qezu96z4w3lpinyqghum43veb6n3';
+const XAV_IPNS_BYTES = '01721220a1dc5d90d7272c0fd9150414f14c80c71de5d243c2f23165e2ddb495cbbcd05f';
+const CH_IPNS_SHA256 = abiBytes('e501' + XAV_IPNS_BYTES);
+const HASHFRIEND_IPNS = 'k51qzi5uqu5dm7u9ns1a5utzqrufm5p8znj2pwl38amnzmwkdmf52ntlg06m8d';
+const HASHFRIEND_IPNS_BYTES = '0172002408011220f2209793528adf06812d942e80d68f34e37119cd305f9d05d1e20f5cc3b7860d';
+const CH_IPNS_IDENTITY = abiBytes('e501' + HASHFRIEND_IPNS_BYTES);
+const CH_IPNS_UNSAFE_IDENTITY = abiBytes('e5010172000408011220');
+const CH_IPNS_TRUNCATED = abiBytes('e501');
 // Swarm: e40101fa011b20 || 32-byte bzz hash. Conall's real conalloreilly.eth hash.
 const SWARM_HASH = '28175db97b612938e66b21834ac6e1355e95602f9726d026b719c58d55880a4b';
 const CH_SWARM = abiBytes('e40101fa011b20' + SWARM_HASH);
@@ -70,9 +79,13 @@ function makeCache() {
 }
 
 // ---- fetch mock -------------------------------------------------------------
-// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, reserved(url) -> Response }
+// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, ipns(url) -> Response,
+//             swarm(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
-  const calls = { rpc: 0, ipfs: 0, swarm: 0, reserved: 0, rpcUrls: [], ipfsUrls: [], swarmUrls: [] };
+  const calls = {
+    rpc: 0, ipfs: 0, ipns: 0, swarm: 0, reserved: 0,
+    rpcUrls: [], ipfsUrls: [], ipnsUrls: [], swarmUrls: [],
+  };
   const fn = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.url;
     if (init && init.method === 'POST' && typeof init.body === 'string' && init.body.includes('eth_call')) {
@@ -86,6 +99,10 @@ function makeFetch(handlers) {
     if (url.includes('/ipfs/')) {
       calls.ipfs++; calls.ipfsUrls.push(url);
       return handlers.ipfs ? handlers.ipfs(url) : new Response('content', { status: 200 });
+    }
+    if (url.includes('/ipns/')) {
+      calls.ipns++; calls.ipnsUrls.push(url);
+      return handlers.ipns ? handlers.ipns(url) : new Response('ipns-content', { status: 200 });
     }
     if (url.includes('/bzz/')) {
       calls.swarm++; calls.swarmUrls.push(url);
@@ -180,7 +197,7 @@ test('no contenthash → 404, escaped, negatively cached', async () => {
   assert.equal(fetchMock.calls.ipfs, 0);
 });
 
-test('unsupported contenthash codec (e.g. IPNS) → 415', async () => {
+test('unsupported contenthash codec → 415', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({ rpc: rpcReturning(CH_UNSUP) });
   const res = await invoke('https://ipnsy.gwei.domains/', { cache, fetchMock });
@@ -188,22 +205,112 @@ test('unsupported contenthash codec (e.g. IPNS) → 415', async () => {
   assert.match(await res.text(), /unsupported/i);
 });
 
-test('Swarm (bzz) contenthash: resolves + proxies from a Swarm gateway', async () => {
+test('IPNS sha2-256 Peer ID: decodes to canonical base36 and proxies content', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_IPNS_SHA256),
+    ipns: () => new Response('<h1>xav</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  });
+  const res = await invoke('https://xav.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>xav</h1>');
+  assert.equal(res.headers.get('x-gwei-name'), 'xav.gwei');
+  assert.equal(res.headers.get('x-ipns-name'), XAV_IPNS);
+  assert.equal(fetchMock.calls.ipnsUrls[0], `https://ipfs.io/ipns/${XAV_IPNS}/`);
+  assert.equal(fetchMock.calls.ipfs, 0);
+  assert.equal(fetchMock.calls.swarm, 0);
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+});
+
+test('IPNS inline-key Peer ID: decodes to base36 and preserves asset paths', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_IPNS_IDENTITY),
+    ipns: (url) => new Response(url, { status: 200 }),
+  });
+  const res = await invoke('https://hashfriend.gwei.domains/assets/app.js?version=1', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-ipns-name'), HASHFRIEND_IPNS);
+  assert.equal(
+    fetchMock.calls.ipnsUrls[0],
+    `https://ipfs.io/ipns/${HASHFRIEND_IPNS}/assets/app.js?version=1`,
+  );
+});
+
+test('IPNS gateway failover: dweb.link is used when ipfs.io fails', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_IPNS_SHA256),
+    ipns: (url) => url.startsWith('https://ipfs.io/')
+      ? new Response('upstream error', { status: 500 })
+      : new Response('fallback content', { status: 200 }),
+  });
+  const res = await invoke('https://xav.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'fallback content');
+  assert.deepEqual(fetchMock.calls.ipnsUrls, [
+    `https://ipfs.io/ipns/${XAV_IPNS}/`,
+    `https://dweb.link/ipns/${XAV_IPNS}/`,
+  ]);
+});
+
+test('malformed or insecure IPNS contenthash → 415 without a gateway request', async () => {
+  for (const fixture of [CH_IPNS_UNSAFE_IDENTITY, CH_IPNS_TRUNCATED]) {
+    const cache = makeCache();
+    const fetchMock = makeFetch({ rpc: rpcReturning(fixture) });
+    const res = await invoke('https://bad-ipns.gwei.domains/', { cache, fetchMock });
+    assert.equal(res.status, 415);
+    assert.match(await res.text(), /unsupported/i);
+    assert.equal(fetchMock.calls.ipns, 0);
+  }
+});
+
+test('Swarm (bzz) contenthash: uses the raw endpoint and renders content inline', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({
     rpc: rpcReturning(CH_SWARM),
-    swarm: () => new Response('<h1>swarm site</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+    swarm: () => new Response('<h1>swarm site</h1>', {
+      status: 200,
+      headers: {
+        'content-type': 'text/html',
+        'content-disposition': 'attachment',
+      },
+    }),
   });
   const res = await invoke('https://conall.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 200);
   assert.equal(await res.text(), '<h1>swarm site</h1>');
   assert.equal(res.headers.get('x-gwei-name'), 'conall.gwei');
   assert.equal(res.headers.get('x-swarm-reference'), SWARM_HASH);
-  // routed to the Swarm gateway's /bzz/ path with the decoded hash; no IPFS fetch
-  assert.equal(fetchMock.calls.swarmUrls[0], `https://gateway.ethswarm.org/bzz/${SWARM_HASH}/`);
+  assert.equal(res.headers.get('content-type'), 'text/html');
+  assert.equal(res.headers.get('content-disposition'), null, 'forced download header is stripped');
+  // Routed to the raw Swarm endpoint, never the sharing-app UI; no IPFS fetch.
+  assert.equal(fetchMock.calls.swarmUrls[0], `https://download.gateway.ethswarm.org/bzz/${SWARM_HASH}/`);
   assert.equal(fetchMock.calls.ipfs, 0);
   // security headers apply to Swarm content too
   assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+});
+
+test('Swarm asset paths retain their MIME type and render inline', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcReturning(CH_SWARM),
+    swarm: () => new Response('export const ready = true;', {
+      status: 200,
+      headers: {
+        'content-type': 'text/javascript; charset=utf-8',
+        'content-disposition': 'attachment',
+      },
+    }),
+  });
+  const res = await invoke('https://conall.gwei.domains/assets/app.js', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  assert.equal(res.headers.get('content-disposition'), null);
+  assert.equal(
+    fetchMock.calls.swarmUrls[0],
+    `https://download.gateway.ethswarm.org/bzz/${SWARM_HASH}/assets/app.js`,
+  );
 });
 
 test('RPC failure → 502 no-store and is NOT cached (retry re-resolves)', async () => {
