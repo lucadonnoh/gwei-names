@@ -2628,9 +2628,21 @@ async function doCommit() {
     if (confirmed) {
       const currentPending = loadPending();
       if (currentPending && currentPending.name === name) {
-        currentPending.confirmed = true;
-        currentPending.timestamp = Math.floor(Date.now() / 1000);
-        savePending(currentPending);
+        // The contract timestamp is authoritative and also avoids adding an
+        // extra minute when the receipt took a while to reach the browser.
+        let recovered = false;
+        try {
+          recovered = await recoverPendingConfirmation(currentPending);
+        } catch (e) {
+          console.log('Could not read commitment timestamp after receipt:', e.message);
+        }
+        // A successful receipt proves the commit happened. Keep the old
+        // fallback for temporary RPC inconsistencies.
+        if (!recovered) {
+          currentPending.confirmed = true;
+          currentPending.timestamp = Math.floor(Date.now() / 1000);
+          savePending(currentPending);
+        }
       }
       showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', tx.hash);
     }
@@ -2658,23 +2670,6 @@ async function doReveal() {
       return;
     }
 
-    // Verify commitment was confirmed on-chain
-    if (pending.confirmed === false) {
-      showStatus('Commitment not yet confirmed. Please wait.', 'error');
-      return;
-    }
-
-    const elapsed = Math.floor(Date.now() / 1000) - pending.timestamp;
-    if (elapsed < MIN_COMMIT_AGE) {
-      showStatus('Wait ' + (MIN_COMMIT_AGE - elapsed) + ' more seconds', 'error');
-      return;
-    }
-    if (elapsed > MAX_COMMIT_AGE) {
-      showStatus('Commitment expired. Please commit again.', 'error');
-      clearPending();
-      return;
-    }
-
     showStatus('Calculating fee...', '');
     // Compute tokenId locally to batch all reads into 1 RPC call
     const tokenId = localComputeId(pending.name);
@@ -2688,19 +2683,26 @@ async function doReveal() {
       throw new Error('Failed to fetch fee data');
     }
 
-    // Verify the commitment is actually on-chain: the commit tx may have been
-    // dropped or replaced even if the UI saw it confirmed
+    // Local confirmation state is only a cache. The contract mapping is the
+    // source of truth, including when WalletConnect returned before the tx hash
+    // could be saved to localStorage.
     const committedAt = Number(results[2][0]);
     if (committedAt === 0) {
-      clearPending();
-      showStatus('Commitment not found on-chain (the commit transaction may have been dropped or replaced). Please commit again.', 'error');
+      showStatus('Commitment not confirmed on-chain yet. Please wait and retry.', 'error');
       return;
     }
-    // Re-check the timer against the on-chain commit time, in case the device
-    // clock is off (the local check above uses the device clock)
+    markPendingConfirmed(pending, committedAt);
+
+    // Check the timer against the on-chain commit time rather than the local
+    // pre-transaction timestamp.
     const chainElapsed = Math.floor(Date.now() / 1000) - committedAt;
     if (chainElapsed < MIN_COMMIT_AGE) {
       showStatus('Wait ' + Math.max(1, MIN_COMMIT_AGE - chainElapsed) + ' more seconds', 'error');
+      return;
+    }
+    if (chainElapsed > MAX_COMMIT_AGE) {
+      showStatus('Commitment expired. Please commit again.', 'error');
+      clearPending();
       return;
     }
 
@@ -2755,6 +2757,27 @@ function loadPending() {
   }
 }
 
+async function getPendingCommitmentTimestamp(pending) {
+  if (!pending || !pending.commitment) return 0;
+  if (!readContract) await getRpc();
+  if (!readContract) return 0;
+  return Number(await readContract.commitments(pending.commitment));
+}
+
+function markPendingConfirmed(pending, committedAt) {
+  if (!Number.isSafeInteger(committedAt) || committedAt <= 0) return false;
+  pending.confirmed = true;
+  pending.timestamp = committedAt;
+  delete pending._pollAttempts;
+  savePending(pending);
+  return true;
+}
+
+async function recoverPendingConfirmation(pending) {
+  const committedAt = await getPendingCommitmentTimestamp(pending);
+  return markPendingConfirmed(pending, committedAt);
+}
+
 async function initPending() {
   const pending = loadPending();
   if (!pending) return null;
@@ -2769,9 +2792,14 @@ async function initPending() {
         clearPending();
         return null;
       }
+
+      // WalletConnect can suspend or reload the page before doCommit() gets a
+      // chance to persist tx.hash. Recover directly from the contract mapping;
+      // no transaction hash is required.
+      await recoverPendingConfirmation(pending);
     }
   } catch (e) {
-    console.log('Error checking pending name availability:', e.message);
+    console.log('Error checking pending commitment:', e.message);
   }
 
   displayPending(pending);
@@ -2817,51 +2845,62 @@ async function updateTimer(timerId) {
   const revealBtn = $('revealBtn');
 
   if (pending.confirmed === false) {
-    // Explicitly false means commit tx is still pending
+    // Explicitly false means the browser has not observed the commit yet.
+    // It may already be mined even when WalletConnect did not return a tx hash.
     timerEl.textContent = 'Waiting for confirmation...';
     revealBtn.disabled = true;
 
     // Track poll attempts
     if (!pending._pollAttempts) pending._pollAttempts = 0;
 
-    // If we have a txHash and have been waiting >15s, poll for receipt
-    if (pending.txHash && elapsed > 15) {
+    // Poll the contract mapping regardless of whether txHash was persisted.
+    if (elapsed > 15) {
       pending._pollAttempts++;
+
       try {
-        const p = rpcProvider || await getRpc();
-        const receipt = await p.getTransactionReceipt(pending.txHash);
-        if (receipt) {
-          if (receipt.status === 1) {
-            // TX confirmed! Update pending
-            pending.confirmed = true;
-            pending.timestamp = Math.floor(Date.now() / 1000);
-            delete pending._pollAttempts;
-            savePending(pending);
-            showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', pending.txHash);
-          } else {
-            // TX reverted - clear pending and show error
+        if (await recoverPendingConfirmation(pending)) {
+          showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', pending.txHash);
+          return updateTimer(timerId);
+        }
+      } catch (e) {
+        // Ignore transient RPC errors and retry below.
+      }
+
+      // A saved hash is still useful for detecting an explicit revert, but it
+      // is not required to recover a successful commitment.
+      if (pending.txHash) {
+        try {
+          const p = rpcProvider || await getRpc();
+          const receipt = await p.getTransactionReceipt(pending.txHash);
+          if (receipt && receipt.status !== 1) {
             showStatus('Commit transaction reverted. Please try again.', 'error', pending.txHash);
             clearPending();
             return;
           }
-        } else if (pending._pollAttempts >= 30) {
-          // After ~30 failed polls, show manual check option
-          const esLink = `${EXPLORER}/tx/${pending.txHash}`;
-          timerEl.innerHTML = 'Could not verify tx. <a href="' + esLink + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">Check Etherscan</a>';
-          // Add manual check button if not already present
-          if (!$('manualCheckBtn')) {
-            const btn = document.createElement('button');
-            btn.id = 'manualCheckBtn';
-            btn.textContent = 'Retry Check';
-            btn.className = 'secondary';
-            btn.style.marginTop = '8px';
-            btn.onclick = () => { pending._pollAttempts = 0; updateTimer(timerId); };
-            timerEl.parentNode.insertBefore(btn, timerEl.nextSibling);
-          }
-          return; // Stop polling
+        } catch (e) {
+          // Ignore transient receipt errors and retry below.
         }
-      } catch (e) {
-        // Ignore polling errors, will retry next tick
+      }
+
+      if (pending._pollAttempts >= 30) {
+        // After ~30 failed polls, show a manual check option.
+        if (pending.txHash) {
+          const esLink = `${EXPLORER}/tx/${pending.txHash}`;
+          timerEl.innerHTML = 'Could not verify commitment. <a href="' + esLink + '" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">Check Etherscan</a>';
+        } else {
+          timerEl.textContent = 'Could not verify commitment on-chain.';
+        }
+        // Add manual check button if not already present
+        if (!$('manualCheckBtn')) {
+          const btn = document.createElement('button');
+          btn.id = 'manualCheckBtn';
+          btn.textContent = 'Retry Check';
+          btn.className = 'secondary';
+          btn.style.marginTop = '8px';
+          btn.onclick = () => { pending._pollAttempts = 0; updateTimer(timerId); };
+          timerEl.parentNode.insertBefore(btn, timerEl.nextSibling);
+        }
+        return; // Stop polling
       }
     }
   } else if (remaining > 0) {
