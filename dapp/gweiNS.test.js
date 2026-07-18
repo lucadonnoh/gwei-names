@@ -105,6 +105,33 @@ test('polling and reveal use the on-chain commitment without requiring txHash', 
   assert.match(revealSource, /markPendingConfirmed\(pending, committedAt\)/);
 });
 
+test('links the DefiLlama integration to its live fees adapter', () => {
+  const start = html.indexOf('<!-- Integrations -->');
+  const end = html.indexOf('<!-- Network stats -->', start);
+  const integrations = html.slice(start, end);
+
+  assert.match(integrations, /<span class="int-name">DefiLlama<\/span>/);
+  assert.match(integrations, /https:\/\/defillama\.com\/fees\/gwei-name-service/);
+  assert.match(integrations, /github\.com\/DefiLlama\/dimension-adapters\/blob\/master\/fees\/gwei-domains\.ts/);
+  assert.match(integrations, /An open DeFi analytics platform/);
+  assert.match(integrations, /registration and renewal fees/);
+});
+
+test('links the shipped Snapshot and POIDH integrations', () => {
+  const start = html.indexOf('<!-- Integrations -->');
+  const end = html.indexOf('<!-- Network stats -->', start);
+  const integrations = html.slice(start, end);
+
+  assert.match(integrations, /<span class="int-name">Snapshot<\/span>/);
+  assert.match(integrations, /https:\/\/snapshot\.box\//);
+  assert.match(integrations, /snapshot-labs\/stamp\/pull\/480/);
+  assert.match(integrations, /A voting platform for DAOs/);
+  assert.match(integrations, /<span class="int-name">POIDH<\/span>/);
+  assert.match(integrations, /https:\/\/poidh\.xyz\//);
+  assert.match(integrations, /picsoritdidnthappen\/poidh-app/);
+  assert.match(integrations, /A social bounty platform with collectible NFTs/);
+});
+
 test('classic inline scripts remain valid JavaScript', () => {
   const scripts = html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi);
   for (const [, attributes, source] of scripts) {
