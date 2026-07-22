@@ -132,6 +132,16 @@ test('links the shipped Snapshot and POIDH integrations', () => {
   assert.match(integrations, /A social bounty platform with collectible NFTs/);
 });
 
+test('links the holders.vote integration', () => {
+  const start = html.indexOf('<!-- Integrations -->');
+  const end = html.indexOf('<!-- Network stats -->', start);
+  const integrations = html.slice(start, end);
+
+  assert.match(integrations, /<span class="int-name">holders\.vote<\/span>/);
+  assert.match(integrations, /https:\/\/holders\.vote\//);
+  assert.match(integrations, /A lightweight onchain voting tool for token holders/);
+});
+
 test('classic inline scripts remain valid JavaScript', () => {
   const scripts = html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi);
   for (const [, attributes, source] of scripts) {
