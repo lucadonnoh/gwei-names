@@ -54,6 +54,87 @@ const hexToBytes = (h) => Uint8Array.from((h.match(/../g) || []).map((x) => pars
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// URL.hostname exposes internationalized DNS labels in their ASCII (Punycode) form. GNS names,
+// however, are registered and hashed as UTF-8, so decode each A-label before calling computeId().
+// This is the RFC 3492 decoding algorithm kept inline so the Worker has no runtime dependencies.
+function decodePunycodeLabel(label) {
+  if (!label.startsWith('xn--')) return label;
+  const input = label.slice(4);
+  if (!input) return null;
+
+  const BASE = 36, T_MIN = 1, T_MAX = 26, SKEW = 38, DAMP = 700;
+  const output = [];
+  let n = 128, i = 0, bias = 72, index = 0;
+  const delimiter = input.lastIndexOf('-');
+
+  if (delimiter >= 0) {
+    for (let j = 0; j < delimiter; j++) {
+      const code = input.charCodeAt(j);
+      if (code >= 0x80) return null;
+      output.push(code);
+    }
+    index = delimiter + 1;
+  }
+
+  const digitFor = (code) => {
+    if (code >= 0x30 && code <= 0x39) return code - 0x16; // 0-9 → 26-35
+    if (code >= 0x61 && code <= 0x7a) return code - 0x61; // a-z → 0-25
+    return BASE;
+  };
+  const adapt = (delta, points, first) => {
+    delta = first ? Math.floor(delta / DAMP) : Math.floor(delta / 2);
+    delta += Math.floor(delta / points);
+    let k = 0;
+    while (delta > Math.floor(((BASE - T_MIN) * T_MAX) / 2)) {
+      delta = Math.floor(delta / (BASE - T_MIN));
+      k += BASE;
+    }
+    return k + Math.floor(((BASE - T_MIN + 1) * delta) / (delta + SKEW));
+  };
+
+  while (index < input.length) {
+    const oldI = i;
+    let weight = 1;
+    for (let k = BASE; ; k += BASE) {
+      if (index >= input.length) return null;
+      const digit = digitFor(input.charCodeAt(index++));
+      if (digit >= BASE || digit > Math.floor((Number.MAX_SAFE_INTEGER - i) / weight)) return null;
+      i += digit * weight;
+      const threshold = k <= bias ? T_MIN : (k >= bias + T_MAX ? T_MAX : k - bias);
+      if (digit < threshold) break;
+      const factor = BASE - threshold;
+      if (weight > Math.floor(Number.MAX_SAFE_INTEGER / factor)) return null;
+      weight *= factor;
+    }
+
+    const points = output.length + 1;
+    bias = adapt(i - oldI, points, oldI === 0);
+    const increment = Math.floor(i / points);
+    if (increment > 0x10ffff - n) return null;
+    n += increment;
+    i %= points;
+    if (n >= 0xd800 && n <= 0xdfff) return null;
+    output.splice(i, 0, n);
+    i++;
+  }
+
+  try {
+    return String.fromCodePoint(...output);
+  } catch (_) {
+    return null;
+  }
+}
+
+function decodeDnsName(name) {
+  const decoded = [];
+  for (const label of name.split('.')) {
+    const value = decodePunycodeLabel(label);
+    if (value == null) return null;
+    decoded.push(value);
+  }
+  return decoded.join('.');
+}
+
 // Browser-facing security headers, mirroring eth.limo's per-subdomain hardening. Each gwei name is
 // its own origin (`<name>.gwei.domains`), so this hardens every hosted site. We also normalize CORS:
 // public content is world-readable, but we don't let an upstream gateway's CORS headers leak through.
@@ -229,7 +310,9 @@ export default {
       return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
     }
 
-    const name = sub + '.gwei'; // gwei name this host maps to
+    const decodedSub = decodeDnsName(sub);
+    if (decodedSub == null) return page('gwei gateway', '<p>Invalid internationalized name.</p>', 400);
+    const name = decodedSub + '.gwei'; // gwei name this host maps to
     const cache = caches.default;
 
     // Content cache: serve a previously-proxied full response for this exact URL.
@@ -260,7 +343,9 @@ export default {
           const headers = harden(new Headers(upstream.headers));
           if (r.kind === 'swarm') headers.delete('content-disposition');
           headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
-          headers.set('x-gwei-name', name);
+          // Header values are ByteStrings; percent-encoding preserves non-ASCII names without
+          // making the response construction throw. ASCII names remain unchanged.
+          headers.set('x-gwei-name', encodeURIComponent(name));
           headers.set(proto.header, r.ref);
           const resp = new Response(upstream.body, { status: upstream.status, headers });
           // Only full 200 GETs are cacheable; failures and partials are not.
