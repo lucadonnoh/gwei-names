@@ -12,6 +12,14 @@ import worker from './worker.js';
 // ---- fixtures ---------------------------------------------------------------
 const pad32 = (h) => h.padStart(64, '0');
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+function decodeStringCall(data) {
+  const args = data.slice(10); // 0x + 4-byte selector
+  const length = parseInt(args.slice(64, 128), 16);
+  const bytes = Uint8Array.from(
+    (args.slice(128, 128 + length * 2).match(/../g) || []).map((x) => parseInt(x, 16)),
+  );
+  return new TextDecoder().decode(bytes);
+}
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 function base32Decode(s) { // inverse of the worker's base32 encode
   let bits = 0, val = 0; const out = [];
@@ -150,6 +158,47 @@ test('happy path: resolves, decodes the real CID, proxies content', async () => 
   assert.equal(res.headers.get('x-ipfs-cid'), DONNOH_CID);
   // CID decode is byte-correct: the upstream IPFS URL uses the real CID.
   assert.equal(fetchMock.calls.ipfsUrls[0], `https://ipfs.io/ipfs/${DONNOH_CID}/`);
+});
+
+test('emoji hostname is decoded from Punycode before computeId', async () => {
+  const cache = makeCache();
+  let computedName;
+  const fetchMock = makeFetch({
+    rpc: (data) => {
+      if (data.startsWith('0xfb021939')) {
+        computedName = decodeStringCall(data);
+        return TOKEN_ID;
+      }
+      return data.startsWith('0xcb323d76') ? CH_IPFS : null;
+    },
+    ipfs: () => new Response('<h1>whale</h1>', { status: 200 }),
+  });
+
+  // Request/URL normalizes the Unicode hostname to xn--7o8h before the Worker sees it.
+  const res = await invoke('https://🐳.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(computedName, '🐳.gwei');
+  assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), '🐳.gwei');
+  assert.equal(await res.text(), '<h1>whale</h1>');
+});
+
+test('Punycode is decoded label-by-label for nested gwei names', async () => {
+  const cache = makeCache();
+  let computedName;
+  const fetchMock = makeFetch({
+    rpc: (data) => {
+      if (data.startsWith('0xfb021939')) {
+        computedName = decodeStringCall(data);
+        return TOKEN_ID;
+      }
+      return data.startsWith('0xcb323d76') ? CH_IPFS : null;
+    },
+  });
+
+  const res = await invoke('https://sub.xn--7o8h.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(computedName, 'sub.🐳.gwei');
+  assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), 'sub.🐳.gwei');
 });
 
 test('security headers are applied and upstream CORS is overridden', async () => {
