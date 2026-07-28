@@ -21,6 +21,10 @@ import {
   encodeUint256Bytes,
   encodeUint256String,
   encodeUint256StringString,
+  formatContentContract,
+  formatWeb3Url,
+  parseContentContract,
+  parseWeb3Url,
 } from './encoding.js'
 
 // Helper: extract args portion from viem's full calldata (strip 4-byte selector)
@@ -410,5 +414,85 @@ describe('decodeString', () => {
     assert.equal(decodeString('0x'), null)
     assert.equal(decodeString(''), null)
     assert.equal(decodeString('0x00'), null)
+  })
+})
+
+describe('parseWeb3Url', () => {
+  const ROCK = '0x6485b8b75a8ad382340abe333e1f6ee10e39f818'
+
+  it('parses an explicit chain', () => {
+    assert.deepEqual(parseWeb3Url(`web3://${ROCK}:1/`), { chainId: 1, address: ROCK })
+    assert.deepEqual(parseWeb3Url(`web3://${ROCK}:11155111/`), { chainId: 11155111, address: ROCK })
+  })
+
+  it('defaults to mainnet and tolerates a missing trailing slash', () => {
+    assert.deepEqual(parseWeb3Url(`web3://${ROCK}`), { chainId: 1, address: ROCK })
+  })
+
+  it('accepts the w3:// alias, mixed case, and surrounding whitespace', () => {
+    assert.deepEqual(parseWeb3Url(`  W3://${ROCK.toUpperCase().replace('0X', '0x')}:1/  `), {
+      chainId: 1,
+      address: ROCK,
+    })
+  })
+
+  it('returns null for anything that is not a web3:// URL', () => {
+    assert.equal(parseWeb3Url('bafybeiabc'), null)
+    assert.equal(parseWeb3Url('bzz://deadbeef'), null)
+    assert.equal(parseWeb3Url('ipfs://Qm...'), null)
+    assert.equal(parseWeb3Url(''), null)
+  })
+
+  it('rejects a path, since a name record cannot store one', () => {
+    assert.throws(() => parseWeb3Url(`web3://${ROCK}:1/some/page`), /path cannot be stored/)
+  })
+
+  it('rejects unsupported chains and malformed addresses', () => {
+    assert.throws(() => parseWeb3Url(`web3://${ROCK}:8453/`), /Unsupported chain 8453/)
+    assert.throws(() => parseWeb3Url('web3://0xdeadbeef:1/'), /40 hex characters/)
+    assert.throws(() => parseWeb3Url(`web3://${ROCK}:eth/`), /Unsupported chain "eth"/)
+  })
+})
+
+describe('contentcontract records', () => {
+  const ROCK = '0x6485b8b75a8ad382340abe333e1f6ee10e39f818'
+
+  it('round-trips a web3:// URL through the stored record', () => {
+    const pointer = parseWeb3Url(`web3://${ROCK}:1/`)
+    assert.ok(pointer)
+    assert.equal(formatContentContract(pointer), `eth:${ROCK}`)
+    assert.deepEqual(parseContentContract(formatContentContract(pointer)), pointer)
+    assert.equal(formatWeb3Url(pointer), `web3://${ROCK}:1/`)
+  })
+
+  it('reads a bare address as mainnet, per ERC-6821', () => {
+    assert.deepEqual(parseContentContract(ROCK), { chainId: 1, address: ROCK })
+  })
+
+  it('returns null for unset or unusable records', () => {
+    for (const record of [
+      '',
+      '   ',
+      null,
+      undefined,
+      `base:${ROCK}`,
+      'eth:0xdeadbeef',
+      'nonsense',
+    ]) {
+      assert.equal(parseContentContract(record), null, `expected null for ${String(record)}`)
+    }
+  })
+
+  it('encodes the setText calldata viem would', () => {
+    const abi = parseAbi(['function setText(uint256 tokenId, string key, string value)'])
+    const expected = encodeFunctionData({
+      abi,
+      functionName: 'setText',
+      args: [0x1234n, 'contentcontract', `eth:${ROCK}`],
+    })
+    assert.equal(
+      `0x3fb24782${encodeUint256StringString(0x1234n, 'contentcontract', `eth:${ROCK}`)}`,
+      expected,
+    )
   })
 })

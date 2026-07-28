@@ -17,7 +17,11 @@ import {
   encodeUint256Bytes,
   encodeUint256String,
   encodeUint256StringString,
+  formatContentContract,
+  parseContentContract,
+  parseWeb3Url,
 } from './encoding.js'
+import type { Web3Pointer } from './encoding.js'
 import { type RpcConfig, ethCall } from './rpc.js'
 import { isAddress, isGwei, normalizeName } from './utils.js'
 
@@ -49,6 +53,9 @@ const SET_ADDR = '0xeba36dbd'
 const SET_TEXT = '0x3fb24782'
 const SET_CONTENTHASH = '0x88f97a67'
 const REGISTER_SUBDOMAIN = '0x8f449b85'
+
+/** ERC-6821 text record key: the contract a name's website is served from over web3://. */
+const CONTENTCONTRACT = 'contentcontract'
 
 export interface GnsTx {
   to: string
@@ -105,6 +112,12 @@ export interface GnsClient {
   /** Get the contenthash for a name. */
   getContenthash(name: string): Promise<string | null>
 
+  /**
+   * Get the contract a name's website is served from, if it hosts one over web3://
+   * (the ERC-6821 `contentcontract` record). Returns null when unset or unusable.
+   */
+  getContentContract(name: string): Promise<Web3Pointer | null>
+
   /** Get a multi-coin address for a name. */
   getAddr(name: string, coinType: bigint): Promise<string | null>
 
@@ -145,6 +158,18 @@ export interface GnsClient {
 
   /** Encode a setContenthash transaction. */
   encodeSetContenthash(name: string, hash: string): Promise<GnsTx>
+
+  /**
+   * Encode the transaction that points a name's website at a contract over web3://, writing the
+   * ERC-6821 `contentcontract` record. Pass a `web3://0x…:1/` URL or a pointer.
+   *
+   * Note that a non-empty contenthash takes precedence at the gateway, so a name that already has
+   * one must clear it for this to take effect.
+   */
+  encodeSetContentContract(name: string, target: string | Web3Pointer): Promise<GnsTx>
+
+  /** Encode the transaction that clears a name's `contentcontract` record. */
+  encodeClearContentContract(name: string): Promise<GnsTx>
 
   /** Encode a registerSubdomain transaction. */
   encodeRegisterSubdomain(label: string, parentName: string): Promise<GnsTx>
@@ -314,6 +339,17 @@ export function createGnsClient(config?: RpcConfig): GnsClient {
       }
     },
 
+    async getContentContract(name) {
+      try {
+        const tokenId = await getTokenId(name)
+        const calldata = TEXT + encodeUint256String(tokenId, CONTENTCONTRACT)
+        const result = await ethCall(calldata, config)
+        return parseContentContract(decodeString(result))
+      } catch {
+        return null
+      }
+    },
+
     async getAddr(name, coinType) {
       try {
         const tokenId = await getTokenId(name)
@@ -426,6 +462,26 @@ export function createGnsClient(config?: RpcConfig): GnsClient {
       return {
         to: contract,
         data: SET_CONTENTHASH + encodeUint256Bytes(tokenId, hash),
+      }
+    },
+
+    async encodeSetContentContract(name, target) {
+      const pointer = typeof target === 'string' ? parseWeb3Url(target) : target
+      if (!pointer) throw new Error('Expected a web3:// URL or a { chainId, address } pointer.')
+      const tokenId = await getTokenId(name)
+      return {
+        to: contract,
+        data:
+          SET_TEXT +
+          encodeUint256StringString(tokenId, CONTENTCONTRACT, formatContentContract(pointer)),
+      }
+    },
+
+    async encodeClearContentContract(name) {
+      const tokenId = await getTokenId(name)
+      return {
+        to: contract,
+        data: SET_TEXT + encodeUint256StringString(tokenId, CONTENTCONTRACT, ''),
       }
     },
 
