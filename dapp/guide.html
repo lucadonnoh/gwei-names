@@ -78,6 +78,17 @@ npx bgipfs upload ./my-site                                  # -&gt; CID: bafy..
   <h2 style="margin-top:0;">Updating later</h2>
   <p>IPFS content is immutable, so any edit to your site produces a <strong>new CID</strong>. Re-pin, then <strong>Set Website</strong> again with the new CID — your name always resolves to whatever CID you last set. The old version stays reachable at its old CID.</p>
 
+  <hr>
+
+  <h2 style="margin-top:0;">Hosting from a contract instead</h2>
+  <p>A site doesn't have to live on a storage network at all. With <a href="https://eips.ethereum.org/EIPS/eip-6860" target="_blank" rel="noopener"><strong>web3://</strong></a> the whole thing is stored in a smart contract and returned by a single <code>eth_call</code> — no pinning, nothing to garbage-collect, and the site is as durable as the chain it's on.</p>
+  <p>If you have one, paste its URL into the same <strong>Set Website</strong> field:</p>
+  <pre><code>web3://0x6485B8B75a8Ad382340ABE333E1f6EE10E39f818:1/</code></pre>
+  <p>The chain id after the colon is optional and defaults to <code>1</code>. Mainnet and Sepolia are supported. Point at the root — a path can't be stored, since the record holds only a chain and an address.</p>
+  <p>This is stored differently from a CID. There's no multicodec for EVM contracts, so it can't be a <code>contenthash</code>; instead it goes in a <strong><code>contentcontract</code> text record</strong> as an <a href="https://eips.ethereum.org/EIPS/eip-3770" target="_blank" rel="noopener">ERC-3770</a> address (<code>eth:0x6485…</code>), which is what <a href="https://eips.ethereum.org/EIPS/eip-6821" target="_blank" rel="noopener">ERC-6821</a> specifies. Any web3://-aware tool reads the same record.</p>
+  <p>The gateway then asks the contract how it wants to be called (<code>resolveMode()</code>) and serves the result: <strong>resource-request</strong> contracts (<a href="https://eips.ethereum.org/EIPS/eip-6944" target="_blank" rel="noopener">ERC-6944</a>) return a status code, a body, and their own headers, so paths and query strings work normally; <strong>manual</strong>-mode contracts get the raw path as calldata. Auto mode isn't served yet.</p>
+  <p class="hint"><strong>contenthash wins.</strong> If your name has both records set, the gateway serves the contenthash and ignores the contract. Clear the website first (submit <strong>Set Website</strong> empty), then set the <code>web3://</code> URL. The dapp shows a contract as <em>shadowed</em> when this is the case.</p>
+
   <p class="foot">gwei name service &middot; ownerless &middot; <a href="https://gwei.domains">gwei.domains</a></p>
 </body>
 </html>

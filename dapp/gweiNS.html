@@ -1618,6 +1618,20 @@ if (window.zkpReady === true) updateZkClaimEnabled();
 // URL pattern: https://name.gwei.domains (not name.gwei.gwei.domains)
 const GWEI_GATEWAY = 'gwei.domains';
 
+// --- web3:// websites (ERC-6821 contentcontract) ------------------------------
+// A name can serve its site straight out of a smart contract instead of IPFS or Swarm. That pointer
+// isn't a contenthash — there's no multicodec for EVM contracts — so ERC-6821 puts it in the
+// `contentcontract` text record as an ERC-3770 chain-specific address ("eth:0x…"). The helpers that
+// read and write it live down beside encodeContenthash; these are up here with the other config so
+// doCheckName() can't reach them before they're initialised.
+// Keep these rules in sync with sdk/src/encoding.ts and gateway/worker.js.
+const WEB3_CHAINS = { 1: 'eth', 11155111: 'sep' };
+const WEB3_SHORT_TO_ID = { eth: 1, sep: 11155111 };
+const CONTENTCONTRACT = 'contentcontract';
+// The record can name a chain other than the one the dapp is connected to, so links to it can't
+// use EXPLORER (which follows the connected network).
+const WEB3_EXPLORERS = { 1: 'https://etherscan.io', 11155111: 'https://sepolia.etherscan.io' };
+
 const ABI = [
   'function isAvailable(string label, uint256 parentId) view returns (bool)',
   'function makeCommitment(string label, address owner, bytes32 secret) pure returns (bytes32)',
@@ -3020,6 +3034,10 @@ let currentTokenId = null;
 let currentTokenName = null;
 let currentExpiry = null;     // bigint unix seconds (top-level names); null otherwise
 let currentRenewFee = null;   // bigint getFee(label byte length), cached per name
+// Which website records the current name has set. "Set Website" writes to whichever one the input
+// calls for, and clearing needs to know which are actually populated.
+let currentHasContenthash = false;
+let currentContentContract = null; // { chainId, address } from the ERC-6821 contentcontract record
 let isProcessing = false; // Prevent double-click on manage actions
 
 function hideManage() {
@@ -3298,12 +3316,14 @@ async function showManage(tokenId, name) {
     // Common text record keys to display
     const textKeys = ['url', 'email', 'description', 'com.twitter', 'com.github'];
 
-    // Batch all reads into one RPC call (including text records)
+    // Batch all reads into one RPC call (including text records). `contentcontract` rides along with
+    // the text records but is shown as the website, not as a generic text row.
     const results = await multicall([
       { fn: 'ownerOf', args: [tokenId], allowFailure: true },
       { fn: 'resolve', args: [tokenId], allowFailure: true },
       { fn: 'records', args: [tokenId], allowFailure: true },
       { fn: 'contenthash', args: [tokenId], allowFailure: true },
+      { fn: 'text', args: [tokenId, CONTENTCONTRACT], allowFailure: true },
       ...textKeys.map(key => ({ fn: 'text', args: [tokenId, key], allowFailure: true }))
     ]);
     const [owner, resolved, record, contentHash] = [
@@ -3312,10 +3332,11 @@ async function showManage(tokenId, name) {
       results[2] || null,
       results[3]?.[0] || null
     ];
+    const contentContract = parseContentContract(results[4]?.[0] || '');
     // Extract text records
     const textRecords = {};
     textKeys.forEach((key, i) => {
-      const val = results[4 + i]?.[0];
+      const val = results[5 + i]?.[0];
       if (val) textRecords[key] = val;
     });
 
@@ -3348,7 +3369,10 @@ async function showManage(tokenId, name) {
     if (resolved && resolved !== ethers.ZeroAddress) {
       infoHtml += `<div><span>Resolves to:</span>${addrLink(resolved)}</div>`;
     }
-    if (contentHash && contentHash !== '0x' && contentHash.length > 2) {
+    const hasContenthash = !!(contentHash && contentHash !== '0x' && contentHash.length > 2);
+    currentHasContenthash = hasContenthash;
+    currentContentContract = contentContract;
+    if (hasContenthash) {
       const cid = decodeContenthash(contentHash);
       if (GWEI_GATEWAY) {
         const gatewayUrl = `https://${name}.${GWEI_GATEWAY}`;
@@ -3360,6 +3384,18 @@ async function showManage(tokenId, name) {
       } else if (!GWEI_GATEWAY) {
         infoHtml += `<div><span>Content:</span><span style="opacity:0.6;font-family:monospace;font-size:11px;">${contentHash.slice(0, 18)}...</span></div>`;
       }
+    }
+    if (contentContract) {
+      // The gateway serves contenthash first, so flag a contract that's currently shadowed by one.
+      if (GWEI_GATEWAY && !hasContenthash) {
+        const gatewayUrl = `https://${name}.${GWEI_GATEWAY}`;
+        infoHtml += `<div><span>Website:</span><a href="${gatewayUrl}" target="_blank" rel="noopener" style="color:inherit;">${gatewayUrl}</a></div>`;
+      }
+      const addr = contentContract.address;
+      const short = addr.slice(0, 8) + '...' + addr.slice(-6);
+      const label = hasContenthash ? 'Contract (shadowed)' : 'Contract';
+      const explorer = WEB3_EXPLORERS[contentContract.chainId] || EXPLORER;
+      infoHtml += `<div><span>${label}:</span><a href="${explorer}/address/${escapeHtml(addr)}" target="_blank" rel="noopener" style="color:inherit;font-family:monospace;font-size:11px;" title="${escapeHtml(formatWeb3Url(contentContract))}">${escapeHtml(short)}</a></div>`;
     }
     if (expiryDate && isTopLevel) {
       const expiryTs = Number(record.expiresAt) * 1000;
@@ -3446,8 +3482,8 @@ function showManageForm(action) {
     case 'setContent':
       html = `
         <label>Website content</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, or a Swarm bzz:// reference.</div>
-        <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), or bzz://… (Swarm)">
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, a Swarm bzz:// reference, or a web3:// URL for a site stored in a contract.</div>
+        <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), bzz://… (Swarm), or web3://0x…:1/">
         ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -3813,6 +3849,44 @@ function encodeContenthash(input) {
   return ethers.concat([encodeUvarint(IPFS_NS), cidBytes]);
 }
 
+// Parse `web3://<address>[:<chainid>][/]` (the `w3://` alias works too). Returns null when the input
+// isn't a web3:// URL at all, and throws a readable message when it is one but can't be stored.
+function parseWeb3Url(input) {
+  const m = /^w(?:eb)?3:\/\/(.*)$/i.exec(input.trim());
+  if (!m) return null;
+  const [target, ...rest] = m[1].split('/');
+  if (rest.join('/').length > 0) {
+    throw new Error('web3:// URL must point at the root — a path cannot be stored in a name record.');
+  }
+  const parts = target.split(':');
+  if (parts.length > 2) throw new Error('Malformed web3:// URL.');
+  const [address, chain] = parts;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error('web3:// URL must name a contract address (0x + 40 hex characters).');
+  }
+  let chainId = 1;
+  if (chain !== undefined) {
+    if (!/^\d+$/.test(chain)) throw new Error(`Unsupported chain "${chain}" in web3:// URL.`);
+    chainId = Number(chain);
+  }
+  if (!WEB3_CHAINS[chainId]) {
+    throw new Error(`Unsupported chain ${chainId} in web3:// URL (supported: ${Object.keys(WEB3_CHAINS).join(', ')}).`);
+  }
+  return { chainId, address: address.toLowerCase() };
+}
+
+// Read back a stored record. A bare address means mainnet, per ERC-6821.
+function parseContentContract(record) {
+  const m = /^(?:([a-z0-9-]+):)?(0x[0-9a-fA-F]{40})$/.exec((record || '').trim());
+  if (!m) return null;
+  const chainId = m[1] ? WEB3_SHORT_TO_ID[m[1].toLowerCase()] : 1;
+  if (!chainId) return null;
+  return { chainId, address: m[2].toLowerCase() };
+}
+
+const formatContentContract = (p) => `${WEB3_CHAINS[p.chainId]}:${p.address}`;
+const formatWeb3Url = (p) => `web3://${p.address}:${p.chainId}/`;
+
 async function doSetContent() {
   if (isProcessing || !contract || !currentTokenId) return;
   const input = $('contentHash').value.trim();
@@ -3820,12 +3894,29 @@ async function doSetContent() {
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   if (!input) {
-    // Clear contenthash
+    // Clear the website. A name can in principle hold both records, so clear whichever are set —
+    // that's up to two transactions, and the status message says so rather than surprising anyone.
     try {
-      showStatus('Clearing website...', '');
-      const tx = await wcTransaction(contract.setContenthash(currentTokenId, '0x'), 'Approve clear website');
-      showStatus('Waiting for confirmation...', '', tx.hash);
-      await waitForTx(tx);
+      const steps = [];
+      if (currentHasContenthash) {
+        steps.push(['contenthash', () => contract.setContenthash(currentTokenId, '0x')]);
+      }
+      if (currentContentContract) {
+        steps.push([CONTENTCONTRACT, () => contract.setText(currentTokenId, CONTENTCONTRACT, '')]);
+      }
+      if (!steps.length) {
+        showStatus('This name has no website set.', 'error');
+        return;
+      }
+      let tx;
+      for (let i = 0; i < steps.length; i++) {
+        const [label, send] = steps[i];
+        const of = steps.length > 1 ? ` (${i + 1} of ${steps.length}: ${label})` : '';
+        showStatus(`Clearing website${of}...`, '');
+        tx = await wcTransaction(send(), `Approve clear website${of}`);
+        showStatus('Waiting for confirmation...', '', tx.hash);
+        await waitForTx(tx);
+      }
       showStatus('Website cleared!', 'success', tx.hash);
       $('manageForm').classList.remove('show');
       doCheckName(); // Refresh to update manage section
@@ -3839,16 +3930,35 @@ async function doSetContent() {
   }
 
   try {
-    const contenthash = encodeContenthash(input);
-    showStatus('Setting website...', '');
-    const tx = await wcTransaction(contract.setContenthash(currentTokenId, contenthash), 'Approve set website');
+    // A web3:// URL goes to the contentcontract text record; everything else is a contenthash.
+    const pointer = parseWeb3Url(input);
+    let tx;
+    if (pointer) {
+      showStatus('Setting website...', '');
+      tx = await wcTransaction(
+        contract.setText(currentTokenId, CONTENTCONTRACT, formatContentContract(pointer)),
+        'Approve set website',
+      );
+    } else {
+      const contenthash = encodeContenthash(input);
+      showStatus('Setting website...', '');
+      tx = await wcTransaction(contract.setContenthash(currentTokenId, contenthash), 'Approve set website');
+    }
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    showStatus('Website set!' + (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''), 'success', tx.hash);
+    // contenthash wins at the gateway, so a contract pointer set behind an existing one won't show.
+    const shadowed = pointer && currentHasContenthash;
+    showStatus(
+      shadowed
+        ? 'Contract set, but this name still has a contenthash, which the gateway serves first. Clear it to switch.'
+        : 'Website set!' + (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''),
+      shadowed ? '' : 'success',
+      tx.hash,
+    );
     $('manageForm').classList.remove('show');
     doCheckName(); // Refresh to show updated website link
   } catch (e) {
-    if (e.message?.includes('Unsupported CID')) {
+    if (e.message?.includes('Unsupported CID') || e.message?.includes('web3://')) {
       showStatus(e.message, 'error');
     } else {
       handleError(e);
