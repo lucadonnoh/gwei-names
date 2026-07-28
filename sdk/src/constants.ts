@@ -3,7 +3,8 @@
 export const GNS_CONTRACT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' as const
 
 /** Namehash of the `.gwei` TLD node. */
-export const GWEI_NODE = '0xcca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f' as const
+export const GWEI_NODE =
+  '0xcca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f' as const
 
 export const BASE_PORTAL = '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e' as const
 
