@@ -56,6 +56,7 @@ const CH_IPNS_TRUNCATED = abiBytes('e501');
 const SWARM_HASH = '28175db97b612938e66b21834ac6e1355e95602f9726d026b719c58d55880a4b';
 const CH_SWARM = abiBytes('e40101fa011b20' + SWARM_HASH);
 const TOKEN_ID = '0x' + pad32('1234');               // any 32-byte computeId() result
+const RPC_RESPONSE_LIMIT = 4 * 1024 * 1024;
 
 // ---- web3:// fixtures (ERC-6821 contentcontract + ERC-6944 resource request) -------------------
 const utf8 = (s) => new TextEncoder().encode(s);
@@ -68,7 +69,9 @@ const abiString = (s) => '0x' + pad32('20') + tail(utf8(s));   // a bare `return
 const TEXT_NONE = abiString('');                                // no contentcontract record set
 // The real EthereumRock deployment, the contract this feature was built against.
 const ROCK = '0x6485b8b75a8ad382340abe333e1f6ee10e39f818';
+const ROCK_2 = '0x1111111111111111111111111111111111111111';
 const CC_MAINNET = abiString(`eth:${ROCK}`);
+const CC_MAINNET_2 = abiString(`eth:${ROCK_2}`);
 const CC_SEPOLIA = abiString(`sep:${ROCK}`);
 const CC_BARE = abiString(ROCK);                                // no chain prefix → mainnet per ERC-6821
 const CC_UNKNOWN_CHAIN = abiString(`base:${ROCK}`);
@@ -138,7 +141,7 @@ function makeCache() {
 }
 
 // ---- fetch mock -------------------------------------------------------------
-// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, ipns(url) -> Response,
+// handlers: { rpc(data,url,to) -> resultHex|Response|null, ipfs(url) -> Response, ipns(url) -> Response,
 //             swarm(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
   const calls = {
@@ -149,9 +152,11 @@ function makeFetch(handlers) {
     const url = typeof input === 'string' ? input : input.url;
     if (init && init.method === 'POST' && typeof init.body === 'string' && init.body.includes('eth_call')) {
       calls.rpc++; calls.rpcUrls.push(url);
-      const data = JSON.parse(init.body).params[0].data;
-      const result = handlers.rpc ? handlers.rpc(data, url) : null;
+      const call = JSON.parse(init.body).params[0];
+      const data = call.data;
+      const result = handlers.rpc ? await handlers.rpc(data, url, call.to) : null;
       if (result === 'THROW') throw new Error('rpc network error');
+      if (result instanceof Response) return result;
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: result ?? null }),
         { headers: { 'content-type': 'application/json' } });
     }
@@ -531,11 +536,58 @@ test('5219 mode: serves the contract body and its own content-type', async () =>
   assert.equal(res.status, 200);
   assert.equal(await res.text(), '<h1>on-chain</h1>');
   assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
-  assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=300');
   assert.equal(res.headers.get('x-web3-contract'), `eth:${ROCK}`);
   assert.equal(res.headers.get('x-web3-resolve-mode'), '5219');
   assert.equal(res.headers.get('x-gwei-name'), 'rock.gwei');
   for (const [k, v] of SEC_HEADERS) assert.equal(res.headers.get(k), v);
+});
+
+test('web3 cache entries follow the resolved contract when a name is repointed', async () => {
+  const cache = makeCache();
+  let contentcontract = CC_MAINNET;
+  const fetchMock = makeFetch({
+    rpc: (data, _url, to) => data.startsWith(SEL.id) ? TOKEN_ID
+      : data.startsWith(SEL.ch) ? CH_NONE
+      : data.startsWith(SEL.text) ? contentcontract
+      : data.startsWith(SEL.mode) ? MODE_5219
+      : data.startsWith(SEL.request)
+        ? abiRequestResult(
+            200,
+            to.toLowerCase() === ROCK ? 'old contract' : 'new contract',
+            [['Cache-control', 'public, max-age=31536000, immutable']],
+          )
+        : null,
+  });
+
+  await invoke('https://rock.gwei.domains/prime', { cache, fetchMock });
+  cache.advance(250);
+  const late = await invoke('https://rock.gwei.domains/late', { cache, fetchMock });
+  assert.equal(await late.text(), 'old contract');
+
+  // The /late response still has 249 seconds left, but the name resolution has now expired.
+  contentcontract = CC_MAINNET_2;
+  cache.advance(51);
+  const repointed = await invoke('https://rock.gwei.domains/late', { cache, fetchMock });
+  assert.equal(await repointed.text(), 'new contract');
+  assert.equal(repointed.headers.get('x-web3-contract'), `eth:${ROCK_2}`);
+});
+
+test('restrictive contract cache directives are preserved and skip the edge cache', async () => {
+  const cache = makeCache();
+  let resourceCalls = 0;
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => {
+      if (!data.startsWith(SEL.request)) return null;
+      resourceCalls++;
+      return abiRequestResult(200, 'private', [['Cache-control', 'private, max-age=31536000, immutable']]);
+    } }),
+  });
+
+  const first = await invoke('https://rock.gwei.domains/private', { cache, fetchMock });
+  assert.equal(first.headers.get('cache-control'), 'private, max-age=300');
+  await invoke('https://rock.gwei.domains/private', { cache, fetchMock });
+  assert.equal(resourceCalls, 2, 'private responses are never stored in the shared edge cache');
 });
 
 test('5219 mode: path and query encode exactly as w3link sends them', async () => {
@@ -618,6 +670,18 @@ test('a contract cannot set set-cookie or weaken the security headers', async ()
   assert.equal(res.headers.get('content-security-policy'), "frame-ancestors 'self';");
   assert.equal(res.headers.get('access-control-allow-origin'), '*');
   assert.equal(res.headers.get('content-type'), 'text/html', 'but content-type is honoured');
+});
+
+test('malformed allowlisted header values become a controlled 502', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'bad', [['Content-type', 'text/html\r\nx-injected: yes']]) : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 502);
+  assert.match(res.headers.get('cache-control'), /no-store/);
+  assert.match(await res.text(), /malformed HTTP headers/);
 });
 
 test('manual mode: raw path is the calldata, "/" at the root', async () => {
@@ -703,6 +767,53 @@ test('sepolia record calls the sepolia RPC pool, not mainnet', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.headers.get('x-web3-contract'), `sep:${ROCK}`);
   assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('sepolia')), 'used a sepolia endpoint');
+});
+
+test('custom RPC_URL is used for mainnet contract calls as well as name resolution', async () => {
+  const cache = makeCache();
+  const privateRpc = 'https://rpc.example.invalid/private';
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'private rpc') : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', {
+    cache,
+    fetchMock,
+    env: { RPC_URL: privateRpc },
+  });
+  assert.equal(res.status, 200);
+  assert.ok(fetchMock.calls.rpcUrls.length >= 5);
+  assert.deepEqual([...new Set(fetchMock.calls.rpcUrls)], [privateRpc]);
+});
+
+test('oversized streamed RPC responses fail over before JSON buffering', async () => {
+  const cache = makeCache();
+  let oversizedCalls = 0;
+  let fallbackCalls = 0;
+  const inner = rpcWeb3({
+    onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'fallback') : null,
+  });
+  const fetchMock = makeFetch({
+    rpc: (data, url) => {
+      if (data.startsWith(SEL.request) && url.includes('0xrpc')) {
+        oversizedCalls++;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(RPC_RESPONSE_LIMIT));
+            controller.enqueue(new Uint8Array(1));
+            controller.close();
+          },
+        }), { headers: { 'content-type': 'application/json' } });
+      }
+      if (data.startsWith(SEL.request)) fallbackCalls++;
+      return inner(data);
+    },
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'fallback');
+  assert.equal(oversizedCalls, 1);
+  assert.equal(fallbackCalls, 1);
 });
 
 test('unknown chain or malformed address reads as no website, with no contract call', async () => {

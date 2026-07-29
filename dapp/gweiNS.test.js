@@ -184,3 +184,39 @@ test('Set Website routes web3:// to setText and everything else to setContenthas
   assert.match(source, /setText\(currentTokenId, CONTENTCONTRACT, ''\)/);
   assert.match(source, /setContenthash\(currentTokenId, '0x'\)/);
 });
+
+test('Clear Website removes a shadowed contentcontract before the active contenthash', async () => {
+  const start = html.indexOf('async function doSetContent()');
+  const end = html.indexOf('async function doSetPrimary()', start);
+  const source = html.slice(start, end);
+  const calls = [];
+  const context = vm.createContext({
+    CONTENTCONTRACT: 'contentcontract',
+    contract: {
+      setText() {
+        calls.push('contentcontract');
+        return { hash: '0xcontract' };
+      },
+      setContenthash() {
+        calls.push('contenthash');
+        return { hash: '0xcontenthash' };
+      }
+    },
+    currentContentContract: { chainId: 1, address: ROCK },
+    currentHasContenthash: true,
+    currentTokenId: 1n,
+    doCheckName() {},
+    event: { target: { disabled: false } },
+    handleError(error) { throw error; },
+    isProcessing: false,
+    showStatus() {},
+    async waitForTx() {},
+    async wcTransaction(tx) { return tx; },
+    $() { return { value: '', classList: { remove() {} } }; }
+  });
+  vm.runInContext(`${source}\nglobalThis.clearWebsite = doSetContent;`, context);
+
+  await context.clearWebsite();
+
+  assert.deepEqual(calls, ['contentcontract', 'contenthash']);
+});

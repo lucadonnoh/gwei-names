@@ -55,6 +55,9 @@ const RESERVED = {
 const RESOLVE_TTL = 300;     // name → content reference (seconds)
 const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
 const CONTENT_TTL = 300;     // proxied content (seconds)
+// JSON-RPC wraps byte responses as hex, so this permits roughly 2 MiB of contract content while
+// bounding the JSON string and decoder copies well below the Worker's per-isolate memory limit.
+const MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024;
 // resolveMode() is `pure` on every contract we've seen, so its answer is effectively immutable and
 // worth caching hard: it saves an eth_call on every cold web3:// request.
 const MODE_TTL = 86400;      // contract → resolve mode (seconds)
@@ -186,6 +189,53 @@ const WEB3_HEADERS = new Set([
   'content-type', 'cache-control', 'content-encoding', 'content-language',
   'etag', 'last-modified', 'location', 'vary',
 ]);
+function cacheControlParts(value) {
+  return (value || '').split(',').map((part) => part.trim()).filter(Boolean);
+}
+function cacheDirectiveName(part) {
+  return part.split('=', 1)[0].trim().toLowerCase();
+}
+function hasCacheDirective(parts, name) {
+  return parts.some((part) => cacheDirectiveName(part) === name);
+}
+function cacheDirectiveSeconds(parts, name) {
+  const part = parts.find((candidate) => cacheDirectiveName(candidate) === name);
+  if (!part) return null;
+  const at = part.indexOf('=');
+  if (at === -1) return null;
+  const value = part.slice(at + 1).trim().replace(/^"|"$/g, '');
+  if (!/^\d+$/.test(value)) return null;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) ? seconds : null;
+}
+// A name can be repointed after RESOLVE_TTL, so neither a browser nor the edge may retain contract
+// content longer than that. Restrictive contract directives are preserved (or made stricter);
+// directives that permit stale reuse, such as immutable/stale-while-revalidate, are deliberately
+// omitted from the normalized value.
+function web3CacheControl(value) {
+  const parts = cacheControlParts(value);
+  if (hasCacheDirective(parts, 'no-store')) return 'no-store';
+
+  const isPrivate = hasCacheDirective(parts, 'private');
+  const scope = isPrivate ? 'private' : 'public';
+  if (hasCacheDirective(parts, 'no-cache')) return `${scope}, no-cache, max-age=0`;
+
+  const maxAge = Math.min(cacheDirectiveSeconds(parts, 'max-age') ?? CONTENT_TTL, CONTENT_TTL);
+  const normalized = [scope, `max-age=${maxAge}`];
+  const sharedMaxAge = cacheDirectiveSeconds(parts, 's-maxage');
+  if (!isPrivate && sharedMaxAge !== null) {
+    normalized.push(`s-maxage=${Math.min(sharedMaxAge, CONTENT_TTL)}`);
+  }
+  if (hasCacheDirective(parts, 'must-revalidate')) normalized.push('must-revalidate');
+  if (!isPrivate && hasCacheDirective(parts, 'proxy-revalidate')) normalized.push('proxy-revalidate');
+  return normalized.join(', ');
+}
+function web3ResponseIsCacheable(response) {
+  const parts = cacheControlParts(response.headers.get('cache-control'));
+  if (['no-store', 'no-cache', 'private'].some((name) => hasCacheDirective(parts, name))) return false;
+  const ttl = cacheDirectiveSeconds(parts, 's-maxage') ?? cacheDirectiveSeconds(parts, 'max-age');
+  return ttl !== null && ttl > 0;
+}
 // Manual mode returns bare bytes with no content type, so ERC-6860 says to infer one from the path
 // extension and fall back to text/html.
 const MIME = {
@@ -342,6 +392,46 @@ function decodeIpns(cidHex) {
 // Tries each RPC in turn. Returns { result } on success, or the definitive non-answers { empty } and
 // { reverted } — a contract with no `resolveMode()` gives exactly those, and they mean "auto mode"
 // rather than "the endpoint is down". Anything else (rate limit, node error) fails over. null if all fail.
+async function readRpcJson(response) {
+  const declaredLength = response.headers.get('content-length');
+  const declaredBytes = declaredLength && /^\d+$/.test(declaredLength) ? Number(declaredLength) : null;
+  if (declaredBytes !== null && declaredBytes > MAX_RPC_RESPONSE_BYTES) {
+    throw new Error('RPC response exceeds size limit');
+  }
+  if (!response.body) throw new Error('RPC response has no body');
+
+  const reader = response.body.getReader();
+  let bytes = new Uint8Array(
+    declaredBytes !== null && Number.isSafeInteger(declaredBytes) ? declaredBytes : 16 * 1024,
+  );
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const nextTotal = total + value.byteLength;
+      if (nextTotal > MAX_RPC_RESPONSE_BYTES) {
+        try { await reader.cancel('RPC response exceeds size limit'); } catch (_) {}
+        throw new Error('RPC response exceeds size limit');
+      }
+      if (nextTotal > bytes.byteLength) {
+        const capacity = Math.min(
+          MAX_RPC_RESPONSE_BYTES,
+          Math.max(nextTotal, Math.max(16 * 1024, bytes.byteLength * 2)),
+        );
+        const grown = new Uint8Array(capacity);
+        grown.set(bytes.subarray(0, total));
+        bytes = grown;
+      }
+      bytes.set(value, total);
+      total = nextTotal;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return JSON.parse(new TextDecoder().decode(bytes.subarray(0, total)));
+}
 async function rpcCall(to, data, rpcs) {
   for (const rpc of rpcs) {
     try {
@@ -350,7 +440,7 @@ async function rpcCall(to, data, rpcs) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
       });
-      const j = await r.json();
+      const j = await readRpcJson(r);
       if (j && j.result && j.result !== '0x') return { result: j.result };
       if (j && j.result === '0x') return { empty: true };
       if (j && j.error && /revert/i.test(j.error.message || '')) return { reverted: true };
@@ -485,12 +575,13 @@ async function resolveMode(chainId, address, rpcs, cache, ctx) {
 //              a body, and headers, so the contract speaks HTTP itself.
 //   "manual" — the raw path+query is the calldata; the return is ABI-encoded bytes.
 //   auto     — not served yet; needs path→method translation and the ERC-7087 MIME rules.
-async function serveWeb3(ref, name, url, cache, ctx) {
+async function serveWeb3(ref, name, url, cache, ctx, mainnetRpcs) {
   const chain = CHAINS[ref.chainId];
   if (!chain) return page(name, '<p>This name points to a contract on an unsupported chain.</p>', 415);
+  const contractRpcs = ref.chainId === 1 ? mainnetRpcs : chain.rpcs;
   const rpcFailed = () => page(name, '<p>Resolution failed (RPC).</p>', 502, 'no-store');
 
-  const mode = await resolveMode(ref.chainId, ref.address, chain.rpcs, cache, ctx);
+  const mode = await resolveMode(ref.chainId, ref.address, contractRpcs, cache, ctx);
   if (!mode) return rpcFailed();
 
   let status = 200;
@@ -501,7 +592,7 @@ async function serveWeb3(ref, name, url, cache, ctx) {
     let resource = url.pathname.split('/').filter(Boolean);
     try { resource = resource.map(decodeURIComponent); } catch (_) {} // keep raw if percent-decoding fails
     const params = [...new URLSearchParams(url.search)];
-    const res = await ethCall(ref.address, encodeRequestCall(resource, params), chain.rpcs);
+    const res = await ethCall(ref.address, encodeRequestCall(resource, params), contractRpcs);
     if (!res) return rpcFailed();
     const decoded = decodeRequestResult(res);
     if (!decoded) return page(name, '<p>This contract returned a malformed ERC-5219 response.</p>', 502, 'no-store');
@@ -515,12 +606,18 @@ async function serveWeb3(ref, name, url, cache, ctx) {
     status = decoded.status >= 200 && decoded.status <= 599 ? decoded.status : 502;
     body = decoded.body;
     for (const [k, v] of decoded.headers) {
-      if (WEB3_HEADERS.has(k.toLowerCase())) headers.set(k, v);
+      if (WEB3_HEADERS.has(k.toLowerCase())) {
+        try {
+          headers.set(k, v);
+        } catch (_) {
+          return page(name, '<p>This contract returned malformed HTTP headers.</p>', 502, 'no-store');
+        }
+      }
     }
   } else if (mode === 'manual') {
     // Calldata is the raw path+query bytes, with no selector — it lands in the contract's fallback.
     const pathQuery = (url.pathname || '/') + url.search;
-    const res = await ethCall(ref.address, '0x' + toHex(utf8(pathQuery)), chain.rpcs);
+    const res = await ethCall(ref.address, '0x' + toHex(utf8(pathQuery)), contractRpcs);
     if (!res) return rpcFailed();
     const hex = res.slice(2);
     body = readDynamic(hex, word(hex, 0));
@@ -535,7 +632,7 @@ async function serveWeb3(ref, name, url, cache, ctx) {
     );
   }
 
-  if (!headers.has('cache-control')) headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
+  headers.set('cache-control', web3CacheControl(headers.get('cache-control')));
   // Percent-encoded for the same reason as the storage-gateway path below: header values are
   // ByteStrings, and an internationalized name would otherwise throw here.
   headers.set('x-gwei-name', encodeURIComponent(name));
@@ -571,12 +668,6 @@ export default {
     const name = decodedSub + '.gwei'; // gwei name this host maps to
     const cache = caches.default;
 
-    // Content cache: serve a previously-proxied full response for this exact URL.
-    if (request.method === 'GET') {
-      const hit = await cache.match(request);
-      if (hit) return hit;
-    }
-
     // 1. Resolve the name's records on-chain (cached).
     const r = await resolveName(name, rpcs, cache, ctx);
     if (r.error) return page('gwei gateway', '<p>Resolution failed (RPC).</p>', 502, 'no-store');
@@ -587,11 +678,24 @@ export default {
       return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);
     }
 
+    // Bind cached content to the resolved reference. Once the resolution entry expires, a repointed
+    // name selects a different key even if an older page response still exists at the edge.
+    const version = r.kind === 'web3' ? `web3:${r.chainId}:${r.address}` : `${r.kind}:${r.ref}`;
+    const contentKey = new Request(
+      `${CACHE_BASE}/content/${encodeURIComponent(name)}/${encodeURIComponent(version)}` +
+      `?url=${encodeURIComponent(url.pathname + url.search)}`,
+      { headers: request.headers },
+    );
+    if (request.method === 'GET') {
+      const hit = await cache.match(contentKey);
+      if (hit) return hit;
+    }
+
     // 2a. Contract-hosted site: call it over web3:// instead of proxying a storage gateway.
     if (r.kind === 'web3') {
-      const resp = await serveWeb3(r, name, url, cache, ctx);
-      if (request.method === 'GET' && resp.status === 200) {
-        ctx.waitUntil(cache.put(request, resp.clone()).catch(() => {}));
+      const resp = await serveWeb3(r, name, url, cache, ctx, rpcs);
+      if (request.method === 'GET' && resp.status === 200 && web3ResponseIsCacheable(resp)) {
+        ctx.waitUntil(cache.put(contentKey, resp.clone()).catch(() => {}));
       }
       return resp;
     }
@@ -616,7 +720,7 @@ export default {
           const resp = new Response(upstream.body, { status: upstream.status, headers });
           // Only full 200 GETs are cacheable; failures and partials are not.
           if (request.method === 'GET' && upstream.status === 200) {
-            ctx.waitUntil(cache.put(request, resp.clone()).catch(() => {}));
+            ctx.waitUntil(cache.put(contentKey, resp.clone()).catch(() => {}));
           }
           return resp;
         }

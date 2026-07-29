@@ -468,12 +468,11 @@ export function createGnsClient(config?: RpcConfig): GnsClient {
     async encodeSetContentContract(name, target) {
       const pointer = typeof target === 'string' ? parseWeb3Url(target) : target
       if (!pointer) throw new Error('Expected a web3:// URL or a { chainId, address } pointer.')
+      const record = formatContentContract(pointer)
       const tokenId = await getTokenId(name)
       return {
         to: contract,
-        data:
-          SET_TEXT +
-          encodeUint256StringString(tokenId, CONTENTCONTRACT, formatContentContract(pointer)),
+        data: SET_TEXT + encodeUint256StringString(tokenId, CONTENTCONTRACT, record),
       }
     },
 

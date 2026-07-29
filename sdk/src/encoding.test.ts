@@ -469,6 +469,13 @@ describe('contentcontract records', () => {
     assert.deepEqual(parseContentContract(ROCK), { chainId: 1, address: ROCK })
   })
 
+  it('rejects malformed addresses supplied through object pointers', () => {
+    assert.throws(
+      () => formatContentContract({ chainId: 1, address: '0xdeadbeef' as `0x${string}` }),
+      /40 hex characters/,
+    )
+  })
+
   it('returns null for unset or unusable records', () => {
     for (const record of [
       '',

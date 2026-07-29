@@ -3898,11 +3898,13 @@ async function doSetContent() {
     // that's up to two transactions, and the status message says so rather than surprising anyone.
     try {
       const steps = [];
-      if (currentHasContenthash) {
-        steps.push(['contenthash', () => contract.setContenthash(currentTokenId, '0x')]);
-      }
+      // contenthash wins at the gateway, so clear the shadowed contract pointer first. If the user
+      // cancels the second transaction, the still-present contenthash remains the active website.
       if (currentContentContract) {
         steps.push([CONTENTCONTRACT, () => contract.setText(currentTokenId, CONTENTCONTRACT, '')]);
+      }
+      if (currentHasContenthash) {
+        steps.push(['contenthash', () => contract.setContenthash(currentTokenId, '0x')]);
       }
       if (!steps.length) {
         showStatus('This name has no website set.', 'error');

@@ -47,7 +47,9 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   ERC-6944 resource-request (`"5219"`) and manual mode; auto mode returns 415. Contract-supplied
   headers pass an allowlist, so a contract cannot set `set-cookie` or weaken the security headers on
   a name's origin. Chunked (`web3-next-chunk`) responses are refused with a 501 rather than served
-  truncated. `resolveMode` is cached for 24h since it's `pure` in practice.
+  truncated. Contract cache directives are capped to the 5-minute name-resolution window, and cached
+  pages are keyed by the resolved contract so repointing a name cannot revive stale content.
+  `resolveMode` is cached for 24h since it's `pure` in practice.
 - Bodies are served as raw bytes. ERC-5219 types the body as `string`, but contracts put images and
   fonts in it, so it never round-trips through a UTF-8 decode.
 - IPFS and IPNS content is fetched from `ipfs.io` (with `dweb.link` fallback). IPNS Peer IDs are

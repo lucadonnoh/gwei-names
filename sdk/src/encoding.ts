@@ -327,6 +327,9 @@ export function parseWeb3Url(input: string): Web3Pointer | null {
 export function formatContentContract(pointer: Web3Pointer): string {
   const short = CHAIN_SHORT[pointer.chainId]
   if (!short) throw new Error(`Unsupported chain ${pointer.chainId}.`)
+  if (typeof pointer.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(pointer.address)) {
+    throw new Error('Content contract pointer must name an address (0x + 40 hex characters).')
+  }
   return `${short}:${pointer.address.toLowerCase()}`
 }
 
