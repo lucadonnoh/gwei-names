@@ -185,6 +185,16 @@ test('Set Website routes web3:// to setText and everything else to setContenthas
   assert.match(source, /setContenthash\(currentTokenId, '0x'\)/);
 });
 
+test('Visit via link uses the muted theme color without container opacity', () => {
+  const marker = 'Visit via:';
+  const at = html.indexOf(marker);
+  assert.notEqual(at, -1);
+  const snippet = html.slice(html.lastIndexOf('<div', at), html.indexOf('</div>', at));
+  assert.match(snippet, /color:var\(--fg-muted\)/);
+  assert.match(snippet, /<a [^>]*style="color:inherit;"/);
+  assert.doesNotMatch(snippet, /opacity:/);
+});
+
 test('Clear Website removes a shadowed contentcontract before the active contenthash', async () => {
   const start = html.indexOf('async function doSetContent()');
   const end = html.indexOf('async function doSetPrimary()', start);

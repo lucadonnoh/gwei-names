@@ -3484,7 +3484,7 @@ function showManageForm(action) {
         <label>Website content</label>
         <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, a Swarm bzz:// reference, or a web3:// URL for a site stored in a contract.</div>
         <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), bzz://… (Swarm), or web3://0x…:1/">
-        ${GWEI_GATEWAY ? `<div style="font-size:11px;opacity:0.5;margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
+        ${GWEI_GATEWAY ? `<div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener" style="color:inherit;">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
       `;
