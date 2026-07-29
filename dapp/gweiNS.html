@@ -3482,8 +3482,8 @@ function showManageForm(action) {
     case 'setContent':
       html = `
         <label>Website content</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, a Swarm bzz:// reference, or a web3:// URL for a site stored in a contract.</div>
-        <input type="text" id="contentHash" placeholder="bafy… or Qm… (IPFS), bzz://… (Swarm), or web3://0x…:1/">
+        <div style="font-size:11px;color:var(--fg-muted);margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, an IPNS name, a Swarm bzz:// reference, or a web3:// contract URL.</div>
+        <input type="text" id="contentHash" placeholder="bafy… (IPFS), ipns://k51… (IPNS), bzz://…, or web3://0x…:1/">
         ${GWEI_GATEWAY ? `<div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener" style="color:inherit;">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -3738,6 +3738,7 @@ function base58Decode(str) {
 
 // RFC 4648 base32 (lowercase, no padding)
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+const BASE36_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 function base32Decode(str) {
   str = str.toLowerCase().replace(/=+$/, '');
@@ -3758,6 +3759,20 @@ function base32Decode(str) {
   return new Uint8Array(output);
 }
 
+// Base36 is the conventional case-insensitive encoding for CIDv1 IPNS names.
+function base36Decode(str) {
+  if (!str || str.length > 256) throw new Error('Invalid IPNS name.');
+  let value = 0n;
+  for (const char of str.toLowerCase()) {
+    const digit = BASE36_ALPHABET.indexOf(char);
+    if (digit === -1) throw new Error('Invalid IPNS base36 character.');
+    value = value * 36n + BigInt(digit);
+  }
+  let hex = value.toString(16);
+  if (hex.length % 2) hex = '0' + hex;
+  return ethers.getBytes('0x' + hex);
+}
+
 // Encode unsigned varint (used for ENSIP-7 contenthash protoCode)
 function encodeUvarint(x) {
   let v = BigInt(x);
@@ -3768,6 +3783,63 @@ function encodeUvarint(x) {
   }
   out.push(Number(v));
   return Uint8Array.from(out);
+}
+
+function readUvarint(bytes, offset) {
+  let value = 0n;
+  let shift = 0n;
+  for (let i = offset; i < bytes.length && i - offset < 10; i++) {
+    const byte = bytes[i];
+    value |= BigInt(byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) {
+      if (i > offset && byte === 0) return null;
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      return { value: Number(value), next: i + 1 };
+    }
+    shift += 7n;
+  }
+  return null;
+}
+
+function validIpnsCid(bytes) {
+  const version = readUvarint(bytes, 0);
+  if (!version || version.value !== 1) return false;
+  const codec = readUvarint(bytes, version.next);
+  if (!codec || codec.value !== 0x72) return false; // libp2p-key
+  const hashCode = readUvarint(bytes, codec.next);
+  if (!hashCode) return false;
+  const hashSize = readUvarint(bytes, hashCode.next);
+  if (!hashSize || hashSize.value === 0 || hashSize.next + hashSize.value !== bytes.length) return false;
+  return hashCode.value !== 0 || hashSize.value >= 36; // reject unsafe truncated inline keys
+}
+
+function encodeIpnsContenthash(input) {
+  let name = null;
+  const lower = input.toLowerCase();
+  if (lower.startsWith('ipns://')) name = input.slice(7);
+  else if (lower.startsWith('/ipns/')) name = input.slice(6);
+  else if (/^k[0-9a-z]+$/i.test(input)) name = input; // conventional bare base36 name
+  if (name === null) return null;
+
+  if (name.endsWith('/')) name = name.slice(0, -1);
+  if (!name || name.includes('/')) throw new Error('IPNS name must not include a path.');
+
+  let cidBytes;
+  if (name.startsWith('Qm')) {
+    // A legacy base58 Peer ID is a bare multihash; wrap it as CIDv1 libp2p-key.
+    cidBytes = new Uint8Array([0x01, 0x72, ...base58Decode(name)]);
+  } else {
+    const prefix = name[0].toLowerCase();
+    if (prefix === 'k') cidBytes = base36Decode(name.slice(1));
+    else if (prefix === 'b') cidBytes = base32Decode(name.slice(1));
+    else if (prefix === 'f') cidBytes = ethers.getBytes('0x' + name.slice(1));
+    else if (prefix === 'z') cidBytes = base58Decode(name.slice(1));
+    else throw new Error('IPNS name must be a CIDv1 libp2p-key (usually k51…).');
+  }
+  if (!validIpnsCid(cidBytes)) {
+    throw new Error('IPNS name must be a valid CIDv1 libp2p-key.');
+  }
+  return ethers.concat([encodeUvarint(0xe5), cidBytes]);
 }
 
 function base32Encode(bytes) {
@@ -3820,6 +3892,9 @@ function encodeContenthash(input) {
     if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('Invalid Swarm reference (expected 64 hex characters).');
     return ethers.getBytes('0xe40101fa011b20' + hash);
   }
+
+  const ipnsContenthash = encodeIpnsContenthash(cid);
+  if (ipnsContenthash) return ipnsContenthash;
 
   // Strip ipfs:// prefix
   if (cid.startsWith('ipfs://')) cid = cid.slice(7);
@@ -3960,7 +4035,7 @@ async function doSetContent() {
     $('manageForm').classList.remove('show');
     doCheckName(); // Refresh to show updated website link
   } catch (e) {
-    if (e.message?.includes('Unsupported CID') || e.message?.includes('web3://')) {
+    if (e.message?.includes('Unsupported CID') || e.message?.includes('IPNS') || e.message?.includes('web3://')) {
       showStatus(e.message, 'error');
     } else {
       handleError(e);

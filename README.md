@@ -591,8 +591,9 @@ function encodeContenthash(cid) {
 }
 ```
 
-IPNS records use the ENSIP-7 encoding `0xe501 || CIDv1(libp2p-key)`. The gateway validates that
-CID and renders its IPNS name in the conventional lowercase base36 form (`k...`) before fetching it.
+IPNS records use the ENSIP-7 encoding `0xe501 || CIDv1(libp2p-key)`. The Set Website form accepts
+`ipns://k...`, `/ipns/k...`, or the bare base36 `k...` name. The gateway validates that CID and
+renders its IPNS name in the conventional lowercase base36 form before fetching it.
 
 ---
 
@@ -608,8 +609,8 @@ setText(tokenId, "contentcontract", "eth:0x6485b8b75a8ad382340abe333e1f6ee10e39f
 ```
 
 Accepted values are `eth:0x…` (mainnet), `sep:0x…` (Sepolia), or a bare `0x…`, which ERC-6821 reads
-as mainnet. In the dapp you paste the `web3://` URL into the same **Set Website** field used for CIDs
-and `bzz://` references, and it writes this record for you.
+as mainnet. In the dapp you paste the `web3://` URL into the same **Set Website** field used for
+IPFS/IPNS and `bzz://` references, and it writes this record for you.
 
 **`contenthash` takes precedence.** A name with both records set serves its contenthash, so no
 existing site changes behavior when a `contentcontract` record appears. Clear the contenthash to

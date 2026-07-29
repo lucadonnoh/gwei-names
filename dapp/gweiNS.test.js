@@ -147,9 +147,9 @@ test('parseWeb3Url accepts the forms a user is likely to paste', () => {
   assert.deepEqual(plain(parseWeb3Url(`  W3://${ROCK.toUpperCase().replace('0X', '0x')}:1/ `)), { chainId: 1, address: ROCK });
 });
 
-test('parseWeb3Url leaves IPFS and Swarm input alone', () => {
+test('parseWeb3Url leaves storage-network input alone', () => {
   const { parseWeb3Url } = web3Harness();
-  for (const input of ['bafybeiabc', 'Qmfoo', 'ipfs://bafy', 'bzz://' + 'a'.repeat(64), '0xe301aa', '']) {
+  for (const input of ['bafybeiabc', 'Qmfoo', 'ipfs://bafy', 'ipns://k51abc', 'bzz://' + 'a'.repeat(64), '0xe301aa', '']) {
     assert.equal(parseWeb3Url(input), null, `expected null for ${input}`);
   }
 });
@@ -193,6 +193,65 @@ test('Visit via link uses the muted theme color without container opacity', () =
   assert.match(snippet, /color:var\(--fg-muted\)/);
   assert.match(snippet, /<a [^>]*style="color:inherit;"/);
   assert.doesNotMatch(snippet, /opacity:/);
+});
+
+function contenthashHarness() {
+  const context = vm.createContext({
+    ethers: {
+      concat(parts) {
+        const arrays = parts.map((part) => typeof part === 'string' ? this.getBytes(part) : part);
+        const length = arrays.reduce((sum, part) => sum + part.length, 0);
+        const result = new Uint8Array(length);
+        let offset = 0;
+        for (const part of arrays) {
+          result.set(part, offset);
+          offset += part.length;
+        }
+        return result;
+      },
+      getBytes(hex) {
+        const value = hex.startsWith('0x') ? hex.slice(2) : hex;
+        if (value.length % 2 || !/^[0-9a-f]*$/i.test(value)) throw new Error('invalid hex');
+        return Uint8Array.from(value.match(/../g) || [], (byte) => parseInt(byte, 16));
+      },
+    },
+  });
+  const start = html.indexOf('// Base58 alphabet (Bitcoin style)');
+  const end = html.indexOf('// Parse `web3://', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.contenthashApi = { encodeContenthash };',
+    context,
+  );
+  return context.contenthashApi;
+}
+
+test('Set Website accepts canonical IPNS names and encodes the IPNS namespace', () => {
+  const { encodeContenthash } = contenthashHarness();
+  const name = 'k2k4r8ng8uzrtqb5ham8kao889m8qezu96z4w3lpinyqghum43veb6n3';
+  const expected = 'e50101721220a1dc5d90d7272c0fd9150414f14c80c71de5d243c2f23165e2ddb495cbbcd05f';
+  const inlineName = 'k51qzi5uqu5dm7u9ns1a5utzqrufm5p8znj2pwl38amnzmwkdmf52ntlg06m8d';
+  const inlineExpected = 'e5010172002408011220f2209793528adf06812d942e80d68f34e37119cd305f9d05d1e20f5cc3b7860d';
+  const hex = (bytes) => Buffer.from(bytes).toString('hex');
+
+  assert.equal(hex(encodeContenthash(`ipns://${name}`)), expected);
+  assert.equal(hex(encodeContenthash(`/ipns/${name}`)), expected);
+  assert.equal(hex(encodeContenthash(name)), expected);
+  assert.equal(hex(encodeContenthash(`ipns://${inlineName}`)), inlineExpected);
+  assert.equal(hex(encodeContenthash(`0x${expected}`)), expected, 'raw ENSIP-7 bytes remain supported');
+});
+
+test('Set Website rejects malformed IPNS names and paths', () => {
+  const { encodeContenthash } = contenthashHarness();
+  assert.throws(() => encodeContenthash('ipns://example.com'), /CIDv1 libp2p-key/);
+  assert.throws(() => encodeContenthash('ipns://k51abc/assets/app.js'), /must not include a path/);
+  assert.throws(() => encodeContenthash('ipns://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'), /CIDv1 libp2p-key/);
+});
+
+test('Set Website copy and placeholder list IPNS', () => {
+  assert.match(html, /paste an IPFS CID, an IPNS name, a Swarm bzz:\/\/ reference, or a web3:\/\/ contract URL/);
+  assert.match(html, /placeholder="[^"]*ipns:\/\/k51… \(IPNS\)[^"]*"/);
 });
 
 test('Clear Website removes a shadowed contentcontract before the active contenthash', async () => {
