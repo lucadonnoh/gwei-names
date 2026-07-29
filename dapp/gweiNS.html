@@ -496,7 +496,94 @@ body.modal-open { overflow: hidden; }
   color: var(--btn-fg);
   border-color: var(--btn-bg);
 }
-
+.slow-options {
+  display: none;
+  margin: -2px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--input-ph);
+  background: var(--bg);
+}
+.slow-options.show { display: block; }
+.slow-options select {
+  width: 100%;
+  margin: 4px 0 10px;
+  padding: 10px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--input-ph);
+  border-radius: 0;
+  font: inherit;
+}
+.slow-note {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.65;
+}
+.slow-note a { color: inherit; }
+.slow-manager {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--input-ph);
+}
+.slow-manager-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.slow-manager-head button,
+.slow-transfer-actions button {
+  width: auto;
+  margin: 0;
+  padding: 6px 9px;
+  font-size: 10px;
+}
+.slow-transfer {
+  padding: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--input-ph);
+  background: var(--send-bg);
+}
+.slow-transfer-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.slow-transfer-role {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.55;
+}
+.slow-transfer-meta {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  opacity: 0.65;
+}
+.slow-transfer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.slow-transfer-empty {
+  padding: 8px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.6;
+}
+.slow-transfer-limit {
+  margin-top: 8px;
+  font-size: 10px;
+  opacity: 0.5;
+}
 /* Footer */
 .site-footer {
   position: relative;
@@ -852,18 +939,43 @@ body.modal-open { overflow: hidden; }
   <a href="#" onclick="toggleSend(event)" class="send-toggle" id="sendToggle">send eth →</a>
   <div id="sendForm" class="send-form">
     <label>Recipient</label>
-    <input type="text" id="sendTo" placeholder="0x... or name.gwei (empty = self)" oninput="previewSendRecipient()">
+    <input type="text" id="sendTo" placeholder="0x... or name.gwei" oninput="previewSendRecipient()">
     <div id="sendPreview" style="font-size:12px;margin-bottom:12px;display:none;"></div>
     <label>Amount (ETH)</label>
     <input type="text" id="sendAmount" placeholder="0.01">
     <div id="sendDest">
-    <label>Destination</label>
+    <label>Send mode · Ethereum</label>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <button type="button" id="netDirect" class="net-btn active" onclick="setNetwork('direct')">Ethereum</button>
-      <button type="button" id="netBase" class="net-btn" onclick="setNetwork('base')">→ Base</button>
+      <button type="button" id="netDirect" class="net-btn active" onclick="setNetwork('direct')">Standard</button>
+      <button type="button" id="netSlow" class="net-btn" onclick="setNetwork('slow')">Timelocked · SLOW</button>
+    </div>
+    <div id="slowOptions" class="slow-options">
+      <label for="slowDelay">Reversal window</label>
+      <select id="slowDelay">
+        <option value="3600">1 hour</option>
+        <option value="86400" selected>1 day</option>
+        <option value="259200">3 days</option>
+        <option value="604800">7 days</option>
+        <option value="2592000">30 days</option>
+      </select>
+      <div class="slow-note">
+        You can reverse the transfer during this window. Afterwards, the recipient claims it through
+        this panel. If it remains unclaimed for another 30 days, you can claw it back.
+        <br>
+        <a href="https://github.com/z0r0z/slow" target="_blank" rel="noopener">SLOW GitHub ↗</a>
+        ·
+        <a href="https://etherscan.io/address/0x000000000000888741B254d37e1b27128AfEAaBC#code" target="_blank" rel="noopener">Etherscan ↗</a>
+      </div>
+      <div class="slow-manager">
+        <div class="slow-manager-head">
+          <span>Your SLOW transfers</span>
+          <button type="button" class="secondary" onclick="loadSlowTransfers()">Refresh</button>
+        </div>
+        <div id="slowTransfers" class="slow-transfer-empty">Connect your wallet to view transfers.</div>
+      </div>
     </div>
     </div>
-    <button onclick="doSendEth()">Send</button>
+    <button id="sendSubmitBtn" onclick="doSendEth(event)">Send</button>
     <button class="secondary" onclick="toggleSend(event)">Cancel</button>
   </div>
 </div>
@@ -1199,7 +1311,7 @@ function renderNetBar() {
   }).join('');
 }
 renderNetBar();
-// The "Destination" toggle (direct send vs bridge-to-Base) is a mainnet-only feature.
+// The Ethereum send modes (standard and SLOW) are mainnet-only.
 if (NET.chainId !== 1) {
   const _d = document.getElementById('sendDest');
   if (_d) _d.style.display = 'none';
@@ -2160,6 +2272,7 @@ async function connectWithWallet(walletKey) {
     await initPending();
     doCheckName();
     updateZkClaimEnabled();
+    if (NET.chainId === 1) loadSlowTransfers();
 
   } catch (error) {
     handleError(error);
@@ -2242,6 +2355,13 @@ function disconnectWallet() {
   hideManage();
   doCheckName();
   updateZkClaimEnabled();
+  slowTransfersVersion++;
+  setSlowActionableCount(0);
+  const slowList = $('slowTransfers');
+  if (slowList) {
+    slowList.className = 'slow-transfer-empty';
+    slowList.textContent = 'Connect your wallet to view transfers.';
+  }
 }
 
 function byteLength(str) {
@@ -2271,6 +2391,13 @@ const CONTRACT_ERROR_HELP = {
   NotParentOwner: 'Only the parent name owner can do this.',
   TooDeep: 'Subdomains can only be nested 10 levels deep.',
   TokenDoesNotExist: 'This name does not exist.',
+  InvalidRecipient: 'SLOW rejected this recipient address.',
+  InvalidDeposit: 'SLOW rejected the timelocked transfer parameters.',
+  TransferDoesNotExist: 'This SLOW transfer no longer exists. Refresh the transfer list.',
+  TimelockNotExpired: 'This SLOW transfer is not claimable yet.',
+  TimelockExpired: 'The reversal window has closed.',
+  ClawbackNotReady: 'This SLOW transfer is not ready for clawback yet.',
+  TransferToNonERC1155ReceiverImplementer: 'This recipient is a smart account that cannot receive the SLOW transfer receipt. Use an address with ERC-1155 support.',
   TransferToNonERC721ReceiverImplementer: 'Your connected account cannot receive NFTs: it is a smart account (or has an EIP-7702 delegation) without NFT support. Remove the delegation in your wallet (revoke smart account / switch back to EOA) or use another address.'
 };
 // 4-byte selectors of the same errors, for raw provider errors ethers cannot decode
@@ -2289,6 +2416,13 @@ const CONTRACT_ERROR_SELECTORS = {
   '0x3a81d6fc': 'AlreadyRegistered',
   '0xb6682ad2': 'CommitmentNotFound',
   '0xceea21b6': 'TokenDoesNotExist',
+  '0x9c8d2cd2': 'InvalidRecipient',
+  '0xb2e532de': 'InvalidDeposit',
+  '0x49378211': 'TransferDoesNotExist',
+  '0x621e25c3': 'TimelockNotExpired',
+  '0x7a6fcaa6': 'TimelockExpired',
+  '0xc9252135': 'ClawbackNotReady',
+  '0x9c05499b': 'TransferToNonERC1155ReceiverImplementer',
   '0xd1a57ed6': 'TransferToNonERC721ReceiverImplementer'
 };
 
@@ -4113,17 +4247,40 @@ async function doRenew() {
 }
 
 // Send ETH functionality
+let slowActionableCount = 0;
+
+function setSlowActionableCount(count) {
+  slowActionableCount = count;
+  updateSendToggle();
+}
+
+function updateSendToggle() {
+  const form = $('sendForm');
+  const toggle = $('sendToggle');
+  if (!form || !toggle) return;
+  if (form.classList.contains('show')) {
+    toggle.textContent = slowActionableCount > 0
+      ? '← hide · ' + slowActionableCount + ' pending'
+      : '← hide';
+    return;
+  }
+  toggle.textContent = slowActionableCount > 0
+    ? 'send eth · ' + slowActionableCount + ' pending →'
+    : 'send eth →';
+}
+
 function toggleSend(event) {
   event.preventDefault();
   const form = $('sendForm');
-  const toggle = $('sendToggle');
   if (form.classList.contains('show')) {
     form.classList.remove('show');
-    toggle.textContent = 'send eth →';
   } else {
     form.classList.add('show');
-    toggle.textContent = '← hide';
+    if (slowActionableCount > 0 && NET.chainId === 1) {
+      setNetwork('slow');
+    }
   }
+  updateSendToggle();
 }
 
 let sendPreviewDebounce = null;
@@ -4160,18 +4317,59 @@ function previewSendRecipient() {
 let sendNetwork = 'direct';
 
 function setNetwork(net) {
+  if (!['direct', 'slow'].includes(net)) return;
+  if (net === 'slow' && NET.chainId !== 1) return;
   sendNetwork = net;
   $('netDirect').classList.toggle('active', net === 'direct');
-  $('netBase').classList.toggle('active', net === 'base');
+  $('netSlow').classList.toggle('active', net === 'slow');
+  $('slowOptions').classList.toggle('show', net === 'slow');
+  $('sendTo').placeholder = '0x... or name.gwei';
+  $('sendSubmitBtn').textContent = net === 'slow' ? 'Send with SLOW' : 'Send';
+  if (net === 'slow') {
+    loadSlowTransfers();
+  }
 }
 
-// Base OptimismPortal for L1 -> L2 bridging
-const BASE_PORTAL = '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e';
-const BASE_PORTAL_ABI = [
-  'function depositTransaction(address _to, uint256 _value, uint64 _gasLimit, bool _isCreation, bytes _data) payable'
+// SLOW mainnet deployment. Use the narrow ABI directly instead of importing its AGPL SDK.
+const SLOW_CONTRACT = '0x000000000000888741B254d37e1b27128AfEAaBC';
+const SLOW_ABI = [
+  'function depositTo(address token, address to, uint256 amount, uint96 delay, bytes data) payable returns (uint256 transferId)',
+  'function pendingTransfers(uint256 transferId) view returns (uint96 timestamp, address from, address to, uint256 id, uint256 amount)',
+  'function outboundTransferCount(address user) view returns (uint256)',
+  'function outboundTransferAt(address user, uint256 index) view returns (uint256)',
+  'function inboundTransferCount(address user) view returns (uint256)',
+  'function inboundTransferAt(address user, uint256 index) view returns (uint256)',
+  'function reverse(uint256 transferId)',
+  'function claim(uint256 transferId)',
+  'function clawback(uint256 transferId)',
+  'function withdrawFrom(address from, address to, uint256 id, uint256 amount)',
+  'function multicall(bytes[] data) payable returns (bytes[] results)',
+  'error InvalidRecipient()',
+  'error InvalidDeposit()',
+  'error TransferToNonERC1155ReceiverImplementer()',
+  'error TransferDoesNotExist()',
+  'error TimelockNotExpired()',
+  'error TimelockExpired()',
+  'error ClawbackNotReady()',
+  'error Unauthorized()'
 ];
+const SLOW_INTERFACE = new ethers.Interface(SLOW_ABI);
+const SLOW_CLAWBACK_GRACE = 30 * 24 * 60 * 60;
+const SLOW_TRANSFER_LIMIT = 20;
 
-async function doSendEth() {
+function formatSlowDelay(delay) {
+  if (delay % 86400 === 0) {
+    const days = delay / 86400;
+    return days + (days === 1 ? ' day' : ' days');
+  }
+  if (delay % 3600 === 0) {
+    const hours = delay / 3600;
+    return hours + (hours === 1 ? ' hour' : ' hours');
+  }
+  return delay + ' seconds';
+}
+
+async function doSendEth(event) {
   if (!signer) {
     showStatus('Connect wallet first', 'error');
     return;
@@ -4180,9 +4378,12 @@ async function doSendEth() {
   const input = $('sendTo').value.trim();
   const amountStr = $('sendAmount').value.trim();
 
-  // Allow empty recipient for Base (defaults to self)
-  if (!input && sendNetwork === 'direct') { showStatus('Recipient required', 'error'); return; }
+  if (!input) { showStatus('Recipient required', 'error'); return; }
   if (!amountStr) { showStatus('Amount required', 'error'); return; }
+  if (sendNetwork === 'slow' && NET.chainId !== 1) {
+    showStatus('SLOW timelocked sends are only available on Ethereum mainnet', 'error');
+    return;
+  }
 
   let amount;
   try {
@@ -4193,41 +4394,44 @@ async function doSendEth() {
     return;
   }
 
-  const btn = event?.target; if (btn) btn.disabled = true;
+  const btn = event?.currentTarget || event?.target; if (btn) btn.disabled = true;
   try {
-    // Resolve recipient (or self if empty for Base)
-    let to, displayTo;
-    if (!input) {
-      to = connectedAddress;
-      displayTo = 'yourself';
+    showStatus('Resolving recipient...', '');
+    const result = await resolveRecipient(input);
+    if (!result) { showStatus('Could not resolve recipient', 'error'); return; }
+    const to = result.address;
+    const displayTo = result.name ? result.name : to.slice(0, 8) + '...';
+
+    let delay = null;
+    if (sendNetwork === 'slow') {
+      delay = Number($('slowDelay').value);
+      if (!Number.isSafeInteger(delay) || delay <= 0) {
+        showStatus('Invalid SLOW reversal window', 'error');
+        return;
+      }
     } else {
-      showStatus('Resolving recipient...', '');
-      const result = await resolveRecipient(input);
-      if (!result) { showStatus('Could not resolve recipient', 'error'); return; }
-      to = result.address;
-      displayTo = result.name ? result.name : to.slice(0, 8) + '...';
+      const confirmation = 'Send ' + amountStr + ' ETH to ' + displayTo
+        + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.';
+      if (!confirm(confirmation)) return;
     }
 
-    const networkLabel = sendNetwork === 'base' ? ' on Base' : '';
-    if (!confirm('Send ' + amountStr + ' ETH to ' + displayTo + networkLabel + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.')) {
-      return;
-    }
-
-    if (sendNetwork === 'base') {
-      // Bridge to Base via OptimismPortal
-      showStatus('Bridging ' + amountStr + ' ETH to ' + displayTo + ' on Base...', '');
-      const portal = new ethers.Contract(BASE_PORTAL, BASE_PORTAL_ABI, signer);
-      const tx = await portal.depositTransaction(
-        to,           // recipient on Base
-        amount,       // value to receive on Base
-        100000n,      // gas limit for L2 tx
-        false,        // not a contract creation
-        '0x',         // no calldata
-        { value: amount }
+    if (sendNetwork === 'slow') {
+      // Create a reversible, timelocked ETH transfer in SLOW.
+      showStatus('Creating timelocked transfer to ' + displayTo + '...', '');
+      const slow = new ethers.Contract(SLOW_CONTRACT, SLOW_ABI, signer);
+      const tx = await wcTransaction(
+        slow.depositTo(ethers.ZeroAddress, to, 0n, delay, '0x', { value: amount }),
+        'Approve SLOW transfer'
       );
       showStatus('Waiting for confirmation...', '', tx.hash);
       await waitForTx(tx);
-      showStatus('Bridged ' + amountStr + ' ETH to ' + displayTo + ' on Base! (arrives in ~1-2 min)', 'success', tx.hash);
+      showStatus(
+        'Timelocked transfer created for ' + displayTo + '. Reversible for '
+          + formatSlowDelay(delay) + '. Manage it below.',
+        'success',
+        tx.hash
+      );
+      await loadSlowTransfers();
     } else {
       // Direct mainnet transfer
       showStatus('Sending ' + amountStr + ' ETH to ' + displayTo + '...', '');
@@ -4244,6 +4448,272 @@ async function doSendEth() {
   } catch (e) {
     handleError(e);
   } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+let slowTransfersVersion = 0;
+let slowActionPending = false;
+
+function formatSlowRemaining(seconds) {
+  let remaining = BigInt(seconds);
+  if (remaining < 0n) remaining = 0n;
+  const units = [
+    [86400n, 'day'],
+    [3600n, 'hour'],
+    [60n, 'minute']
+  ];
+  for (const [size, label] of units) {
+    if (remaining >= size) {
+      const value = (remaining + size - 1n) / size;
+      return value + ' ' + label + (value === 1n ? '' : 's');
+    }
+  }
+  return remaining + ' second' + (remaining === 1n ? '' : 's');
+}
+
+function slowActionsForTransfer(transfer, account, nowSeconds) {
+  const user = account.toLowerCase();
+  const now = BigInt(nowSeconds);
+  const isSender = transfer.from.toLowerCase() === user;
+  const isRecipient = transfer.to.toLowerCase() === user;
+  const actions = [];
+
+  if (isRecipient && now >= transfer.unlockAt) actions.push('claim');
+  if (isSender && now < transfer.unlockAt) actions.push('reverse');
+  else if (isSender && now >= transfer.clawbackAt) actions.push('clawback');
+  return actions;
+}
+
+function countSlowActionableTransfers(transfers, account, nowSeconds) {
+  return transfers.filter(
+    transfer => slowActionsForTransfer(transfer, account, nowSeconds).length > 0
+  ).length;
+}
+
+function slowTransferStatus(transfer, account, nowSeconds) {
+  const user = account.toLowerCase();
+  const now = BigInt(nowSeconds);
+  const isSender = transfer.from.toLowerCase() === user;
+  const isRecipient = transfer.to.toLowerCase() === user;
+
+  if (now < transfer.unlockAt) {
+    const remaining = formatSlowRemaining(transfer.unlockAt - now);
+    return isSender ? 'Reversible for ' + remaining : 'Claimable in ' + remaining;
+  }
+  if (now < transfer.clawbackAt) {
+    if (isRecipient) return 'Ready to claim';
+    return 'Recipient can claim · clawback in ' + formatSlowRemaining(transfer.clawbackAt - now);
+  }
+  if (isRecipient && isSender) return 'Ready to claim or claw back';
+  return isRecipient ? 'Ready to claim' : 'Ready to claw back';
+}
+
+function normalizeSlowTransfer(transferId, pending) {
+  const timestamp = BigInt(pending.timestamp ?? pending[0]);
+  if (timestamp === 0n) return null;
+  const id = BigInt(pending.id ?? pending[3]);
+  const token = id & ((1n << 160n) - 1n);
+  const delay = id >> 160n;
+  return {
+    transferId: BigInt(transferId).toString(),
+    timestamp,
+    from: pending.from ?? pending[1],
+    to: pending.to ?? pending[2],
+    id,
+    token,
+    delay,
+    amount: BigInt(pending.amount ?? pending[4]),
+    unlockAt: timestamp + delay,
+    clawbackAt: timestamp + delay + BigInt(SLOW_CLAWBACK_GRACE)
+  };
+}
+
+async function loadSlowTransferIds(slow, account, direction) {
+  const countMethod = direction + 'TransferCount';
+  const atMethod = direction + 'TransferAt';
+  const total = BigInt(await slow[countMethod](account));
+  const take = Number(total > BigInt(SLOW_TRANSFER_LIMIT) ? BigInt(SLOW_TRANSFER_LIMIT) : total);
+  const indexes = Array.from({ length: take }, (_, i) => total - 1n - BigInt(i));
+  const results = await Promise.allSettled(indexes.map(index => slow[atMethod](account, index)));
+  const ids = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+  return { ids, total };
+}
+
+function formatSlowDate(timestamp) {
+  const seconds = Number(timestamp);
+  if (!Number.isSafeInteger(seconds)) return 'far future';
+  return new Date(seconds * 1000).toLocaleString();
+}
+
+function renderSlowTransfers(transfers, account, truncated, nowSeconds) {
+  const el = $('slowTransfers');
+  if (!el) return;
+  if (!transfers.length) {
+    el.className = 'slow-transfer-empty';
+    el.textContent = truncated
+      ? 'No pending ETH transfers were found in the bounded transfer window.'
+      : 'No pending ETH transfers. New SLOW sends will appear here.';
+    return;
+  }
+
+  const now = nowSeconds ?? Math.floor(Date.now() / 1000);
+  const user = account.toLowerCase();
+  const cards = transfers.map(transfer => {
+    const isSender = transfer.from.toLowerCase() === user;
+    const isRecipient = transfer.to.toLowerCase() === user;
+    const role = isSender && isRecipient ? 'self' : (isSender ? 'outbound' : 'inbound');
+    const counterparty = isSender ? transfer.to : transfer.from;
+    const counterpartyLabel = isSender ? 'To' : 'From';
+    const shortAddress = counterparty.slice(0, 8) + '…' + counterparty.slice(-6);
+    const actions = slowActionsForTransfer(transfer, account, now);
+    const actionButtons = actions.map(action => {
+      const label = action === 'reverse'
+        ? 'Reverse'
+        : (action === 'clawback' ? 'Claw back' : 'Claim');
+      return `<button type="button" onclick="doSlowAction('${action}', '${transfer.transferId}', event)">${label}</button>`;
+    }).join('');
+
+    return `<div class="slow-transfer">
+      <div class="slow-transfer-top">
+        <strong>${escapeHtml(ethers.formatEther(transfer.amount))} ETH</strong>
+        <span class="slow-transfer-role">${role}</span>
+      </div>
+      <div class="slow-transfer-meta">
+        ${counterpartyLabel}: <a href="${EXPLORER}/address/${counterparty}" target="_blank" rel="noopener" style="color:inherit;">${shortAddress}</a><br>
+        ${escapeHtml(slowTransferStatus(transfer, account, now))}<br>
+        Unlock: ${escapeHtml(formatSlowDate(transfer.unlockAt))}
+      </div>
+      ${actionButtons ? `<div class="slow-transfer-actions">${actionButtons}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  el.className = '';
+  el.innerHTML = cards
+    + (truncated ? `<div class="slow-transfer-limit">Showing up to ${SLOW_TRANSFER_LIMIT} transfers per direction.</div>` : '')
+    + '<div class="slow-transfer-limit">Only pending ETH transfers are shown.</div>';
+}
+
+async function loadSlowTransfers() {
+  const el = $('slowTransfers');
+  if (!el) return;
+  const version = ++slowTransfersVersion;
+
+  if (NET.chainId !== 1) {
+    setSlowActionableCount(0);
+    el.className = 'slow-transfer-empty';
+    el.textContent = 'SLOW transfers are available on Ethereum mainnet.';
+    return;
+  }
+  if (!connectedAddress) {
+    setSlowActionableCount(0);
+    el.className = 'slow-transfer-empty';
+    el.textContent = 'Connect your wallet to view transfers.';
+    return;
+  }
+
+  el.className = 'slow-transfer-empty';
+  el.textContent = 'Loading SLOW transfers…';
+  try {
+    const rpc = await getRpc();
+    const slow = new ethers.Contract(SLOW_CONTRACT, SLOW_ABI, rpc);
+    const [outbound, inbound, latestBlock] = await Promise.all([
+      loadSlowTransferIds(slow, connectedAddress, 'outbound'),
+      loadSlowTransferIds(slow, connectedAddress, 'inbound'),
+      rpc.getBlock('latest')
+    ]);
+    const transferIds = [...new Set(
+      [...outbound.ids, ...inbound.ids].map(id => BigInt(id).toString())
+    )];
+    const pending = await Promise.all(transferIds.map(async transferId => {
+      const value = await slow.pendingTransfers(transferId);
+      return normalizeSlowTransfer(transferId, value);
+    }));
+    if (version !== slowTransfersVersion) return;
+
+    const transfers = pending
+      .filter(transfer => transfer && transfer.token === 0n)
+      .sort((a, b) => a.timestamp === b.timestamp ? 0 : (a.timestamp > b.timestamp ? -1 : 1));
+    const truncated = outbound.total > BigInt(SLOW_TRANSFER_LIMIT)
+      || inbound.total > BigInt(SLOW_TRANSFER_LIMIT);
+    setSlowActionableCount(
+      countSlowActionableTransfers(transfers, connectedAddress, latestBlock.timestamp)
+    );
+    renderSlowTransfers(transfers, connectedAddress, truncated, latestBlock.timestamp);
+  } catch (e) {
+    if (version !== slowTransfersVersion) return;
+    setSlowActionableCount(0);
+    el.className = 'slow-transfer-empty';
+    el.innerHTML = 'Could not load SLOW transfers. <button type="button" class="secondary" onclick="loadSlowTransfers()">Retry</button>';
+  }
+}
+
+async function doSlowAction(action, transferId, event) {
+  if (slowActionPending) return;
+  if (!signer || !connectedAddress) {
+    showStatus('Connect wallet first', 'error');
+    return;
+  }
+  if (NET.chainId !== 1) {
+    showStatus('SLOW transfers are only available on Ethereum mainnet', 'error');
+    return;
+  }
+
+  const btn = event?.currentTarget || event?.target;
+  slowActionPending = true;
+  if (btn) btn.disabled = true;
+  try {
+    const rpc = await getRpc();
+    const readSlow = new ethers.Contract(SLOW_CONTRACT, SLOW_ABI, rpc);
+    const [pending, latestBlock] = await Promise.all([
+      readSlow.pendingTransfers(transferId),
+      rpc.getBlock('latest')
+    ]);
+    const transfer = normalizeSlowTransfer(transferId, pending);
+    if (!transfer) throw new Error('This SLOW transfer no longer exists');
+    if (transfer.token !== 0n) throw new Error('Only SLOW ETH transfers are supported here');
+
+    const now = latestBlock.timestamp;
+    const available = slowActionsForTransfer(transfer, connectedAddress, now);
+    if (!available.includes(action)) {
+      showStatus('This SLOW action is not available yet. Refreshing transfers…', 'error');
+      await loadSlowTransfers();
+      return;
+    }
+
+    const amount = ethers.formatEther(transfer.amount);
+    const verb = action === 'reverse'
+      ? 'Reverse'
+      : (action === 'clawback' ? 'Claw back' : 'Claim');
+
+    const slow = new ethers.Contract(SLOW_CONTRACT, SLOW_ABI, signer);
+    let txPromise;
+    if (action === 'claim') {
+      txPromise = slow.claim(transferId);
+    } else {
+      const firstCall = SLOW_INTERFACE.encodeFunctionData(action, [transferId]);
+      const withdrawCall = SLOW_INTERFACE.encodeFunctionData('withdrawFrom', [
+        connectedAddress,
+        connectedAddress,
+        transfer.id,
+        transfer.amount
+      ]);
+      txPromise = slow.multicall([firstCall, withdrawCall]);
+    }
+
+    const tx = await wcTransaction(txPromise, 'Approve SLOW ' + verb.toLowerCase());
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    const success = (action === 'claim'
+      ? 'Claimed '
+      : (action === 'reverse' ? 'Reversed and returned ' : 'Clawed back and returned '))
+      + amount + ' ETH.';
+    showStatus(success, 'success', tx.hash);
+    await loadSlowTransfers();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    slowActionPending = false;
     if (btn) btn.disabled = false;
   }
 }
