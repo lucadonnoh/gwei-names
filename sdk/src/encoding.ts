@@ -268,6 +268,88 @@ export function decodeString(data: string): string | null {
   return new TextDecoder().decode(new Uint8Array(bytes))
 }
 
+// --- web3:// pointers (ERC-6821 `contentcontract`) ---------------------------
+//
+// A `.gwei` name can host its website in a smart contract instead of on IPFS or Swarm. That pointer
+// lives in the `contentcontract` text record as an ERC-3770 chain-specific address, which is what
+// ERC-6821 specifies for resolving a name to a web3:// contract.
+
+/** Chains a `contentcontract` record may name, by ERC-3770 short name. */
+export const WEB3_CHAINS: Record<string, number> = { eth: 1, sep: 11155111 }
+const CHAIN_SHORT: Record<number, string> = { 1: 'eth', 11155111: 'sep' }
+
+export interface Web3Pointer {
+  chainId: number
+  address: `0x${string}`
+}
+
+/**
+ * Parse a `web3://` URL into the contract and chain it names.
+ *
+ * Accepts `web3://<address>[:<chainid>][/]` and the `w3://` alias. The chain defaults to mainnet,
+ * matching ERC-6860. A non-empty path is rejected: `contentcontract` stores only a chain and an
+ * address, so a path could not be preserved and would silently go missing.
+ *
+ * Returns null for anything that isn't a web3:// URL, and throws with a readable message for a
+ * web3:// URL that can't be used.
+ */
+export function parseWeb3Url(input: string): Web3Pointer | null {
+  const trimmed = input.trim()
+  const m = /^w(?:eb)?3:\/\/(.*)$/i.exec(trimmed)
+  if (!m) return null
+
+  const [target, ...rest] = m[1].split('/')
+  if (rest.join('/').length > 0) {
+    throw new Error(
+      'web3:// URL must point at the root — a path cannot be stored in a name record.',
+    )
+  }
+  const parts = target.split(':')
+  if (parts.length > 2) throw new Error('Malformed web3:// URL.')
+  const [address, chain] = parts
+
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error('web3:// URL must name a contract address (0x + 40 hex characters).')
+  }
+  let chainId = 1
+  if (chain !== undefined) {
+    if (!/^\d+$/.test(chain)) throw new Error(`Unsupported chain "${chain}" in web3:// URL.`)
+    chainId = Number(chain)
+  }
+  if (!CHAIN_SHORT[chainId]) {
+    const supported = Object.values(WEB3_CHAINS).join(', ')
+    throw new Error(`Unsupported chain ${chainId} in web3:// URL (supported: ${supported}).`)
+  }
+  return { chainId, address: address.toLowerCase() as `0x${string}` }
+}
+
+/** Format a pointer as the ERC-3770 string stored in `contentcontract` (e.g. `eth:0x…`). */
+export function formatContentContract(pointer: Web3Pointer): string {
+  const short = CHAIN_SHORT[pointer.chainId]
+  if (!short) throw new Error(`Unsupported chain ${pointer.chainId}.`)
+  if (typeof pointer.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(pointer.address)) {
+    throw new Error('Content contract pointer must name an address (0x + 40 hex characters).')
+  }
+  return `${short}:${pointer.address.toLowerCase()}`
+}
+
+/**
+ * Parse a stored `contentcontract` record. Accepts an ERC-3770 address (`eth:0x…`) or a bare
+ * address, which ERC-6821 reads as mainnet. Returns null for an unset or unusable record.
+ */
+export function parseContentContract(record: string | null | undefined): Web3Pointer | null {
+  const m = /^(?:([a-z0-9-]+):)?(0x[0-9a-fA-F]{40})$/.exec((record ?? '').trim())
+  if (!m) return null
+  const chainId = m[1] ? WEB3_CHAINS[m[1].toLowerCase()] : 1
+  if (!chainId) return null
+  return { chainId, address: m[2].toLowerCase() as `0x${string}` }
+}
+
+/** Render a pointer back as a `web3://` URL. */
+export function formatWeb3Url(pointer: Web3Pointer): string {
+  return `web3://${pointer.address}:${pointer.chainId}/`
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))

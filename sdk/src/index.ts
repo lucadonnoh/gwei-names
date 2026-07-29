@@ -37,4 +37,10 @@ export {
   decodeBool,
   decodeBytes,
   decodeString,
+  parseWeb3Url,
+  formatWeb3Url,
+  parseContentContract,
+  formatContentContract,
+  WEB3_CHAINS,
 } from './encoding.js'
+export type { Web3Pointer } from './encoding.js'

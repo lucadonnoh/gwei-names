@@ -56,6 +56,60 @@ const CH_IPNS_TRUNCATED = abiBytes('e501');
 const SWARM_HASH = '28175db97b612938e66b21834ac6e1355e95602f9726d026b719c58d55880a4b';
 const CH_SWARM = abiBytes('e40101fa011b20' + SWARM_HASH);
 const TOKEN_ID = '0x' + pad32('1234');               // any 32-byte computeId() result
+const RPC_RESPONSE_LIMIT = 4 * 1024 * 1024;
+
+// ---- web3:// fixtures (ERC-6821 contentcontract + ERC-6944 resource request) -------------------
+const utf8 = (s) => new TextEncoder().encode(s);
+// ABI `string`/`bytes` tail: length word + right-padded data.
+function tail(bytes) {
+  let data = toHex(bytes); while (data.length % 64) data += '0';
+  return pad32(bytes.length.toString(16)) + data;
+}
+const abiString = (s) => '0x' + pad32('20') + tail(utf8(s));   // a bare `returns (string)`
+const TEXT_NONE = abiString('');                                // no contentcontract record set
+// The real EthereumRock deployment, the contract this feature was built against.
+const ROCK = '0x6485b8b75a8ad382340abe333e1f6ee10e39f818';
+const ROCK_2 = '0x1111111111111111111111111111111111111111';
+const CC_MAINNET = abiString(`eth:${ROCK}`);
+const CC_MAINNET_2 = abiString(`eth:${ROCK_2}`);
+const CC_SEPOLIA = abiString(`sep:${ROCK}`);
+const CC_BARE = abiString(ROCK);                                // no chain prefix → mainnet per ERC-6821
+const CC_UNKNOWN_CHAIN = abiString(`base:${ROCK}`);
+const CC_MALFORMED = abiString('eth:0xdeadbeef');
+// bytes32 resolveMode() answers.
+const modeWord = (s) => { let h = toHex(utf8(s)); return '0x' + h.padEnd(64, '0'); };
+const MODE_5219 = modeWord('5219');
+const MODE_MANUAL = modeWord('manual');
+const MODE_AUTO = modeWord('auto');
+// Build an ERC-5219 `(uint16 status, string body, KeyValue[] headers)` return. `body` accepts bytes
+// so tests can prove binary content survives the round trip untouched.
+function abiRequestResult(status, body, headers = []) {
+  const bodyBytes = typeof body === 'string' ? utf8(body) : body;
+  const bodyTail = tail(bodyBytes);
+  const tuples = headers.map(([k, v]) => {
+    const kt = tail(utf8(k));
+    return pad32('40') + pad32((64 + kt.length / 2).toString(16)) + kt + tail(utf8(v));
+  });
+  let cursor = headers.length * 32;
+  const offsets = tuples.map((t) => { const at = pad32(cursor.toString(16)); cursor += t.length / 2; return at; });
+  const headerBlock = pad32(headers.length.toString(16)) + offsets.join('') + tuples.join('');
+  return '0x' + pad32(status.toString(16)) + pad32('60') +
+    pad32((96 + bodyTail.length / 2).toString(16)) + bodyTail + headerBlock;
+}
+const abiBytesReturn = (body) => '0x' + pad32('20') + tail(typeof body === 'string' ? utf8(body) : body);
+
+const SEL = { id: '0xfb021939', ch: '0xcb323d76', text: '0x308e3386', mode: '0xdd473fae', request: '0x1374c460' };
+// RPC handler for a name whose website lives in a contract: no contenthash, a contentcontract record,
+// then whatever the contract itself answers. `onCall` sees the web3:// calldata.
+function rpcWeb3({ cc = CC_MAINNET, mode = MODE_5219, onCall = () => null } = {}) {
+  return (data) => {
+    if (data.startsWith(SEL.id)) return TOKEN_ID;
+    if (data.startsWith(SEL.ch)) return CH_NONE;
+    if (data.startsWith(SEL.text)) return cc;
+    if (data.startsWith(SEL.mode)) return mode;
+    return onCall(data);
+  };
+}
 
 // ---- faithful-ish Cache API mock --------------------------------------------
 function makeCache() {
@@ -87,7 +141,7 @@ function makeCache() {
 }
 
 // ---- fetch mock -------------------------------------------------------------
-// handlers: { rpc(data,url) -> resultHex|null, ipfs(url) -> Response, ipns(url) -> Response,
+// handlers: { rpc(data,url,to) -> resultHex|Response|null, ipfs(url) -> Response, ipns(url) -> Response,
 //             swarm(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
   const calls = {
@@ -98,9 +152,11 @@ function makeFetch(handlers) {
     const url = typeof input === 'string' ? input : input.url;
     if (init && init.method === 'POST' && typeof init.body === 'string' && init.body.includes('eth_call')) {
       calls.rpc++; calls.rpcUrls.push(url);
-      const data = JSON.parse(init.body).params[0].data;
-      const result = handlers.rpc ? handlers.rpc(data, url) : null;
+      const call = JSON.parse(init.body).params[0];
+      const data = call.data;
+      const result = handlers.rpc ? await handlers.rpc(data, url, call.to) : null;
       if (result === 'THROW') throw new Error('rpc network error');
+      if (result instanceof Response) return result;
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: result ?? null }),
         { headers: { 'content-type': 'application/json' } });
     }
@@ -123,9 +179,14 @@ function makeFetch(handlers) {
   return fn;
 }
 
-// Default RPC handler: computeId → TOKEN_ID, contenthash → given fixture.
+// Default RPC handler: computeId → TOKEN_ID, contenthash → given fixture, contentcontract → unset.
+// (An unset text record still ABI-encodes to a real value, so it must not answer null — null means
+// the lookup failed, which the worker surfaces as a 502 rather than "no website".)
 const rpcReturning = (chFixture) => (data) =>
-  data.startsWith('0xfb021939') ? TOKEN_ID : (data.startsWith('0xcb323d76') ? chFixture : null);
+  data.startsWith(SEL.id) ? TOKEN_ID
+    : data.startsWith(SEL.ch) ? chFixture
+    : data.startsWith(SEL.text) ? TEXT_NONE
+    : null;
 
 // Drive the worker; awaits ctx.waitUntil so cache writes settle before the next call.
 async function invoke(urlStr, { method = 'GET', headers = {}, env = {}, cache, fetchMock } = {}) {
@@ -441,4 +502,402 @@ test('non-GET requests are not served from / written to the content cache', asyn
   // The content cache should hold nothing for this URL (only the resolution key exists).
   const contentHit = await cache.match(new Request('https://donnoh.gwei.domains/'));
   assert.equal(contentHit, undefined);
+});
+
+// ---- web3:// (ERC-6821 contentcontract → ERC-6860 contract-hosted sites) ---------------------
+
+test('contenthash wins when a name has both records set', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: (data) => data.startsWith(SEL.id) ? TOKEN_ID
+      : data.startsWith(SEL.ch) ? CH_IPFS       // contenthash present …
+      : data.startsWith(SEL.text) ? CC_MAINNET  // … and a contentcontract record too
+      : null,
+    ipfs: () => new Response('<h1>ipfs</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  });
+  const res = await invoke('https://donnoh.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>ipfs</h1>');
+  assert.equal(res.headers.get('x-ipfs-cid'), DONNOH_CID);
+  assert.equal(res.headers.get('x-web3-contract'), null, 'never reached the web3 path');
+});
+
+test('5219 mode: serves the contract body and its own content-type', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, '<h1>on-chain</h1>', [
+          ['Content-type', 'text/html; charset=utf-8'],
+          ['Cache-control', 'public, max-age=31536000, immutable'],
+        ])
+      : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>on-chain</h1>');
+  assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=300');
+  assert.equal(res.headers.get('x-web3-contract'), `eth:${ROCK}`);
+  assert.equal(res.headers.get('x-web3-resolve-mode'), '5219');
+  assert.equal(res.headers.get('x-gwei-name'), 'rock.gwei');
+  for (const [k, v] of SEC_HEADERS) assert.equal(res.headers.get(k), v);
+});
+
+test('web3 cache entries follow the resolved contract when a name is repointed', async () => {
+  const cache = makeCache();
+  let contentcontract = CC_MAINNET;
+  const fetchMock = makeFetch({
+    rpc: (data, _url, to) => data.startsWith(SEL.id) ? TOKEN_ID
+      : data.startsWith(SEL.ch) ? CH_NONE
+      : data.startsWith(SEL.text) ? contentcontract
+      : data.startsWith(SEL.mode) ? MODE_5219
+      : data.startsWith(SEL.request)
+        ? abiRequestResult(
+            200,
+            to.toLowerCase() === ROCK ? 'old contract' : 'new contract',
+            [['Cache-control', 'public, max-age=31536000, immutable']],
+          )
+        : null,
+  });
+
+  await invoke('https://rock.gwei.domains/prime', { cache, fetchMock });
+  cache.advance(250);
+  const late = await invoke('https://rock.gwei.domains/late', { cache, fetchMock });
+  assert.equal(await late.text(), 'old contract');
+
+  // The /late response still has 249 seconds left, but the name resolution has now expired.
+  contentcontract = CC_MAINNET_2;
+  cache.advance(51);
+  const repointed = await invoke('https://rock.gwei.domains/late', { cache, fetchMock });
+  assert.equal(await repointed.text(), 'new contract');
+  assert.equal(repointed.headers.get('x-web3-contract'), `eth:${ROCK_2}`);
+});
+
+test('restrictive contract cache directives are preserved and skip the edge cache', async () => {
+  const cache = makeCache();
+  let resourceCalls = 0;
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => {
+      if (!data.startsWith(SEL.request)) return null;
+      resourceCalls++;
+      return abiRequestResult(200, 'private', [['Cache-control', 'private, max-age=31536000, immutable']]);
+    } }),
+  });
+
+  const first = await invoke('https://rock.gwei.domains/private', { cache, fetchMock });
+  assert.equal(first.headers.get('cache-control'), 'private, max-age=300');
+  await invoke('https://rock.gwei.domains/private', { cache, fetchMock });
+  assert.equal(resourceCalls, 2, 'private responses are never stored in the shared edge cache');
+});
+
+test('5219 mode: path and query encode exactly as w3link sends them', async () => {
+  const cache = makeCache();
+  let seen = null;
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => {
+      if (!data.startsWith(SEL.request)) return null;
+      seen = data;
+      return abiRequestResult(200, 'ok', [['Content-type', 'text/plain']]);
+    } }),
+  });
+  await invoke('https://rock.gwei.domains/foo/bar?page=1', { cache, fetchMock });
+  // Captured from `curl -I https://<rock>.1.w3link.io/foo/bar?page=1` (its web3-calldata header).
+  const W3LINK = '0x1374c460' +
+    pad32('40') + pad32('120') +
+    pad32('2') + pad32('40') + pad32('80') +
+    pad32('3') + toHex(utf8('foo')).padEnd(64, '0') +
+    pad32('3') + toHex(utf8('bar')).padEnd(64, '0') +
+    pad32('1') + pad32('20') +
+    pad32('40') + pad32('80') +
+    pad32('4') + toHex(utf8('page')).padEnd(64, '0') +
+    pad32('1') + toHex(utf8('1')).padEnd(64, '0');
+  assert.equal(seen, W3LINK);
+});
+
+test('5219 mode: root path sends an empty resource array', async () => {
+  const cache = makeCache();
+  let seen = null;
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => {
+      if (!data.startsWith(SEL.request)) return null;
+      seen = data; return abiRequestResult(200, 'ok');
+    } }),
+  });
+  await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(seen, '0x1374c460' + pad32('40') + pad32('60') + pad32('0') + pad32('0'));
+});
+
+test('5219 mode: binary bodies survive without UTF-8 mangling', async () => {
+  const cache = makeCache();
+  // A 1x1 GIF: has bytes that are invalid UTF-8, so any text round-trip would corrupt it.
+  const gif = Uint8Array.from([0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,0x80,0xff,0x00,0xc0,0xc0,0xc0]);
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, gif, [['Content-type', 'image/gif']]) : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/pixel.gif', { cache, fetchMock });
+  assert.equal(res.headers.get('content-type'), 'image/gif');
+  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), gif);
+});
+
+test('5219 mode: contract status codes and redirects pass through', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(302, '', [['Location', '/elsewhere']]) : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/old', { cache, fetchMock });
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/elsewhere');
+});
+
+test('a contract cannot set set-cookie or weaken the security headers', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'hi', [
+          ['Set-cookie', 'session=stolen'],
+          ['X-frame-options', 'ALLOWALL'],
+          ['Access-control-allow-origin', 'https://evil.example'],
+          ['Content-security-policy', "frame-ancestors *;"],
+          ['Content-type', 'text/html'],
+        ])
+      : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.headers.get('set-cookie'), null, 'set-cookie is dropped entirely');
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.equal(res.headers.get('content-security-policy'), "frame-ancestors 'self';");
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.equal(res.headers.get('content-type'), 'text/html', 'but content-type is honoured');
+});
+
+test('malformed allowlisted header values become a controlled 502', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'bad', [['Content-type', 'text/html\r\nx-injected: yes']]) : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 502);
+  assert.match(res.headers.get('cache-control'), /no-store/);
+  assert.match(await res.text(), /malformed HTTP headers/);
+});
+
+test('manual mode: raw path is the calldata, "/" at the root', async () => {
+  const cache = makeCache();
+  const seen = [];
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_MANUAL, onCall: (data) => {
+      seen.push(data); return abiBytesReturn('<h1>manual</h1>');
+    } }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(await res.text(), '<h1>manual</h1>');
+  assert.equal(seen[0], '0x2f', 'root sends "/" as calldata');
+  assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(res.headers.get('x-web3-resolve-mode'), 'manual');
+
+  const cache2 = makeCache();
+  seen.length = 0;
+  await invoke('https://rock.gwei.domains/a/b?c=d', { cache: cache2, fetchMock });
+  assert.equal(seen[0], '0x' + toHex(utf8('/a/b?c=d')));
+});
+
+test('manual mode: MIME comes from the path extension', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_MANUAL, onCall: () => abiBytesReturn('<svg/>') }),
+  });
+  const res = await invoke('https://rock.gwei.domains/logo.svg', { cache, fetchMock });
+  assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+});
+
+test('auto mode is reported as unsupported, not served', async () => {
+  for (const mode of [MODE_AUTO, '0x' + pad32('0')]) {
+    const cache = makeCache();
+    const fetchMock = makeFetch({ rpc: rpcWeb3({ mode, onCall: () => 'SHOULD NOT BE CALLED' }) });
+    const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+    assert.equal(res.status, 415);
+    assert.match(await res.text(), /resource-request/);
+  }
+});
+
+test('chunked (web3-next-chunk) responses are refused rather than truncated', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'first half', [['web3-next-chunk', '/chunk/2']]) : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 501);
+  assert.match(await res.text(), /chunks/);
+});
+
+test('resolveMode is cached: a second request skips the resolveMode call', async () => {
+  const cache = makeCache();
+  let modeCalls = 0;
+  const inner = rpcWeb3({ onCall: (d) => d.startsWith(SEL.request) ? abiRequestResult(200, 'ok') : null });
+  const fetchMock = makeFetch({
+    rpc: (data) => { if (data.startsWith(SEL.mode)) modeCalls++; return inner(data); },
+  });
+  // Two different paths, so the content cache can't mask the effect — only the mode cache can.
+  await invoke('https://rock.gwei.domains/one', { cache, fetchMock });
+  assert.equal(modeCalls, 1);
+  await invoke('https://rock.gwei.domains/two', { cache, fetchMock });
+  assert.equal(modeCalls, 1, 'mode came from cache the second time');
+});
+
+test('bare address record resolves on mainnet (ERC-6821 default)', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ cc: CC_BARE, onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'ok') : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-web3-contract'), `eth:${ROCK}`);
+});
+
+test('sepolia record calls the sepolia RPC pool, not mainnet', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ cc: CC_SEPOLIA, onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'ok') : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-web3-contract'), `sep:${ROCK}`);
+  assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('sepolia')), 'used a sepolia endpoint');
+});
+
+test('custom RPC_URL is used for mainnet contract calls as well as name resolution', async () => {
+  const cache = makeCache();
+  const privateRpc = 'https://rpc.example.invalid/private';
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'private rpc') : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', {
+    cache,
+    fetchMock,
+    env: { RPC_URL: privateRpc },
+  });
+  assert.equal(res.status, 200);
+  assert.ok(fetchMock.calls.rpcUrls.length >= 5);
+  assert.deepEqual([...new Set(fetchMock.calls.rpcUrls)], [privateRpc]);
+});
+
+test('oversized streamed RPC responses fail over before JSON buffering', async () => {
+  const cache = makeCache();
+  let oversizedCalls = 0;
+  let fallbackCalls = 0;
+  const inner = rpcWeb3({
+    onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'fallback') : null,
+  });
+  const fetchMock = makeFetch({
+    rpc: (data, url) => {
+      if (data.startsWith(SEL.request) && url.includes('0xrpc')) {
+        oversizedCalls++;
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(RPC_RESPONSE_LIMIT));
+            controller.enqueue(new Uint8Array(1));
+            controller.close();
+          },
+        }), { headers: { 'content-type': 'application/json' } });
+      }
+      if (data.startsWith(SEL.request)) fallbackCalls++;
+      return inner(data);
+    },
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'fallback');
+  assert.equal(oversizedCalls, 1);
+  assert.equal(fallbackCalls, 1);
+});
+
+test('unknown chain or malformed address reads as no website, with no contract call', async () => {
+  for (const cc of [CC_UNKNOWN_CHAIN, CC_MALFORMED, abiString('not a record')]) {
+    const cache = makeCache();
+    const fetchMock = makeFetch({ rpc: rpcWeb3({ cc, onCall: () => 'SHOULD NOT BE CALLED' }) });
+    const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+    assert.equal(res.status, 404);
+    assert.match(await res.text(), /has no website set/);
+    assert.ok(!fetchMock.calls.rpcUrls.some((u) => u.includes('sepolia')));
+  }
+});
+
+test('contentcontract lookup failure → 502 no-store, not a cached 404', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: (data) => data.startsWith(SEL.id) ? TOKEN_ID
+      : data.startsWith(SEL.ch) ? CH_NONE
+      : null, // every endpoint fails on the text() lookup
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 502);
+  assert.match(res.headers.get('cache-control'), /no-store/);
+  assert.equal(await cache.match(new Request('https://gwei-cache.internal/resolve/rock.gwei')), undefined);
+});
+
+test('web3 content is cached: a repeat GET makes no RPC calls at all', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'cached') : null }),
+  });
+  await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  const after = fetchMock.calls.rpc;
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(await res.text(), 'cached');
+  assert.equal(fetchMock.calls.rpc, after, 'served entirely from the content cache');
+});
+
+test('a malformed ERC-5219 return is reported, not served', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request) ? '0x' + pad32('c8') : null }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 502);
+  assert.match(await res.text(), /malformed/);
+});
+
+test('contract status codes Response cannot represent become a 502, not a crash', async () => {
+  for (const status of [100, 199, 600, 0]) {
+    const cache = makeCache();
+    const fetchMock = makeFetch({
+      rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+        ? abiRequestResult(status, 'body', [['Content-type', 'text/html']]) : null }),
+    });
+    const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+    assert.equal(res.status, 502, `status ${status} should degrade to 502`);
+  }
+});
+
+test('bodiless statuses are returned without a body', async () => {
+  for (const status of [204, 205, 304]) {
+    const cache = makeCache();
+    const fetchMock = makeFetch({
+      rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+        ? abiRequestResult(status, 'ignored') : null }),
+    });
+    const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+    assert.equal(res.status, status);
+    assert.equal(await res.text(), '');
+  }
+});
+
+// Header values are ByteStrings, so a decoded emoji name throws on the way out unless it's
+// percent-encoded. The IPFS path already does this; the contract path needs it for the same reason,
+// and nothing else here would catch it, since every other web3 test uses an ASCII name.
+test('an emoji name is served from a contract, with its name header percent-encoded', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, '<h1>whale</h1>', [['content-type', 'text/html']]) : null }),
+  });
+  const res = await invoke('https://🐳.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>whale</h1>');
+  assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), '🐳.gwei');
 });

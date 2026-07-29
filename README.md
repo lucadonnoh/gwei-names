@@ -291,7 +291,7 @@ Standard key-value text records via `setText` / `text`. Common keys: `avatar`, `
 
 ### Contenthash
 
-`setContenthash` / `contenthash` for IPFS/Swarm/etc. content addressing. Used by the gateway (`gwei.domains`) to serve websites.
+`setContenthash` / `contenthash` for IPFS/Swarm/etc. content addressing. Used by the gateway (`gwei.domains`) to serve websites. A name can instead point at a contract-hosted site through the `contentcontract` text record — see [Contract-hosted websites](#contract-hosted-websites-web3).
 
 ---
 
@@ -591,8 +591,38 @@ function encodeContenthash(cid) {
 }
 ```
 
-IPNS records use the ENSIP-7 encoding `0xe501 || CIDv1(libp2p-key)`. The gateway validates that
-CID and renders its IPNS name in the conventional lowercase base36 form (`k...`) before fetching it.
+IPNS records use the ENSIP-7 encoding `0xe501 || CIDv1(libp2p-key)`. The Set Website form accepts
+`ipns://k...`, `/ipns/k...`, or the bare base36 `k...` name. The gateway validates that CID and
+renders its IPNS name in the conventional lowercase base36 form before fetching it.
+
+---
+
+## Contract-hosted websites (web3://)
+
+A name can also serve a site that lives entirely in a smart contract, fetched with one `eth_call`
+instead of from a storage network. There is no multicodec for EVM contracts, so this cannot be a
+contenthash; [ERC-6821](https://eips.ethereum.org/EIPS/eip-6821) puts it in a **`contentcontract`
+text record** as an [ERC-3770](https://eips.ethereum.org/EIPS/eip-3770) chain-specific address.
+
+```solidity
+setText(tokenId, "contentcontract", "eth:0x6485b8b75a8ad382340abe333e1f6ee10e39f818")
+```
+
+Accepted values are `eth:0x…` (mainnet), `sep:0x…` (Sepolia), or a bare `0x…`, which ERC-6821 reads
+as mainnet. In the dapp you paste the `web3://` URL into the same **Set Website** field used for
+IPFS/IPNS and `bzz://` references, and it writes this record for you.
+
+**`contenthash` takes precedence.** A name with both records set serves its contenthash, so no
+existing site changes behavior when a `contentcontract` record appears. Clear the contenthash to
+switch a name over.
+
+Two notes on how this differs from the spec and from other gateways:
+
+- ERC-6821 also says to fall back to the name's *resolved address* when no `contentcontract` record
+  exists. GNS `resolve()` falls back to `ownerOf`, so honoring that fallback would make every
+  registered name claim to be a website. Only an explicit record counts.
+- w3link injects a script into pages it serves, to rewrite `web3://` links into gateway URLs. We
+  serve the contract's bytes unmodified, the same as the IPFS path does.
 
 ---
 
@@ -601,9 +631,25 @@ CID and renders its IPNS name in the conventional lowercase base36 form (`k...`)
 The gateway is a Cloudflare Worker (or equivalent) on the `gwei.domains` wildcard domain that:
 
 1. Extracts name from subdomain (`name.gwei.domains`)
-2. Queries contract for contenthash
-3. Decodes the IPFS, IPNS, or Swarm reference and fetches it from the matching public gateway
+2. Queries contract for contenthash, falling back to the `contentcontract` text record
+3. Decodes the IPFS, IPNS, or Swarm reference and fetches it from the matching public gateway, or
+   calls the contract directly for a `contentcontract` record
 4. Serves content with caching
+
+For a contract-hosted site it first reads `resolveMode()`
+([ERC-6860](https://eips.ethereum.org/EIPS/eip-6860)) and dispatches on the answer:
+
+| `resolveMode()` | How the gateway calls it | Content type |
+|---|---|---|
+| `"5219"` | [ERC-6944](https://eips.ethereum.org/EIPS/eip-6944) `request(pathSegments, queryPairs)` returning `(status, body, headers)` | from the contract's own headers |
+| `"manual"` | raw `path?query` as calldata (`"/"` at the root), returning ABI-encoded `bytes` | from the path extension, else `text/html` |
+| anything else (auto) | not served yet — returns 415 | — |
+
+Contract-supplied headers pass through an allowlist (`content-type`, `cache-control`,
+`content-encoding`, `content-language`, `etag`, `last-modified`, `location`, `vary`); everything else
+is dropped, and the standard security headers are applied on top. Chunked responses
+(`web3-next-chunk`) are refused with a 501 rather than served truncated. `resolveMode` is cached for
+24h, resolutions for 5 minutes, and content per URL, so a warm page costs no RPC calls at all.
 
 **Root domain** (`gwei.domains`) resolves to `gns.gwei` (the official dapp).
 

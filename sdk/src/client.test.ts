@@ -263,6 +263,18 @@ describe('encodeSetContenthash', () => {
   })
 })
 
+describe('encodeSetContentContract', () => {
+  it('rejects a malformed object pointer before looking up the name', async () => {
+    await assert.rejects(
+      gns.encodeSetContentContract('test', {
+        chainId: 1,
+        address: '0xdeadbeef' as `0x${string}`,
+      }),
+      /40 hex characters/,
+    )
+  })
+})
+
 describe('encodeRegisterSubdomain', () => {
   it('returns a tx object', async () => {
     const tx = await gns.encodeRegisterSubdomain('sub', 'test')

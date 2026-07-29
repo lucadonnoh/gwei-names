@@ -70,6 +70,37 @@ normalizeName('ALICE.GWEI') // 'alice.gwei'
 parseLabel('alice.gwei')   // 'alice'
 ```
 
+## Contract-hosted websites (web3://)
+
+A name can host its website in a smart contract rather than on IPFS or Swarm. That pointer isn't a
+contenthash — there's no multicodec for EVM contracts — so [ERC-6821][6821] stores it in the
+`contentcontract` text record as an [ERC-3770][3770] chain-specific address.
+
+```ts
+import { createGnsClient, parseWeb3Url, formatWeb3Url } from '@donnoh/gns-utils'
+
+const gns = createGnsClient()
+
+// Read: null when the name has no contract-hosted site.
+const pointer = await gns.getContentContract('ethereumrock.gwei')
+// { chainId: 1, address: '0x6485b8b75a8ad382340abe333e1f6ee10e39f818' }
+formatWeb3Url(pointer) // 'web3://0x6485b8b7…:1/'
+
+// Write: takes a web3:// URL or a pointer. Mainnet and Sepolia are supported.
+const tx = await gns.encodeSetContentContract('mysite.gwei', 'web3://0x6485B8B7…:1/')
+const clear = await gns.encodeClearContentContract('mysite.gwei')
+```
+
+`parseWeb3Url` returns `null` for input that isn't a `web3://` URL (so it composes with CID
+handling) and throws a readable error for a `web3://` URL that can't be stored — an unsupported
+chain, a malformed address, or a non-empty path, since the record holds only a chain and an address.
+
+A non-empty `contenthash` takes precedence at the gwei.domains gateway, so a name that already has
+one must clear it before its contract-hosted site is served.
+
+[6821]: https://eips.ethereum.org/EIPS/eip-6821
+[3770]: https://eips.ethereum.org/EIPS/eip-3770
+
 ## Constants
 
 ```ts
