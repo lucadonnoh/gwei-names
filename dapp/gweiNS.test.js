@@ -179,7 +179,7 @@ test('SLOW lifecycle exposes reverse, claim, and clawback at the right times', (
   const context = vm.createContext({});
   vm.runInContext(
     html.slice(start, end)
-      + '\nglobalThis.lifecycleApi = { slowActionsForTransfer, countSlowActionableTransfers, slowTransferStatus };',
+      + '\nglobalThis.lifecycleApi = { slowActionsForTransfer, countSlowActionableTransfers, slowCounterpartyAddress, slowTransferStatus };',
     context
   );
   const sender = '0x0000000000000000000000000000000000000001';
@@ -205,6 +205,8 @@ test('SLOW lifecycle exposes reverse, claim, and clawback at the right times', (
     context.lifecycleApi.countSlowActionableTransfers([transfer], sender, 150),
     0
   );
+  assert.equal(context.lifecycleApi.slowCounterpartyAddress(transfer, sender), recipient);
+  assert.equal(context.lifecycleApi.slowCounterpartyAddress(transfer, recipient), sender);
   assert.match(context.lifecycleApi.slowTransferStatus(transfer, sender, 150), /clawback in/);
   assert.equal(context.lifecycleApi.slowTransferStatus(transfer, recipient, 150), 'Ready to claim');
 });
@@ -233,6 +235,71 @@ test('SLOW transfer decoding derives ETH, unlock, and grace timestamps', () => {
   assert.equal(transfer.delay, delay);
   assert.equal(transfer.unlockAt, 87400n);
   assert.equal(transfer.clawbackAt, 2679400n);
+});
+
+test('raw recipients use their valid primary gwei name', async () => {
+  const start = html.indexOf('async function resolveRecipient');
+  const end = html.indexOf('let transferPreviewDebounce', start);
+  const address = '0x0000000000000000000000000000000000000001';
+  const context = vm.createContext({
+    ethers: { isAddress: value => value === address },
+    loadReverseNames: async () => ({ [address]: 'donnoh.gwei' })
+  });
+  vm.runInContext(
+    html.slice(start, end)
+      + '\nglobalThis.resolveRecipient = resolveRecipient;',
+    context
+  );
+
+  const result = await context.resolveRecipient(address);
+  assert.equal(result.address, address);
+  assert.equal(result.name, 'donnoh.gwei');
+});
+
+test('identity addresses use unique reverse-resolved gwei names', async () => {
+  const start = html.indexOf('function addressIdentityDisplay');
+  const end = html.indexOf('function formatSlowDate', start);
+  const calls = [];
+  const context = vm.createContext({
+    multicall: async batch => {
+      calls.push(...batch);
+      return batch.map(call => [
+        call.args[0] === '0x0000000000000000000000000000000000000001'
+          ? 'tornado.gwei'
+          : ''
+      ]);
+    }
+  });
+  vm.runInContext(
+    html.slice(start, end)
+      + '\nglobalThis.identityApi = { addressIdentityDisplay, loadReverseNames };',
+    context
+  );
+
+  const names = await context.identityApi.loadReverseNames([
+    '0x0000000000000000000000000000000000000001',
+    '0x0000000000000000000000000000000000000001',
+    '0x0000000000000000000000000000000000000002'
+  ]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].fn, 'reverseResolve');
+  assert.equal(calls[0].allowFailure, true);
+  assert.equal(names['0x0000000000000000000000000000000000000001'], 'tornado.gwei');
+  assert.equal(names['0x0000000000000000000000000000000000000002'], undefined);
+  assert.equal(
+    context.identityApi.addressIdentityDisplay(
+      '0x0000000000000000000000000000000000000001',
+      names
+    ),
+    'tornado.gwei'
+  );
+  assert.equal(
+    context.identityApi.addressIdentityDisplay(
+      '0x0000000000000000000000000000000000000002',
+      names
+    ),
+    '0x000000…000002'
+  );
 });
 
 test('SLOW manager bounds enumeration and completes lifecycle payouts', () => {

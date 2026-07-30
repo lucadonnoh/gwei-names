@@ -3478,6 +3478,11 @@ async function showManage(tokenId, name) {
     if (thisManageVersion !== manageVersion) return;
 
     if (!owner) { hideManage(); return; }
+    let identityNames = {};
+    try {
+      identityNames = await loadReverseNames([owner]);
+    } catch (_) {}
+    if (thisManageVersion !== manageVersion) return;
 
     const isOwner = connectedAddress && owner.toLowerCase() === connectedAddress.toLowerCase();
     const expiryDate = record?.expiresAt ? new Date(Number(record.expiresAt) * 1000).toLocaleDateString() : null;
@@ -3498,10 +3503,15 @@ async function showManage(tokenId, name) {
     }
 
     // Build info section
-    const addrLink = (addr) => `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;">${addr.slice(0, 8)}...${addr.slice(-6)}</a>`;
+    const addrLink = (addr, resolveIdentity = true) => {
+      const display = resolveIdentity
+        ? addressIdentityDisplay(addr, identityNames)
+        : addr.slice(0, 8) + '…' + addr.slice(-6);
+      return `<a href="${EXPLORER}/address/${addr}" target="_blank" rel="noopener" style="color:inherit;" title="${addr}">${escapeHtml(display)}</a>`;
+    };
     let infoHtml = `<div><span>Owner:</span>${addrLink(owner)}</div>`;
     if (resolved && resolved !== ethers.ZeroAddress) {
-      infoHtml += `<div><span>Resolves to:</span>${addrLink(resolved)}</div>`;
+      infoHtml += `<div><span>Resolves to:</span>${addrLink(resolved, false)}</div>`;
     }
     const hasContenthash = !!(contentHash && contentHash !== '0x' && contentHash.length > 2);
     currentHasContenthash = hasContenthash;
@@ -3700,8 +3710,15 @@ async function previewRenew() {
 }
 
 async function resolveRecipient(input) {
-  // If it's already an address, return it
-  if (ethers.isAddress(input)) return { address: input, name: null };
+  // If it is already an address, include its valid primary .gwei name when available.
+  if (ethers.isAddress(input)) {
+    let name = null;
+    try {
+      const names = await loadReverseNames([input]);
+      name = names[input.toLowerCase()] || null;
+    } catch (_) {}
+    return { address: input, name };
+  }
 
   // Check if it looks like a .gwei name
   let name = input.trim();
@@ -3736,13 +3753,11 @@ function previewTransferRecipient() {
   const preview = $('transferPreview');
   const input = $('transferTo').value.trim();
 
-  // Clear preview if empty or already an address
-  if (!input || ethers.isAddress(input)) {
+  if (!input) {
     preview.style.display = 'none';
     return;
   }
 
-  // Show loading for .gwei names
   preview.innerHTML = '<span style="opacity:0.5;">Resolving...</span>';
   preview.style.display = 'block';
 
@@ -3755,10 +3770,14 @@ function previewTransferRecipient() {
     // Ignore stale responses
     if (thisVersion !== transferPreviewVersion) return;
 
-    if (result && result.name) {
+    if (result?.name) {
       const addrShort = result.address.slice(0, 10) + '...' + result.address.slice(-8);
-      preview.innerHTML = `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
+      preview.innerHTML = ethers.isAddress(input)
+        ? `<span style="opacity:0.6;">→ </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a><span style="opacity:0.6;"> is ${escapeHtml(result.name)}</span>`
+        : `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
       preview.style.display = 'block';
+    } else if (ethers.isAddress(input)) {
+      preview.style.display = 'none';
     } else {
       preview.innerHTML = '<span style="color:#c00;">Could not resolve name</span>';
       preview.style.display = 'block';
@@ -4477,7 +4496,7 @@ function previewSendRecipient() {
   const preview = $('sendPreview');
   const input = $('sendTo').value.trim();
 
-  if (!input || ethers.isAddress(input)) {
+  if (!input) {
     preview.style.display = 'none';
     return;
   }
@@ -4491,9 +4510,13 @@ function previewSendRecipient() {
     const result = await resolveRecipient(input);
     if (thisVersion !== sendPreviewVersion) return;
 
-    if (result && result.name) {
+    if (result?.name) {
       const addrShort = result.address.slice(0, 10) + '...' + result.address.slice(-8);
-      preview.innerHTML = `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
+      preview.innerHTML = ethers.isAddress(input)
+        ? `<span style="opacity:0.6;">→ </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a><span style="opacity:0.6;"> is ${escapeHtml(result.name)}</span>`
+        : `<span style="opacity:0.6;">→ ${escapeHtml(result.name)} resolves to </span><a href="${EXPLORER}/address/${result.address}" target="_blank" rel="noopener" style="color:inherit;">${addrShort}</a>`;
+    } else if (ethers.isAddress(input)) {
+      preview.style.display = 'none';
     } else {
       preview.innerHTML = '<span style="color:#c00;">Could not resolve name</span>';
     }
@@ -4678,6 +4701,12 @@ function countSlowActionableTransfers(transfers, account, nowSeconds) {
   ).length;
 }
 
+function slowCounterpartyAddress(transfer, account) {
+  return transfer.from.toLowerCase() === account.toLowerCase()
+    ? transfer.to
+    : transfer.from;
+}
+
 function slowTransferStatus(transfer, account, nowSeconds) {
   const user = account.toLowerCase();
   const now = BigInt(nowSeconds);
@@ -4727,13 +4756,34 @@ async function loadSlowTransferIds(slow, account, direction) {
   return { ids, total };
 }
 
+function addressIdentityDisplay(address, reverseNames) {
+  return reverseNames[address.toLowerCase()]
+    || address.slice(0, 8) + '…' + address.slice(-6);
+}
+
+async function loadReverseNames(addresses) {
+  const uniqueAddresses = [...new Set(addresses.map(address => address.toLowerCase()))];
+  if (!uniqueAddresses.length) return {};
+  const results = await multicall(uniqueAddresses.map(address => ({
+    fn: 'reverseResolve',
+    args: [address],
+    allowFailure: true
+  })));
+  const names = {};
+  uniqueAddresses.forEach((address, index) => {
+    const name = results[index]?.[0];
+    if (name) names[address] = name;
+  });
+  return names;
+}
+
 function formatSlowDate(timestamp) {
   const seconds = Number(timestamp);
   if (!Number.isSafeInteger(seconds)) return 'far future';
   return new Date(seconds * 1000).toLocaleString();
 }
 
-function renderSlowTransfers(transfers, account, truncated, nowSeconds) {
+function renderSlowTransfers(transfers, account, reverseNames, truncated, nowSeconds) {
   const el = $('slowTransfers');
   if (!el) return;
   if (!transfers.length) {
@@ -4750,9 +4800,9 @@ function renderSlowTransfers(transfers, account, truncated, nowSeconds) {
     const isSender = transfer.from.toLowerCase() === user;
     const isRecipient = transfer.to.toLowerCase() === user;
     const role = isSender && isRecipient ? 'self' : (isSender ? 'outbound' : 'inbound');
-    const counterparty = isSender ? transfer.to : transfer.from;
+    const counterparty = slowCounterpartyAddress(transfer, account);
     const counterpartyLabel = isSender ? 'To' : 'From';
-    const shortAddress = counterparty.slice(0, 8) + '…' + counterparty.slice(-6);
+    const counterpartyDisplay = addressIdentityDisplay(counterparty, reverseNames);
     const actions = slowActionsForTransfer(transfer, account, now);
     const actionButtons = actions.map(action => {
       const label = action === 'reverse'
@@ -4767,7 +4817,7 @@ function renderSlowTransfers(transfers, account, truncated, nowSeconds) {
         <span class="slow-transfer-role">${role}</span>
       </div>
       <div class="slow-transfer-meta">
-        ${counterpartyLabel}: <a href="${EXPLORER}/address/${counterparty}" target="_blank" rel="noopener" style="color:inherit;">${shortAddress}</a><br>
+        ${counterpartyLabel}: <a href="${EXPLORER}/address/${counterparty}" target="_blank" rel="noopener" style="color:inherit;" title="${counterparty}">${escapeHtml(counterpartyDisplay)}</a><br>
         ${escapeHtml(slowTransferStatus(transfer, account, now))}<br>
         Unlock: ${escapeHtml(formatSlowDate(transfer.unlockAt))}
       </div>
@@ -4821,12 +4871,19 @@ async function loadSlowTransfers() {
     const transfers = pending
       .filter(transfer => transfer && transfer.token === 0n)
       .sort((a, b) => a.timestamp === b.timestamp ? 0 : (a.timestamp > b.timestamp ? -1 : 1));
+    let reverseNames = {};
+    try {
+      reverseNames = await loadReverseNames(
+        transfers.map(transfer => slowCounterpartyAddress(transfer, connectedAddress))
+      );
+    } catch (_) {}
+    if (version !== slowTransfersVersion) return;
     const truncated = outbound.total > BigInt(SLOW_TRANSFER_LIMIT)
       || inbound.total > BigInt(SLOW_TRANSFER_LIMIT);
     setSlowActionableCount(
       countSlowActionableTransfers(transfers, connectedAddress, latestBlock.timestamp)
     );
-    renderSlowTransfers(transfers, connectedAddress, truncated, latestBlock.timestamp);
+    renderSlowTransfers(transfers, connectedAddress, reverseNames, truncated, latestBlock.timestamp);
   } catch (e) {
     if (version !== slowTransfersVersion) return;
     setSlowActionableCount(0);
