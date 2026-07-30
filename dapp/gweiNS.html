@@ -3671,7 +3671,11 @@ function showManageForm(action) {
     case 'renew':
       html = `
         <label>Years to extend</label>
-        <input type="number" id="renewYears" value="1" min="1" max="25" step="1" oninput="previewRenew()">
+        <input type="number" id="renewYears" value="1" min="1" max="25" step="1"
+          aria-describedby="renewYearsLimit" oninput="previewRenew()">
+        <div id="renewYearsLimit" style="font-size:12px;opacity:0.6;margin-top:-8px;">
+          Maximum 25 years per renewal transaction.
+        </div>
         <div id="renewPreview" style="font-size:13px;margin:10px 0;line-height:1.7;opacity:0.85;">…</div>
         <button onclick="doRenew()">Renew</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -3684,12 +3688,16 @@ function showManageForm(action) {
   if (action === 'renew') previewRenew();
 }
 
-// Read the years input (clamped to 1..25). Each on-chain renew() extends by
-// exactly one REGISTRATION_PERIOD (365 days), so N years = N renew() calls.
+// Read and normalize the years input to 1..25. Keep the visible value in sync
+// so the duration shown in the field always matches the preview and transaction.
+// Each on-chain renew() extends by exactly one REGISTRATION_PERIOD (365 days),
+// so N years = N renew() calls.
 function renewYearsValue() {
-  let years = parseInt(($('renewYears') || {}).value, 10);
+  const input = $('renewYears');
+  let years = parseInt((input || {}).value, 10);
   if (!Number.isFinite(years) || years < 1) years = 1;
   if (years > 25) years = 25;
+  if (input && input.value !== String(years)) input.value = String(years);
   return years;
 }
 
