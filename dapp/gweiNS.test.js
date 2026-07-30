@@ -105,6 +105,32 @@ test('polling and reveal use the on-chain commitment without requiring txHash', 
   assert.match(revealSource, /markPendingConfirmed\(pending, committedAt\)/);
 });
 
+test('renewal makes the 25-year limit explicit and keeps the field in sync', () => {
+  const formStart = html.indexOf("case 'renew':");
+  const formEnd = html.indexOf("break;", formStart);
+  const renewMarkup = html.slice(formStart, formEnd);
+  assert.match(renewMarkup, /max="25"/);
+  assert.match(renewMarkup, /Maximum 25 years per renewal transaction\./);
+
+  const helperStart = html.indexOf('function renewYearsValue()');
+  const helperEnd = html.indexOf('// Live projection for the renew form', helperStart);
+  const input = { value: '100' };
+  const context = vm.createContext({
+    $(id) {
+      assert.equal(id, 'renewYears');
+      return input;
+    }
+  });
+  vm.runInContext(
+    html.slice(helperStart, helperEnd)
+      + '\nglobalThis.renewYearsValue = renewYearsValue;',
+    context
+  );
+
+  assert.equal(context.renewYearsValue(), 25);
+  assert.equal(input.value, '25');
+});
+
 test('offers SLOW as a timelocked mainnet send with explicit timing', () => {
   const start = html.indexOf('<!-- Send ETH -->');
   const end = html.indexOf('<!-- Verify Name', start);
