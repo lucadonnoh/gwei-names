@@ -1,0 +1,32 @@
+{
+  "version": "0.1.0",
+  "description": "Resolve Gwei Name Service names and addresses in MetaMask.",
+  "proposedName": "Gwei Name Service",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucadonnoh/gwei-names.git",
+    "directory": "snap"
+  },
+  "source": {
+    "shasum": "msxpU9suBlS4btUwM5DftmDiSn7xcaODHketk9bXoTE=",
+    "location": {
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "iconPath": "images/icon.svg",
+        "packageName": "@donnoh/gwei-name-service-snap",
+        "registry": "https://registry.npmjs.org/"
+      }
+    }
+  },
+  "initialPermissions": {
+    "endowment:name-lookup": {
+      "chains": ["eip155:1", "eip155:11155111"],
+      "matchers": {
+        "tlds": ["gwei"]
+      }
+    },
+    "endowment:ethereum-provider": {}
+  },
+  "platformVersion": "11.2.0",
+  "manifestVersion": "0.1"
+}

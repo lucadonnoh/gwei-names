@@ -1,0 +1,58 @@
+{
+  "name": "@donnoh/gwei-name-service-snap",
+  "version": "0.1.0",
+  "description": "Resolve Gwei Name Service names and addresses in MetaMask.",
+  "keywords": [
+    "MetaMask",
+    "Snaps",
+    "GNS",
+    "gwei",
+    "name resolution",
+    "Ethereum"
+  ],
+  "homepage": "https://gwei.domains",
+  "bugs": {
+    "url": "https://github.com/lucadonnoh/gwei-names/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucadonnoh/gwei-names.git",
+    "directory": "snap"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "./dist/bundle.js",
+  "files": [
+    "dist",
+    "images",
+    "snap.manifest.json"
+  ],
+  "scripts": {
+    "build": "npm run typecheck && mm-snap build",
+    "build:clean": "npm run clean && npm run build",
+    "check": "npm test",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run check",
+    "start": "npm run typecheck && mm-snap watch",
+    "test": "npm run build && jest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "@metamask/snaps-cli": "8.4.1",
+    "@metamask/snaps-jest": "10.2.0",
+    "@metamask/snaps-sdk": "11.2.0",
+    "@types/node": "^24.0.0",
+    "jest": "^29.7.0",
+    "rimraf": "^6.0.0",
+    "ts-jest": "^29.4.1",
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": "^20 || >=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
