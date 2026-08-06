@@ -454,7 +454,7 @@ test('contentcontract records round-trip', () => {
 
 test('Set Website routes web3:// to setText and everything else to setContenthash', () => {
   const start = html.indexOf('async function doSetContent()');
-  const end = html.indexOf('async function doSetPrimary()', start);
+  const end = html.indexOf('async function doClearContenthash()', start);
   const source = html.slice(start, end);
   assert.match(source, /parseWeb3Url\(input\)/);
   assert.match(source, /setText\(currentTokenId, CONTENTCONTRACT, formatContentContract\(pointer\)\)/);
@@ -535,7 +535,7 @@ test('Set Website copy and placeholder list IPNS', () => {
 
 test('Clear Website removes a shadowed contentcontract before the active contenthash', async () => {
   const start = html.indexOf('async function doSetContent()');
-  const end = html.indexOf('async function doSetPrimary()', start);
+  const end = html.indexOf('async function doClearContenthash()', start);
   const source = html.slice(start, end);
   const calls = [];
   const context = vm.createContext({
@@ -567,4 +567,90 @@ test('Clear Website removes a shadowed contentcontract before the active content
   await context.clearWebsite();
 
   assert.deepEqual(calls, ['contentcontract', 'contenthash']);
+});
+
+// --- switching a shadowed contract to the live website --------------------------
+
+function switchNote(state) {
+  const start = html.indexOf('function websiteSwitchNote()');
+  const end = html.indexOf('function showManageForm(action)', start);
+  assert.notEqual(start, -1, 'websiteSwitchNote must exist');
+  assert.notEqual(end, -1, 'websiteSwitchNote must sit above showManageForm');
+  const context = vm.createContext({
+    escapeHtml: (value) => String(value),
+    formatWeb3Url: (pointer) => `web3://${pointer.address}:${pointer.chainId}/`,
+    ...state
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.note = websiteSwitchNote();', context);
+  return context.note;
+}
+
+test('Set Website offers the switch only when a contenthash shadows a contract', () => {
+  const pointer = { chainId: 1, address: ROCK };
+  const shown = switchNote({ currentHasContenthash: true, currentContentContract: pointer });
+  assert.match(shown, /doClearContenthash\(\)/);
+  assert.ok(shown.includes(`web3://${ROCK}:1/`), 'names the contract the website switches to');
+  // Either record on its own is an ordinary state the input already handles.
+  assert.equal(switchNote({ currentHasContenthash: true, currentContentContract: null }), '');
+  assert.equal(switchNote({ currentHasContenthash: false, currentContentContract: pointer }), '');
+});
+
+test('the switch note leads the Set Website form', () => {
+  const start = html.indexOf("case 'setContent':");
+  const end = html.indexOf("case 'setText':", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const source = html.slice(start, end);
+  assert.match(source, /\$\{websiteSwitchNote\(\)\}/);
+  assert.ok(source.indexOf('websiteSwitchNote()') < source.indexOf('id="contentHash"'));
+});
+
+function clearContenthashHarness(state) {
+  const start = html.indexOf('async function doClearContenthash()');
+  const end = html.indexOf('async function doSetPrimary()', start);
+  assert.notEqual(start, -1, 'doClearContenthash must exist');
+  assert.notEqual(end, -1);
+  const calls = [];
+  const statuses = [];
+  const context = vm.createContext({
+    GWEI_GATEWAY: 'gwei.domains',
+    contract: {
+      setText(tokenId, key) { calls.push(['setText', key]); return { hash: '0xtext' }; },
+      setContenthash(tokenId, value) { calls.push(['setContenthash', value]); return { hash: '0xcleared' }; }
+    },
+    currentContentContract: { chainId: 1, address: ROCK },
+    currentHasContenthash: true,
+    currentTokenId: 1n,
+    currentTokenName: 'ethereumrock',
+    async doCheckName() {},
+    event: { target: { disabled: false } },
+    handleError(error) { throw error; },
+    isProcessing: false,
+    showStatus(message, type) { statuses.push({ message, type }); },
+    async waitForTx() {},
+    async wcTransaction(tx) { return tx; },
+    $() { return { classList: { remove() {} } }; },
+    ...state
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.clearContenthash = doClearContenthash;', context);
+  return { calls, statuses, run: () => context.clearContenthash() };
+}
+
+test('Remove contenthash sends one transaction and keeps the contract pointer', async () => {
+  const harness = clearContenthashHarness();
+
+  await harness.run();
+
+  assert.deepEqual(harness.calls, [['setContenthash', '0x']]);
+  assert.equal(harness.statuses.at(-1).type, 'success');
+  assert.match(harness.statuses.at(-1).message, /ethereumrock\.gwei\.domains/);
+});
+
+test('Remove contenthash refuses a name with no contract to switch to', async () => {
+  const harness = clearContenthashHarness({ currentContentContract: null });
+
+  await harness.run();
+
+  assert.deepEqual(harness.calls, []);
+  assert.equal(harness.statuses.at(-1).type, 'error');
 });

@@ -616,7 +616,9 @@ IPFS/IPNS and `bzz://` references, and it writes this record for you.
 
 **`contenthash` takes precedence.** A name with both records set serves its contenthash, so no
 existing site changes behavior when a `contentcontract` record appears. Clear the contenthash to
-switch a name over.
+switch a name over. Set Website spells that out whenever a name holds both, and its **Remove
+contenthash** button clears the one record in a single transaction, leaving the contract pointer
+in place.
 
 Two notes on how this differs from the spec and from other gateways:
 
