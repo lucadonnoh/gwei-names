@@ -389,6 +389,28 @@ body.modal-open { overflow: hidden; }
   margin-bottom: 12px;
   font-size: 16px;
 }
+/* Set Website notice: a contenthash is shadowing this name's contentcontract record. */
+.website-switch {
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  color: var(--fg-muted);
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px dashed var(--border-muted);
+}
+.website-switch code {
+  display: block;
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+  word-break: break-all;
+}
+.website-switch button {
+  margin: 10px 0 0;
+  padding: 10px 16px;
+  font-size: 11px;
+}
 .view-link {
   font-size: 12px;
   margin-top: 8px;
@@ -3661,6 +3683,20 @@ async function showManage(tokenId, name) {
   }
 }
 
+// Heads-up for the one state Set Website can't express through its input: both records are set, so
+// the gateway serves the contenthash and the contract sits there unreachable. Clearing through the
+// empty input would drop both records and take three transactions to get back here, so offer the
+// single transaction that does it instead. Empty string when the name isn't in that state.
+function websiteSwitchNote() {
+  if (!currentHasContenthash || !currentContentContract) return '';
+  return `
+        <div class="website-switch">
+          This name has a contenthash too, and the gateway serves that first. Remove it to switch the website to:
+          <code>${escapeHtml(formatWeb3Url(currentContentContract))}</code>
+          <button class="secondary" onclick="doClearContenthash()">Remove contenthash</button>
+        </div>`;
+}
+
 function showManageForm(action) {
   const form = $('manageForm');
   let html = '';
@@ -3685,7 +3721,7 @@ function showManageForm(action) {
       `;
       break;
     case 'setContent':
-      html = `
+      html = `${websiteSwitchNote()}
         <label>Website content</label>
         <div style="font-size:11px;color:var(--fg-muted);margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, an IPNS name, a Swarm bzz:// reference, or a web3:// contract URL.</div>
         <input type="text" id="contentHash" placeholder="bafy… (IPFS), ipns://k51… (IPNS), bzz://…, or web3://0x…:1/">
@@ -4187,6 +4223,11 @@ const formatWeb3Url = (p) => `web3://${p.address}:${p.chainId}/`;
 async function doSetContent() {
   if (isProcessing || !contract || !currentTokenId) return;
   const input = $('contentHash').value.trim();
+  // Pin the managed name before any wallet interaction. Name lookups remain available while a
+  // transaction is pending and update the current* globals when they finish.
+  const tokenId = currentTokenId;
+  const tokenName = currentTokenName;
+  const hadContenthash = currentHasContenthash;
 
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
@@ -4235,33 +4276,80 @@ async function doSetContent() {
     if (pointer) {
       showStatus('Setting website...', '');
       tx = await wcTransaction(
-        contract.setText(currentTokenId, CONTENTCONTRACT, formatContentContract(pointer)),
+        contract.setText(tokenId, CONTENTCONTRACT, formatContentContract(pointer)),
         'Approve set website',
       );
     } else {
       const contenthash = encodeContenthash(input);
       showStatus('Setting website...', '');
-      tx = await wcTransaction(contract.setContenthash(currentTokenId, contenthash), 'Approve set website');
+      tx = await wcTransaction(contract.setContenthash(tokenId, contenthash), 'Approve set website');
     }
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     // contenthash wins at the gateway, so a contract pointer set behind an existing one won't show.
-    const shadowed = pointer && currentHasContenthash;
+    const shadowed = pointer && hadContenthash;
     showStatus(
       shadowed
-        ? 'Contract set, but this name still has a contenthash, which the gateway serves first. Clear it to switch.'
-        : 'Website set!' + (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''),
+        ? 'Contract set, but this name still has a contenthash, which the gateway serves first. Use Remove contenthash to switch.'
+        : 'Website set!' + (GWEI_GATEWAY ? ' Visit ' + tokenName + '.' + GWEI_GATEWAY : ''),
       shadowed ? '' : 'success',
       tx.hash,
     );
     $('manageForm').classList.remove('show');
-    doCheckName(); // Refresh to show updated website link
+    const refreshed = doCheckName(); // Refresh to show updated website link
+    if (shadowed) {
+      // The contract just landed behind a contenthash, so reopen the form once the refresh has read
+      // both records back. The note it now carries puts the switch one click away. Skip it if the
+      // refresh landed on another name.
+      refreshed.then(() => {
+        if (currentTokenId === tokenId && currentHasContenthash && currentContentContract) {
+          showManageForm('setContent');
+        }
+      }).catch(() => {});
+    }
   } catch (e) {
     if (e.message?.includes('Unsupported CID') || e.message?.includes('IPNS') || e.message?.includes('web3://')) {
       showStatus(e.message, 'error');
     } else {
       handleError(e);
     }
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Remove the contenthash on its own, which hands the website over to the contentcontract record
+// sitting behind it. One transaction, and the contract pointer is left untouched.
+async function doClearContenthash() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  if (!currentHasContenthash || !currentContentContract) {
+    showStatus('This name needs both a contenthash and a contract for that.', 'error');
+    return;
+  }
+  const tokenId = currentTokenId;
+  const tokenName = currentTokenName;
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Removing contenthash...', '');
+    const tx = await wcTransaction(
+      contract.setContenthash(tokenId, '0x'),
+      'Approve remove contenthash',
+    );
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus(
+      'Contenthash removed, the contract serves this name now.' +
+        (GWEI_GATEWAY ? ' Visit ' + tokenName + '.' + GWEI_GATEWAY : ''),
+      'success',
+      tx.hash,
+    );
+    $('manageForm').classList.remove('show');
+    doCheckName(); // Refresh to show the contract as the live website
+  } catch (e) {
+    handleError(e);
   } finally {
     isProcessing = false;
     if (btn) btn.disabled = false;
