@@ -457,8 +457,8 @@ test('Set Website routes web3:// to setText and everything else to setContenthas
   const end = html.indexOf('async function doClearContenthash()', start);
   const source = html.slice(start, end);
   assert.match(source, /parseWeb3Url\(input\)/);
-  assert.match(source, /setText\(currentTokenId, CONTENTCONTRACT, formatContentContract\(pointer\)\)/);
-  assert.match(source, /setContenthash\(currentTokenId, contenthash\)/);
+  assert.match(source, /setText\(tokenId, CONTENTCONTRACT, formatContentContract\(pointer\)\)/);
+  assert.match(source, /setContenthash\(tokenId, contenthash\)/);
   // Clearing must be able to remove either record, not just the contenthash.
   assert.match(source, /setText\(currentTokenId, CONTENTCONTRACT, ''\)/);
   assert.match(source, /setContenthash\(currentTokenId, '0x'\)/);
@@ -553,6 +553,7 @@ test('Clear Website removes a shadowed contentcontract before the active content
     currentContentContract: { chainId: 1, address: ROCK },
     currentHasContenthash: true,
     currentTokenId: 1n,
+    currentTokenName: 'ethereumrock',
     doCheckName() {},
     event: { target: { disabled: false } },
     handleError(error) { throw error; },
@@ -605,18 +606,73 @@ test('the switch note leads the Set Website form', () => {
   assert.ok(source.indexOf('websiteSwitchNote()') < source.indexOf('id="contentHash"'));
 });
 
-function clearContenthashHarness(state) {
+function setContentHarness({ onWait } = {}) {
+  const start = html.indexOf('async function doSetContent()');
+  const end = html.indexOf('async function doClearContenthash()', start);
+  assert.notEqual(start, -1, 'doSetContent must exist');
+  assert.notEqual(end, -1);
+  const calls = [];
+  const forms = [];
+  let context;
+  context = vm.createContext({
+    CONTENTCONTRACT: 'contentcontract',
+    GWEI_GATEWAY: 'gwei.domains',
+    contract: {
+      setText(tokenId) { calls.push(['setText', tokenId]); return { hash: '0xset' }; },
+      setContenthash(tokenId) { calls.push(['setContenthash', tokenId]); return { hash: '0xset' }; }
+    },
+    currentContentContract: { chainId: 1, address: ROCK },
+    currentHasContenthash: true,
+    currentTokenId: 1n,
+    currentTokenName: 'ethereumrock',
+    async doCheckName() {},
+    encodeContenthash() { throw new Error('unexpected contenthash'); },
+    event: { target: { disabled: false } },
+    formatContentContract() { return `eth:${ROCK}`; },
+    handleError(error) { throw error; },
+    isProcessing: false,
+    parseWeb3Url() { return { chainId: 1, address: ROCK }; },
+    showManageForm(action) { forms.push([action, context.currentTokenId]); },
+    showStatus() {},
+    async waitForTx() { onWait?.(context); },
+    async wcTransaction(tx) { return tx; },
+    $() { return { value: `web3://${ROCK}:1/`, classList: { remove() {} } }; }
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.setContent = doSetContent;', context);
+  return { calls, forms, run: () => context.setContent() };
+}
+
+test('Set Website does not reopen on a different name selected during confirmation', async () => {
+  const harness = setContentHarness({
+    onWait(context) {
+      context.currentTokenId = 2n;
+      context.currentTokenName = 'another-name';
+      context.currentHasContenthash = true;
+      context.currentContentContract = { chainId: 1, address: ROCK };
+    }
+  });
+
+  await harness.run();
+  await Promise.resolve(); // Let the refresh continuation run.
+
+  assert.deepEqual(harness.calls, [['setText', 1n]]);
+  assert.deepEqual(harness.forms, []);
+});
+
+function clearContenthashHarness(state = {}) {
   const start = html.indexOf('async function doClearContenthash()');
   const end = html.indexOf('async function doSetPrimary()', start);
   assert.notEqual(start, -1, 'doClearContenthash must exist');
   assert.notEqual(end, -1);
+  const { onWait, ...overrides } = state;
   const calls = [];
   const statuses = [];
-  const context = vm.createContext({
+  let context;
+  context = vm.createContext({
     GWEI_GATEWAY: 'gwei.domains',
     contract: {
       setText(tokenId, key) { calls.push(['setText', key]); return { hash: '0xtext' }; },
-      setContenthash(tokenId, value) { calls.push(['setContenthash', value]); return { hash: '0xcleared' }; }
+      setContenthash(tokenId, value) { calls.push(['setContenthash', tokenId, value]); return { hash: '0xcleared' }; }
     },
     currentContentContract: { chainId: 1, address: ROCK },
     currentHasContenthash: true,
@@ -627,10 +683,10 @@ function clearContenthashHarness(state) {
     handleError(error) { throw error; },
     isProcessing: false,
     showStatus(message, type) { statuses.push({ message, type }); },
-    async waitForTx() {},
+    async waitForTx() { onWait?.(context); },
     async wcTransaction(tx) { return tx; },
     $() { return { classList: { remove() {} } }; },
-    ...state
+    ...overrides
   });
   vm.runInContext(html.slice(start, end) + '\nglobalThis.clearContenthash = doClearContenthash;', context);
   return { calls, statuses, run: () => context.clearContenthash() };
@@ -641,7 +697,7 @@ test('Remove contenthash sends one transaction and keeps the contract pointer', 
 
   await harness.run();
 
-  assert.deepEqual(harness.calls, [['setContenthash', '0x']]);
+  assert.deepEqual(harness.calls, [['setContenthash', 1n, '0x']]);
   assert.equal(harness.statuses.at(-1).type, 'success');
   assert.match(harness.statuses.at(-1).message, /ethereumrock\.gwei\.domains/);
 });
@@ -653,4 +709,19 @@ test('Remove contenthash refuses a name with no contract to switch to', async ()
 
   assert.deepEqual(harness.calls, []);
   assert.equal(harness.statuses.at(-1).type, 'error');
+});
+
+test('Remove contenthash keeps the original name in its transaction and success link', async () => {
+  const harness = clearContenthashHarness({
+    onWait(context) {
+      context.currentTokenId = 2n;
+      context.currentTokenName = 'another-name';
+    }
+  });
+
+  await harness.run();
+
+  assert.deepEqual(harness.calls, [['setContenthash', 1n, '0x']]);
+  assert.match(harness.statuses.at(-1).message, /ethereumrock\.gwei\.domains/);
+  assert.doesNotMatch(harness.statuses.at(-1).message, /another-name/);
 });

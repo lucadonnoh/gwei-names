@@ -4187,6 +4187,11 @@ const formatWeb3Url = (p) => `web3://${p.address}:${p.chainId}/`;
 async function doSetContent() {
   if (isProcessing || !contract || !currentTokenId) return;
   const input = $('contentHash').value.trim();
+  // Pin the managed name before any wallet interaction. Name lookups remain available while a
+  // transaction is pending and update the current* globals when they finish.
+  const tokenId = currentTokenId;
+  const tokenName = currentTokenName;
+  const hadContenthash = currentHasContenthash;
 
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
@@ -4235,27 +4240,26 @@ async function doSetContent() {
     if (pointer) {
       showStatus('Setting website...', '');
       tx = await wcTransaction(
-        contract.setText(currentTokenId, CONTENTCONTRACT, formatContentContract(pointer)),
+        contract.setText(tokenId, CONTENTCONTRACT, formatContentContract(pointer)),
         'Approve set website',
       );
     } else {
       const contenthash = encodeContenthash(input);
       showStatus('Setting website...', '');
-      tx = await wcTransaction(contract.setContenthash(currentTokenId, contenthash), 'Approve set website');
+      tx = await wcTransaction(contract.setContenthash(tokenId, contenthash), 'Approve set website');
     }
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     // contenthash wins at the gateway, so a contract pointer set behind an existing one won't show.
-    const shadowed = pointer && currentHasContenthash;
+    const shadowed = pointer && hadContenthash;
     showStatus(
       shadowed
         ? 'Contract set, but this name still has a contenthash, which the gateway serves first. Use Remove contenthash to switch.'
-        : 'Website set!' + (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''),
+        : 'Website set!' + (GWEI_GATEWAY ? ' Visit ' + tokenName + '.' + GWEI_GATEWAY : ''),
       shadowed ? '' : 'success',
       tx.hash,
     );
     $('manageForm').classList.remove('show');
-    const tokenId = currentTokenId;
     const refreshed = doCheckName(); // Refresh to show updated website link
     if (shadowed) {
       // The contract just landed behind a contenthash, so reopen the form once the refresh has read
@@ -4287,20 +4291,22 @@ async function doClearContenthash() {
     showStatus('This name needs both a contenthash and a contract for that.', 'error');
     return;
   }
+  const tokenId = currentTokenId;
+  const tokenName = currentTokenName;
 
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     showStatus('Removing contenthash...', '');
     const tx = await wcTransaction(
-      contract.setContenthash(currentTokenId, '0x'),
+      contract.setContenthash(tokenId, '0x'),
       'Approve remove contenthash',
     );
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus(
       'Contenthash removed, the contract serves this name now.' +
-        (GWEI_GATEWAY ? ' Visit ' + currentTokenName + '.' + GWEI_GATEWAY : ''),
+        (GWEI_GATEWAY ? ' Visit ' + tokenName + '.' + GWEI_GATEWAY : ''),
       'success',
       tx.hash,
     );
