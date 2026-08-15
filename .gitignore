@@ -8,4 +8,6 @@ cache
 keystore/
 broadcast/
 node_modules/
+.wrangler/
+*.cpuprofile
 dist/

@@ -8,6 +8,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from './worker.js';
+import {
+  RPC_PAGE_TIMEOUT_MS,
+  RPC_TIMEOUT_MS,
+  rpcEndpointConfig,
+} from './rpc-config.js';
+import { RpcPool } from './rpc-pool.js';
 
 // ---- fixtures ---------------------------------------------------------------
 const pad32 = (h) => h.padStart(64, '0');
@@ -154,7 +160,7 @@ function makeFetch(handlers) {
       calls.rpc++; calls.rpcUrls.push(url);
       const call = JSON.parse(init.body).params[0];
       const data = call.data;
-      const result = handlers.rpc ? await handlers.rpc(data, url, call.to) : null;
+      const result = handlers.rpc ? await handlers.rpc(data, url, call.to, init) : null;
       if (result === 'THROW') throw new Error('rpc network error');
       if (result instanceof Response) return result;
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: result ?? null }),
@@ -188,11 +194,45 @@ const rpcReturning = (chFixture) => (data) =>
     : data.startsWith(SEL.text) ? TEXT_NONE
     : null;
 
+// Faithful in-process stand-in for the Durable Object namespace. Each deterministic broker name
+// owns one RpcPool, just as each real Durable Object shard does in production.
+function makeRpcBrokerNamespace(fetchMock, env) {
+  const brokers = new Map();
+  return {
+    getByName(name) {
+      let stub = brokers.get(name);
+      if (!stub) {
+        const pools = new Map();
+        stub = {
+          rpc(input) {
+            const config = rpcEndpointConfig(input.chainId, env);
+            if (!config) return { failed: true };
+            let pool = pools.get(input.chainId);
+            if (!pool) {
+              pool = new RpcPool({ fetchImpl: fetchMock });
+              pools.set(input.chainId, pool);
+            }
+            return pool.rpc({
+              to: input.to,
+              data: input.data,
+              ...config,
+              timeoutMs: input.long ? RPC_PAGE_TIMEOUT_MS : RPC_TIMEOUT_MS,
+            });
+          },
+        };
+        brokers.set(name, stub);
+      }
+      return stub;
+    },
+  };
+}
+
 // Drive the worker; awaits ctx.waitUntil so cache writes settle before the next call.
 async function invoke(urlStr, { method = 'GET', headers = {}, env = {}, cache, fetchMock } = {}) {
   const ctx = { _p: [], waitUntil(p) { this._p.push(Promise.resolve(p)); } };
   globalThis.caches = { default: cache };
   globalThis.fetch = fetchMock;
+  if (!env.RPC_BROKER) env.RPC_BROKER = makeRpcBrokerNamespace(fetchMock, env);
   const res = await worker.fetch(new Request(urlStr, { method, headers }), env, ctx);
   await Promise.allSettled(ctx._p);
   return res;
@@ -790,12 +830,14 @@ test('oversized streamed RPC responses fail over before JSON buffering', async (
   const cache = makeCache();
   let oversizedCalls = 0;
   let fallbackCalls = 0;
+  let sentOversized = false;
   const inner = rpcWeb3({
     onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'fallback') : null,
   });
   const fetchMock = makeFetch({
-    rpc: (data, url) => {
-      if (data.startsWith(SEL.request) && url.includes('0xrpc')) {
+    rpc: (data) => {
+      if (data.startsWith(SEL.request) && !sentOversized) {
+        sentOversized = true;
         oversizedCalls++;
         return new Response(new ReadableStream({
           start(controller) {
@@ -900,4 +942,45 @@ test('an emoji name is served from a contract, with its name header percent-enco
   assert.equal(res.status, 200);
   assert.equal(await res.text(), '<h1>whale</h1>');
   assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), '🐳.gwei');
+});
+
+test('a cold request herd shares each identical RPC call through the broker', async () => {
+  const cache = makeCache();
+  const inner = rpcWeb3({
+    onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'coalesced') : null,
+  });
+  const fetchMock = makeFetch({
+    rpc: async (data) => {
+      // Keep every stage in flight long enough for all requests to join it.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return inner(data);
+    },
+  });
+  const env = { RPC_BROKER: makeRpcBrokerNamespace(fetchMock, {}) };
+
+  const responses = await Promise.all(
+    Array.from({ length: 10 }, () => invoke('https://rock.gwei.domains/', { cache, fetchMock, env })),
+  );
+  assert.deepEqual(responses.map((response) => response.status), Array(10).fill(200));
+  assert.deepEqual(await Promise.all(responses.map((response) => response.text())), Array(10).fill('coalesced'));
+  assert.equal(
+    fetchMock.calls.rpc,
+    5,
+    'computeId, contenthash, text, resolveMode, and request each ran once for the whole herd',
+  );
+});
+
+test('a full RPC broker queue sheds load as a retryable 503', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS) });
+  const env = {
+    RPC_BROKER: {
+      getByName: () => ({ rpc: async () => ({ overloaded: true }) }),
+    },
+  };
+  const res = await invoke('https://busy.gwei.domains/', { cache, fetchMock, env });
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get('retry-after'), '2');
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.equal(await cache.match(new Request('https://gwei-cache.internal/resolve/busy.gwei')), undefined);
 });
