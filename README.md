@@ -13,19 +13,20 @@ GNS is an ownerless, neutral fork of [wei-names](https://github.com/z0r0z/wei-na
 
 The result is a neutral public good: fixed rules nobody can change, and money nobody can extract.
 
-**Status:** live + verified on **Ethereum mainnet** (and Sepolia — same addresses, since the same deployer + nonces produce the same CREATE addresses on both chains).
+**Status:** live + verified on **Ethereum mainnet and Sepolia**. The core contracts share addresses across both networks; `HumanRegistrar` has a network-specific address.
 
-| Contract | Address (mainnet + Sepolia) |
-|---|---|
-| `NameNFT.sol` | [`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) |
-| `SubdomainRegistrar.sol` | [`0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c`](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) |
-| `GnsUniversalResolver.sol` | [`0xD658131FFB6D732335d37f199374289F1b31564F`](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) |
+| Contract | Mainnet | Sepolia |
+|---|---|---|
+| `NameNFT.sol` | [`0x9D51…81d6`](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) | [`0x9D51…81d6`](https://sepolia.etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) |
+| `SubdomainRegistrar.sol` | [`0xc1D5…3f3c`](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) | [`0xc1D5…3f3c`](https://sepolia.etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) |
+| `GnsUniversalResolver.sol` | [`0xD658…1564`](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) | [`0xD658…1564`](https://sepolia.etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) |
+| `HumanRegistrar.sol` | [`0xA428…330A`](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A) | [`0xAA6C…E870`](https://sepolia.etherscan.io/address/0xAA6C81c54ecA32e1949b9Ff80eAC21D03261E870) |
 
 `NameNFT` takes no constructor args; `SubdomainRegistrar`'s constructor takes the deployed `NameNFT` address.
 
 **Dapp:** [`gwei.domains`](https://gwei.domains) — source at `dapp/gweiNS.html` (a single self-contained, network-aware HTML file).
 
-**JS SDK:** [`gns-utils`](sdk/) — resolve `.gwei` names, reverse-resolve, compute IDs and fees. `createGnsClient()` defaults to the Sepolia deployment.
+**JS SDK:** [`gns-utils`](sdk/) — resolve `.gwei` names, reverse-resolve, compute IDs and fees. `createGnsClient()` defaults to the mainnet deployment.
 
 **MetaMask Snap:** [`@donnoh/gwei-name-service-snap`](https://www.npmjs.com/package/@donnoh/gwei-name-service-snap) — forward and reverse `.gwei` resolution in MetaMask. It reads GNS through MetaMask's Ethereum provider.
 
@@ -758,7 +759,7 @@ AI-assisted audits performed on the upstream codebase:
 
 - **Dapp:** [gwei.domains](https://gwei.domains) (source: `dapp/gweiNS.html`)
 - **JS SDK:** [`gns-utils`](sdk/)
-- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c)
+- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A)
 - **Upstream (wei-names):** https://github.com/z0r0z/wei-names
 - **ENSIP-15:** https://docs.ens.domains/ensip/15/
 - **ens-normalize:** https://github.com/adraffy/ens-normalize.js

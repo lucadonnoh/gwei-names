@@ -104,13 +104,14 @@ one must clear it before its contract-hosted site is served.
 ## Constants
 
 ```ts
-import { GNS_CONTRACT, BASE_PORTAL, gnsAbi } from '@donnoh/gns-utils'
+import { GNS_CONTRACT, GWEI_NODE, MAX_SUBDOMAIN_DEPTH } from '@donnoh/gns-utils'
 
 GNS_CONTRACT // '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' (same on mainnet + Sepolia)
-BASE_PORTAL  // '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e'
+GWEI_NODE // '0xcca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f'
+MAX_SUBDOMAIN_DEPTH // 10
 ```
 
-The full contract ABI is exported as `gnsAbi` for use with viem, ethers, wagmi, or any other web3 library:
+The full contract ABI is exported as `gnsAbi` for use with viem, ethers, wagmi, or any other web3 library. It is generated from [`src/NameNFT.sol`](../src/NameNFT.sol); contributors can refresh it with `pnpm abi:generate`, and `pnpm check` rejects drift.
 
 ```ts
 import { gnsAbi, GNS_CONTRACT } from '@donnoh/gns-utils'

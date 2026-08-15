@@ -26,6 +26,8 @@
   ],
   "sideEffects": false,
   "scripts": {
+    "abi:generate": "node scripts/generate-abi.mjs",
+    "abi:check": "node scripts/generate-abi.mjs --check",
     "build": "NODE_OPTIONS='--max-old-space-size=512' tsup",
     "dev": "NODE_OPTIONS='--max-old-space-size=512' tsup --watch",
     "clean": "rm -rf dist",
@@ -33,7 +35,7 @@
     "test": "tsx --test src/**/*.test.ts",
     "lint": "biome check src",
     "format": "biome check --write src",
-    "check": "biome check src && tsc --noEmit",
+    "check": "pnpm abi:check && biome check src && tsc --noEmit",
     "prepublishOnly": "pnpm build",
     "changeset": "changeset",
     "version": "changeset version",
