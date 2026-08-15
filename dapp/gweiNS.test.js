@@ -1,10 +1,19 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, 'gweiNS.html'), 'utf8');
+
+test('integration cards match their structured source', () => {
+  assert.doesNotThrow(() => execFileSync(
+    process.execPath,
+    [path.join(__dirname, '..', 'script', 'build-integrations.mjs'), '--check'],
+    { stdio: 'pipe' }
+  ));
+});
 
 function pendingHarness(pending, committedAt) {
   const storage = new Map([
