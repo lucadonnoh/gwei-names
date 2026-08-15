@@ -750,3 +750,88 @@ test('Remove contenthash keeps the original name in its transaction and success 
   assert.match(harness.statuses.at(-1).message, /ethereumrock\.gwei\.domains/);
   assert.doesNotMatch(harness.statuses.at(-1).message, /another-name/);
 });
+
+function recentWebsites(cache, limit) {
+  const start = html.indexOf('function recentWebsiteLabels(cache, limit)');
+  const end = html.indexOf('async function loadStats()', start);
+  assert.notEqual(start, -1, 'the recent-websites helper must exist');
+  assert.notEqual(end, -1, 'the recent-websites helper must be bounded');
+
+  const context = vm.createContext({});
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.recentWebsiteLabels = recentWebsiteLabels;',
+    context
+  );
+  return [...context.recentWebsiteLabels(cache, limit)]; // copy out of the vm realm so deepEqual works
+}
+
+// One name per case: an IPFS, a Swarm and an IPNS contenthash, a web3:// contract, a name whose
+// contenthash was cleared in favour of its contract, a name with neither record left, a subdomain
+// and a name that never set anything.
+const websiteCache = {
+  names: {
+    '0x01': { label: 'ipfs-site', top: true },
+    '0x02': { label: 'swarm-site', top: true },
+    '0x03': { label: 'ipns-site', top: true },
+    '0x04': { label: 'ethereumrock', top: true },
+    '0x05': { label: 'switched', top: true },
+    '0x06': { label: 'cleared', top: true },
+    '0x07': { label: 'sub', top: false },
+    '0x08': { label: 'no-site', top: true }
+  },
+  ch: {
+    '0x01': { len: 38, block: 300 },
+    '0x02': { len: 38, block: 100 },
+    '0x03': { len: 38, block: 200 },
+    '0x05': { len: 0, block: 400 },
+    '0x06': { len: 0, block: 420 },
+    '0x07': { len: 38, block: 500 }
+  },
+  cc: {
+    '0x04': { len: 45, block: 250 },
+    '0x05': { len: 45, block: 150 },
+    '0x06': { len: 0, block: 430 },
+    '0x07': { len: 45, block: 500 }
+  }
+};
+
+test('recent websites rank contenthash and web3:// contract sites together', () => {
+  assert.deepEqual(recentWebsites(websiteCache, 50), [
+    'ipfs-site',
+    'ethereumrock',
+    'ipns-site',
+    'switched',
+    'swarm-site'
+  ]);
+});
+
+test('recent websites date a name by the record the gateway serves', () => {
+  const cache = {
+    names: { '0x01': { label: 'shadowed', top: true }, '0x02': { label: 'contract-only', top: true } },
+    ch: { '0x01': { len: 38, block: 100 } },
+    cc: { '0x01': { len: 45, block: 900 }, '0x02': { len: 45, block: 500 } }
+  };
+
+  // 0x01 serves its contenthash, so the newer shadowed contract record must not move it up.
+  assert.deepEqual(recentWebsites(cache, 50), ['contract-only', 'shadowed']);
+});
+
+test('recent websites keep the limit', () => {
+  assert.deepEqual(recentWebsites(websiteCache, 2), ['ipfs-site', 'ethereumrock']);
+});
+
+test('the stats scan reads contentcontract records alongside contenthashes', () => {
+  const start = html.indexOf('const STATS_NAME_TOPIC');
+  const end = html.indexOf('loadStats();', start);
+  assert.notEqual(start, -1, 'the stats section must exist');
+  assert.notEqual(end, -1, 'the stats section must be bounded');
+  const statsSource = html.slice(start, end);
+
+  // TextChanged(bytes32,string,string) and keccak256('contentcontract'), its indexed key.
+  assert.match(statsSource, /STATS_TEXT_TOPIC = '0xd8c9334b1a9c2f9da342a0a2b32629c1a229b6445dad78947f674b44444a7550'/);
+  assert.match(statsSource, /STATS_CC_KEY = '0x58d1a44eb778f49875f62ace52dcda3a77ed4f1b085b6668edba23e2aea510ec'/);
+  assert.match(statsSource, /topics: \[\[STATS_NAME_TOPIC, STATS_CH_TOPIC, STATS_TEXT_TOPIC\]\]/);
+  assert.match(statsSource, /log\.topics\[2\] === STATS_CC_KEY/);
+  // A cache from before contentcontract was scanned has to be discarded, not resumed from.
+  assert.match(statsSource, /c\.names && c\.ch && c\.cc &&/);
+});
