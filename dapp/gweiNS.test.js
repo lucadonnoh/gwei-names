@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -7,12 +6,29 @@ const vm = require('node:vm');
 
 const html = fs.readFileSync(path.join(__dirname, 'gweiNS.html'), 'utf8');
 
-test('integration cards match their structured source', () => {
-  assert.doesNotThrow(() => execFileSync(
-    process.execPath,
-    [path.join(__dirname, '..', 'script', 'build-integrations.mjs'), '--check'],
-    { stdio: 'pipe' }
-  ));
+test('integration cards use valid embedded structured data', () => {
+  const match = html.match(/<script type="application\/json" id="integrationData">([\s\S]*?)<\/script>/);
+  assert.ok(match, 'embedded integration data must exist');
+  const integrations = JSON.parse(match[1]);
+  const categories = new Set(['community', 'defi', 'developer', 'name management', 'wallet', 'web access']);
+  const linkLabels = new Set(['Chrome Web Store', 'Download', 'GitHub', 'npm', 'Website']);
+  const names = new Set();
+
+  assert.ok(integrations.length > 0);
+  for (const integration of integrations) {
+    assert.equal(typeof integration.name, 'string');
+    assert.ok(integration.name);
+    assert.equal(names.has(integration.name), false, `duplicate integration: ${integration.name}`);
+    names.add(integration.name);
+    assert.equal(categories.has(integration.category), true, `unknown category: ${integration.category}`);
+    assert.equal(typeof integration.description, 'string');
+    assert.match(integration.logo, /^data:image\/(?:png|svg\+xml);base64,/);
+    assert.ok(Array.isArray(integration.links) && integration.links.length > 0);
+    for (const link of integration.links) {
+      assert.equal(linkLabels.has(link.label), true, `unknown link label: ${link.label}`);
+      assert.equal(new URL(link.url).protocol, 'https:');
+    }
+  }
 });
 
 function pendingHarness(pending, committedAt) {
@@ -396,7 +412,7 @@ test('collapsed send control reports actionable SLOW transfers', () => {
 test('classic inline scripts remain valid JavaScript', () => {
   const scripts = html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi);
   for (const [, attributes, source] of scripts) {
-    if (/\bsrc\s*=|\btype\s*=\s*["']module["']/i.test(attributes)) continue;
+    if (/\bsrc\s*=|\btype\s*=\s*["'](?:module|application\/json)["']/i.test(attributes)) continue;
     assert.doesNotThrow(() => new vm.Script(source));
   }
 });

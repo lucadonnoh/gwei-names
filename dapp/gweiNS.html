@@ -647,7 +647,6 @@ body.modal-open { overflow: hidden; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
 .int-head { display: flex; align-items: center; gap: 9px; }
-.int-logo svg { width: 18px; height: 18px; display: block; }
 .int-logo img { width: 18px; height: 18px; display: block; border-radius: 4px; }
 .int-name { font-size: 15px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
 .int-tag { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); border: 1px solid var(--border-muted); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
@@ -1063,253 +1062,341 @@ body.modal-open { overflow: hidden; }
 <!-- Integrations -->
 <div class="integrations" id="integrations">
   <div class="int-label">integrations</div>
-  <div class="int-list">
-    <!-- BEGIN GENERATED INTEGRATIONS -->
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="400" fill="#000"/><path d="M-60-20H460V90L80 310H460V420H-60V310L320 90H-60Z" fill="#fff"/></svg></span>
-        <span class="int-name">zSwap</span>
-        <span class="int-tag">defi</span>
-      </div>
-      <p class="int-desc">An entirely onchain exchange for swaps, orders, token launches, and payments. Send ETH or tokens to <code>.gwei</code> names with shareable links and optional reversible timelocks.</p>
-      <div class="int-links">
-        <a href="https://zswap.wei.limo/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/z-fi/zFi" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">Kohaku CLI</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">A terminal wallet for public and private Ethereum balances. Resolve, register, renew, transfer, and manage <code>.gwei</code> names from the command line.</p>
-      <div class="int-links">
-        <a href="https://tatsumaki.gwei.domains/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/kassandraoftroy/kohaku-cli" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="7" fill="#171717"/><path d="M9 10v10a4 4 0 0 0 8 0V10m0 10a4 4 0 0 0 4 4h2M9 20v6" fill="none" stroke="#f5f5f5" stroke-width="2.2" stroke-linecap="round"/></svg></span>
-        <span class="int-name">micro-eth-signer</span>
-        <span class="int-tag">developer</span>
-      </div>
-      <p class="int-desc">A minimal, privacy-focused Ethereum library for signing and RPC data. Resolve and reverse-resolve <code>.gwei</code> names, read records, and check availability, expiries, and fees.</p>
-      <div class="int-links">
-        <a href="https://www.npmjs.com/package/micro-eth-signer" target="_blank" rel="noopener">npm ↗</a>
-        <a href="https://github.com/paulmillr/micro-eth-signer" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="32" rx="7" fill="#f4f0e6"/><g fill="#d85d45"><circle cx="16" cy="10" r="5"/><circle cx="22" cy="16" r="5"/><circle cx="16" cy="22" r="5"/><circle cx="10" cy="16" r="5"/></g><circle cx="16" cy="16" r="3.5" fill="#f2c14e"/></svg></span>
-        <span class="int-name">Rebloom</span>
-        <span class="int-tag">name management</span>
-      </div>
-      <p class="int-desc">A minimal web app for renewing Ethereum names. Renew <code>.gwei</code> names for one or more years in a single transaction.</p>
-      <div class="int-links">
-        <a href="https://bafybeigmnntcx7srljk5rsjbvep573cjob7kbe3u7vnepf5wat644wr3uy.ipfs.zoltu.io/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/DarkFlorist/rebloom" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAADLElEQVR4nLRWvW4TQRCe2dv4Eie2MShJAYKUaSgiUVCBBC8ABUhBQjT8FFQIhHgEhEJJAaJDChIU8AIgkYqONiVBgJIQ4dhxHP/c7fKNN744du4ugP3JieZ29mdmZ77Z0advrI5mmDpgJmttEJKnSCm2lvogWqXIY+5XWrJhR7vTFL3OjFBGk/KIKTpGRGvaG0FgOYzl5I4Nigy0AUGQLaDzMH9XiyWhtfWGs5W0MVRrOJMtMx2I0OCkGC22C2GDmEh235Ljk9523cIDrtWtG0pAaJO0UJqgd/D7eoj/KjT25LQ3lmEaKLAhti3mlW406dtaSIMGIrxZNbhVhUOG4QEy01NcrlpFwwHszWXZHyGNdCxtWZez3fj8ctoJD59tLn1pHLjLuTn/yd0jTj57c61bhQ1x89lRZK3iwrji+Bt6MJ8f8w9QYxCquFW482MFhfxUpYr5uRGCbnGYOqruXJ7oH8cgVHGr4MFOwyLAEuRRn5FLCbhyITt7SneP4BODCUv8DOEAWC8eZH1OziKUikfXC6ozBQI+vcT8aLaEyeIB4rBRNv1BjuAiPDujr17M7jk0Iw59igk+gCoEJosHqUxeWKy4WnL70sRUUeHnQoLBp4uVuFV7TG61aGvHJlSa9ZJ5/q56bz4HX+9fy8MQCBh/8b4KFaVBFXIqN8bJPH77sbb8VYrZ+TkfuQ8Bn28+1BKWwOKtWjvIdAgYS49flaNyCwGfJrG+RkyWLALlEoLssLwSwA+KHFoJkuc7JnseCw9OTHp8iFqHSKz/NvhBSJ0cMVnDgzITmJzMNTGqYRdeV5xAaYAHeFAli/DXaFqXiKlYik/8Hjgm79aiVCb/AyIma8dkGjTArMq2vGh85tbqdNH7VTKpifRXwJVMFhUonM7k/4TOj3MQ2HpzwEc4HpCUXsXFnBpS2yJvMrKoVKGBI3qThQfjPv/YCHseEIQF1SbuVYEWFUnrfe1iN9CLag/J2mEy2hhQQzrcKGOV9L/oXKXxbJ8kbe3+fA7bBc+2e3KUnW6tZWmzEVp5mGSalQcEPTOOJeqNB9bDlrCthRE9OSdWGdH2d/ytgP4AAAD///s8/rUAAAAGSURBVAMAFW+pecQyjuYAAAAASUVORK5CYII=" alt="" width="18" height="18"></span>
-        <span class="int-name">multisig.software</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">A multichain multisig wallet with an embedded timelock. Use <code>.gwei</code> names for vaults, owners, and transaction recipients.</p>
-      <div class="int-links">
-        <a href="https://www.multisig.software/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/src-company/multisig" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="#6000ff" d="M9.563 4.575a.25.25 0 0 1 .444.22L8.784 8.302l.714 1.387-1.62 2.193-1.266.703a.251.251 0 0 1-.344-.106l-.766-1.532a.25.25 0 0 1 .015-.249l4.045-6.123ZM15.783 9.171a.25.25 0 0 1 .282.138l2.624 5.576a.25.25 0 0 1-.053.286l-6.997 6.778a.25.25 0 0 1-.424-.18v-4.604l1.262-2.934 3.111-2.956v-1.86a.25.25 0 0 1 .195-.244Z"/><path fill="#6000ff" stroke="#6000ff" stroke-linecap="round" stroke-linejoin="round" stroke-width=".5" d="m11.465 7.447.033-5.467 2.92 7.107L9.715 20.02l-4.428-4.21 6.177-8.363Z"/></svg></span>
-        <span class="int-name">Ambire</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">A self-custodial smart wallet for Ethereum and EVM networks. Resolve <code>.gwei</code> names when sending and see GNS identities throughout the wallet.</p>
-      <div class="int-links">
-        <a href="https://www.ambire.com/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://chromewebstore.google.com/detail/ambire-web3-wallet/ehgjhhccekdedpbkifaojjaefeohnoea" target="_blank" rel="noopener">Chrome Web Store ↗</a>
-        <a href="https://github.com/AmbireTech/extension" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg fill="none" viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg"><g fill="#ff5c16"><path d="m878.021 886.579-187.397-55.22-141.324 83.601-98.6-.04-141.406-83.561-187.315 55.22-56.979-190.346 56.979-211.256-56.979-178.611 56.979-221.366 292.696 173.049h170.65l292.696-173.049 56.979 221.366-56.979 178.611 56.979 211.256z"/><path d="m122.02 85 292.695 173.171-11.641 118.844z"/><path d="m309.335 696.316 128.785 97.082-128.785 37.963z"/><path d="m427.827 535.812-24.753-158.716-158.438 107.922-.081-.041v.081l.49 111.089 64.249-60.335h.041z"/><path d="m878.021 85-292.696 173.171 11.6 118.844z"/><path d="m690.705 696.316-128.784 97.082 128.784 37.963z"/><path d="m755.445 485.058h.041-.041v-.081l-.041.041-158.438-107.922-24.752 158.716h118.491l64.29 60.335z"/></g><path d="m309.294 831.357-187.315 55.22-56.979-190.265h244.294z" fill="#e34807"/><path d="m427.786 535.77 35.78 229.446-49.586-127.574-169.017-41.496 64.291-60.376h118.491z" fill="#e34807"/><path d="m690.705 831.357 187.316 55.22 56.978-190.265h-244.294z" fill="#e34807"/><path d="m572.214 535.77-35.78 229.446 49.586-127.574 169.016-41.496-64.331-60.376z" fill="#e34807"/><path d="m65 696.233 56.979-211.256h122.535l.449 111.129 169.017 41.496 49.586 127.574-25.487 28.097-128.785-97.081h-244.294z" fill="#ff8d5d"/><path d="m935 696.233-56.979-211.256h-122.535l-.45 111.129-169.016 41.496-49.586 127.574 25.487 28.097 128.784-97.081h244.295z" fill="#ff8d5d"/><path d="m585.325 258.049h-85.325-85.325l-11.6 118.844 60.491 388.162h72.868l60.532-388.162z" fill="#ff8d5d"/><g fill="#661800"><path d="m121.979 85-56.979 221.366 56.979 178.611h122.535l158.52-107.962z"/><path d="m392.373 581.855h-55.509l-30.225 29.315 107.382 26.351-21.648-55.707z"/><path d="m878.021 85 56.979 221.366-56.979 178.611h-122.535l-158.52-107.962z"/><path d="m607.709 581.855h55.59l30.225 29.356-107.504 26.392 21.689-55.789z"/><path d="m549.26 839.236 12.662-45.881-25.488-28.097h-72.908l-25.487 28.097 12.662 45.881"/></g><path d="m549.259 839.236v75.765h-98.559v-75.765z" fill="#c0c4cd"/><path d="m309.335 831.278 141.447 83.682v-75.764l-12.662-45.882z" fill="#e7ebf6"/><path d="m690.706 831.278-141.447 83.682v-75.764l12.662-45.882z" fill="#e7ebf6"/></svg></span>
-        <span class="int-name">MetaMask Snap</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">Add GNS resolution to MetaMask. Send to <code>.gwei</code> names and reverse-resolve wallet addresses to forward-confirmed primary names on Ethereum mainnet and Sepolia.</p>
-      <div class="int-links">
-        <a href="https://snaps.metamask.io/snap/npm/donnoh/gwei-name-service-snap/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/lucadonnoh/gwei-names/tree/main/snap" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#070b14"/><path d="M10 27V12a6 6 0 0 1 12 0v15" fill="none" stroke="#e8dcc4" stroke-width="1.6" stroke-linecap="round"/><circle cx="16" cy="18" r="3.4" fill="#7bc9a3"/></svg></span>
-        <span class="int-name">gwei.site</span>
-        <span class="int-tag">web access</span>
-      </div>
-      <p class="int-desc">An edge gateway for decentralized websites on IPFS, IPNS, and Swarm. Open any <code>.gwei</code> site at <code>&lt;name&gt;.gwei.site</code>, or map it to a custom domain.</p>
-      <div class="int-links">
-        <a href="https://gwei.site/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/nipsysdev/gwei-site" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none"><rect x="4" y="7" width="24" height="18" rx="3" stroke="currentColor" stroke-width="2"/><path d="M4 12h24M20 17h8v6h-8a3 3 0 0 1 0-6Z" stroke="currentColor" stroke-width="2"/><circle cx="23" cy="20" r="1" fill="currentColor"/></svg></span>
-        <span class="int-name">request-wallet-sign</span>
-        <span class="int-tag">developer</span>
-      </div>
-      <p class="int-desc">A local signing bridge that lets AI agents hand transactions to your browser wallet without seeing your private key. Use a <code>.gwei</code> name as the recipient and it resolves before you sign.</p>
-      <div class="int-links">
-        <a href="https://www.npmjs.com/package/request-wallet-sign" target="_blank" rel="noopener">npm ↗</a>
-        <a href="https://github.com/escottalexander/request-wallet-sign" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">DefiLlama</span>
-        <span class="int-tag">defi</span>
-      </div>
-      <p class="int-desc">An open DeFi analytics platform for TVL, fees, revenue, and more. Track <code>.gwei</code> registration and renewal fees on Ethereum.</p>
-      <div class="int-links">
-        <a href="https://defillama.com/fees/gwei-name-service" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/DefiLlama/dimension-adapters/blob/master/fees/gwei-domains.ts" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M20.6667 29.9988V11.3325C25.8213 11.3325 30 15.5111 30 20.6656C30 25.8202 25.8213 29.9988 20.6667 29.9988Z" fill="currentColor"/><path d="M2 11.3331C2 6.17863 6.1787 2 11.3333 2V20.6663C6.1787 20.6663 2 16.4876 2 11.3331Z" fill="currentColor"/><path d="M11.3331 11.3331H29.9997V2H20.6664C15.5117 2 11.3331 6.17863 11.3331 11.3331Z" fill="currentColor"/><path d="M20.6666 20.667H2V30.0001H11.3333C16.488 30.0001 20.6666 25.8215 20.6666 20.667Z" fill="currentColor"/></svg></span>
-        <span class="int-name">Snapshot</span>
-        <span class="int-tag">community</span>
-      </div>
-      <p class="int-desc">A voting platform for DAOs, DeFi protocols, and NFT communities, with flexible governance and no gas fees. Use <code>.gwei</code> names across proposals, votes, delegates, and transactions.</p>
-      <div class="int-links">
-        <a href="https://snapshot.box/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/snapshot-labs/stamp/pull/480" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">POIDH</span>
-        <span class="int-tag">community</span>
-      </div>
-      <p class="int-desc">A social bounty platform with collectible NFTs on Arbitrum, Base, and Degen Chain. It displays <code>.gwei</code> names across profiles, leaderboards, bounties, and shared posts.</p>
-      <div class="int-links">
-        <a href="https://poidh.xyz/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/picsoritdidnthappen/poidh-app" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M16 5 L29 28 H3 Z" fill="#16b364" stroke="#16b364" stroke-width="2.5" stroke-linejoin="round"/></svg></span>
-        <span class="int-name">holders.vote</span>
-        <span class="int-tag">community</span>
-      </div>
-      <p class="int-desc">A signal-boosting consensus finding tool for token weighted communities to share information and prioritize.  Uses <code>.gwei</code> names as moderated and contextualized namespaces as well as user identity.</p>
-      <div class="int-links">
-        <a href="https://holders.vote/" target="_blank" rel="noopener">Website ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">ENS to GNS Migrator</span>
-        <span class="int-tag">name management</span>
-      </div>
-      <p class="int-desc">Register a <code>.gwei</code> name and migrate your ENS identity across to it, including your website, avatar, and primary name records.</p>
-      <div class="int-links">
-        <a href="https://gwei.eth.sh/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/swiss-knife-xyz/swiss-knife" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAB+klEQVR4nOyZsariQBSGz2qEmCIElGCzRSwsrPQJtPIBfADBQiuxsPQZbCxsUlj7DlZ2VqbQKghiERVEImYaMY7L3jRLbiZ7F4uz4Z6vCjN/TuZTB+YY6fV6QZJJYS/gXUgAGxLAhgSwIQFsSAAbEsCGBLAhAWxIABsSwEb6PLTf7xljohsKhUIulwMAzrlt28/nU5Q0DENRFAC43+/b7VYUS6fTpVIplfr9UbquezgcRMlsNlssFkODP0J/qyyXy3a7LSoBAKqqLhYLWZYnk4lpmvl8PjLGGDMMYzabAUC327UsS1XVyOTlcmm1WoPBgHNer9fP53PM08fjcaPR+HMk/A0cj8eY+wHgdrsxxmRZPp1OnU6n1+tFxlarVb/fD64dxxmNRrVaLTJpmqZt2wDg+3786iOX99YekKSIX2Dk1NeT/0riNzEJYEMC2JAANiSADQlgQwLYvCXAORdNhRqdmGTM1FcIH2WDbisG5YMgOZ1O5/N5ZMx1XV3Xg2td14fDoaj1cRyn2WwG52pN067Xa8zTPxcJd2QAsF6vPc8Tlfj5AQA8Hg/LsnzfFyXL5bKmaQDged5msxG9UZckqVqtZjKZoF/Z7XaigoqiVCqVvwski++9if8HSAAbEsCGBLAhAWxIABsSwIYEsCEBbEgAm8QL/AoAAP//9j2mZCZIw+sAAAAASUVORK5CYII=" alt="" width="18" height="18"></span>
-        <span class="int-name">ethereum-names</span>
-        <span class="int-tag">developer</span>
-      </div>
-      <p class="int-desc">A developer library with one clean API to resolve Ethereum names across ENS, the Gwei Name Service, and the Wei Name Service, powered by viem. Point it at a <code>.gwei</code> name or an address and it resolves in a single call.</p>
-      <div class="int-links">
-        <a href="https://www.npmjs.com/package/@1001-digital/ethereum-names" target="_blank" rel="noopener">npm ↗</a>
-        <a href="https://github.com/1001-digital/ethereum-names" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><clipPath id="cleaveClip"><circle cx="16" cy="16" r="15"/></clipPath><g clip-path="url(#cleaveClip)" transform="rotate(18 16 16)"><rect x="-29" y="-29" width="44.25" height="90" fill="#16a34a"/><rect x="16.75" y="-29" width="45" height="90" fill="#f97316"/></g></svg></span>
-        <span class="int-name">Cleave</span>
-        <span class="int-tag">defi</span>
-      </div>
-      <p class="int-desc">A decentralized options exchange on Ethereum. Write and trade options that can't be liquidated, with no margin calls or forced closes. It resolves addresses to their <code>.gwei</code> name, preferring it over <code>.eth</code> when both are set.</p>
-      <div class="int-links">
-        <a href="https://cleave.market/" target="_blank" rel="noopener">Website ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 828 828"><path fill-rule="evenodd" clip-rule="evenodd" d="M826 258.627C826 248.845 826.004 239.062 825.944 229.279C825.895 221.038 825.8 212.799 825.576 204.562C825.092 186.609 824.033 168.502 820.84 150.749C817.602 132.741 812.314 115.98 803.981 99.6166C795.789 83.5337 785.088 68.8168 772.32 56.0578C759.555 43.2989 744.835 32.6049 728.746 24.4179C712.366 16.0829 695.587 10.797 677.558 7.55998C659.803 4.37199 641.691 3.315 623.738 2.83C615.495 2.607 607.253 2.513 599.008 2.462C589.22 2.402 579.432 2.407 569.644 2.407L455.997 2H370.997L259.361 2.407C249.554 2.407 239.747 2.402 229.94 2.462C221.678 2.513 213.42 2.607 205.162 2.83C187.167 3.315 169.014 4.37299 151.217 7.56498C133.164 10.801 116.36 16.0849 99.9583 24.4139C83.8354 32.6019 69.0825 43.2969 56.2906 56.0578C43.5007 68.8158 32.7798 83.5297 24.5729 99.6096C16.2169 115.981 10.919 132.752 7.67299 150.77C4.47701 168.516 3.41802 186.617 2.93102 204.562C2.70903 212.8 2.61303 221.039 2.56303 229.279C2.50303 239.063 2.00003 251.216 2.00003 260.999V456.998L2.50803 569.427C2.50803 579.223 2.50403 589.019 2.56303 598.815C2.61303 607.067 2.70903 615.317 2.93202 623.566C3.41802 641.542 4.47901 659.675 7.67799 677.452C10.923 695.484 16.2199 712.269 24.5689 728.653C32.7768 744.759 43.4997 759.495 56.2906 772.272C69.0815 785.049 83.8304 795.757 99.9503 803.956C116.362 812.302 133.174 817.595 151.238 820.836C169.027 824.029 187.174 825.088 205.162 825.573C213.42 825.796 221.679 825.891 229.941 825.941C239.748 826.001 249.554 825.997 259.361 825.997L569.644 825.996C579.432 825.996 589.22 826.001 599.008 825.941C607.253 825.891 615.495 825.796 623.738 825.573C641.698 825.087 659.816 824.027 677.579 820.832C695.597 817.591 712.368 812.3 728.739 803.959C744.831 795.761 759.554 785.051 772.32 772.272C785.086 759.497 795.786 744.763 803.978 728.66C812.316 712.268 817.604 695.475 820.844 677.431C824.034 659.661 825.092 641.535 825.577 623.566C825.8 615.316 825.895 607.066 825.944 598.815C826.005 589.019 826 579.223 826 569.427C826 569.427 825.994 458.983 825.994 456.998V370.999C825.994 369.533 826 258.627 826 258.627Z" fill="#1C1E26" stroke="#282D36" stroke-width="4"/><path d="M412.364 317.451V374.304H228V317.451H412.364ZM274.091 629.327V288.01C274.091 267.028 278.423 249.567 287.086 235.624C295.885 221.682 307.661 211.259 322.416 204.355C337.17 197.452 353.549 194 371.553 194C384.277 194 395.579 195.015 405.461 197.046C415.342 199.076 422.652 200.904 427.39 202.528L412.771 259.38C409.657 258.433 405.732 257.485 400.994 256.538C396.256 255.455 390.977 254.913 385.156 254.913C371.485 254.913 361.806 258.23 356.121 264.863C350.571 271.36 347.796 280.7 347.796 292.883V629.327H274.091Z" fill="white"/><path d="M530.33 633.794C518.012 633.794 507.454 629.463 498.655 620.799C489.857 612.136 485.525 601.578 485.66 589.124C485.525 576.942 489.857 566.519 498.655 557.856C507.454 549.192 518.012 544.861 530.33 544.861C542.242 544.861 552.598 549.192 561.396 557.856C570.33 566.519 574.865 576.942 575 589.124C574.865 597.382 572.699 604.894 568.503 611.662C564.442 618.431 559.027 623.845 552.259 627.906C545.626 631.831 538.317 633.794 530.33 633.794Z" fill="#00E9C4"/><path d="M498.655 398.263C507.454 406.926 518.012 411.257 530.33 411.257C538.317 411.257 545.626 409.227 552.259 405.166C559.027 401.105 564.442 395.691 568.503 388.923C572.699 382.154 574.865 374.709 575 366.588C574.865 354.405 570.33 343.982 561.396 335.319C552.598 326.52 542.242 322.121 530.33 322.121C518.012 322.121 507.454 326.52 498.655 335.319C489.857 343.982 485.525 354.405 485.66 366.588C485.525 378.906 489.857 389.464 498.655 398.263Z" fill="#FFB111"/></svg></span>
-        <span class="int-name">Freedom</span>
-        <span class="int-tag">web access</span>
-      </div>
-      <p class="int-desc">A minimalist desktop browser for Swarm and IPFS. Type a <code>.gwei</code> (and <code>.eth</code>) name, hash, or CID straight into the bar and connect to peers directly. No public gateway, no DNS in the middle.</p>
-      <div class="int-links">
-        <a href="https://freedombrowser.eth.limo/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/solardev-xyz/freedom-browser" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">Kao</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">A cute, secure desktop wallet for Ethereum, built in pure Rust with no telemetry. Resolve, register, and manage <code>.gwei</code> names from its Names app, all verified by a Helios light client.</p>
-      <div class="int-links">
-        <a href="https://kaowallet.com/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://github.com/kaowallet/kao/releases/latest" target="_blank" rel="noopener">Download ↗</a>
-        <a href="https://github.com/kaowallet/kao" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><img src="data:image/png;base64,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" alt="" width="18" height="18"></span>
-        <span class="int-name">WalletChan</span>
-        <span class="int-tag">wallet</span>
-      </div>
-      <p class="int-desc">A browser wallet extension for using your Bankr address across every dapp, like MetaMask. Send to <code>.gwei</code> (and <code>.eth</code>) names, and look them up in its built-in name browser.</p>
-      <div class="int-links">
-        <a href="https://walletchan.com/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://chromewebstore.google.com/detail/walletchan/kofbkhbkfhiollbhjkbebajngppmpbgc" target="_blank" rel="noopener">Chrome Web Store ↗</a>
-        <a href="https://github.com/apoorvlathey/walletchan" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <div class="int-card">
-      <div class="int-head">
-        <span class="int-logo" aria-hidden="true"><svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><path d="M16 4 L8 17 L16 13 L24 17 Z" fill="#10b981"/><path d="M16 28 L8 19 L16 15 L24 19 Z" fill="#059669"/></svg></span>
-        <span class="int-name">dapp3</span>
-        <span class="int-tag">web access</span>
-      </div>
-      <p class="int-desc">A browser extension for opening <code>.gwei</code> (and <code>.eth</code>) sites like any other website, verified locally. It resolves names against Ethereum with a Helios light client and serves them from your own IPFS node. No public gateway, no hijackable DNS, nothing to trust in the middle.</p>
-      <div class="int-links">
-        <a href="https://dapp3.eth.sh/" target="_blank" rel="noopener">Website ↗</a>
-        <a href="https://chromewebstore.google.com/detail/dapp3eth/gagojfdpbmahciaapdcejmmaeehgpmib" target="_blank" rel="noopener">Chrome Web Store ↗</a>
-        <a href="https://github.com/apoorvlathey/dapp3" target="_blank" rel="noopener">GitHub ↗</a>
-      </div>
-    </div>
-    <!-- END GENERATED INTEGRATIONS -->
-  </div>
+  <div class="int-list" id="integrationList"></div>
 </div>
+
+<script type="application/json" id="integrationData">
+[
+  {
+    "name": "zSwap",
+    "category": "defi",
+    "description": "An entirely onchain exchange for swaps, orders, token launches, and payments. Send ETH or tokens to `.gwei` names with shareable links and optional reversible timelocks.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgNDAwIDQwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjQwMCIgZmlsbD0iIzAwMCIvPjxwYXRoIGQ9Ik0tNjAtMjBINDYwVjkwTDgwIDMxMEg0NjBWNDIwSC02MFYzMTBMMzIwIDkwSC02MFoiIGZpbGw9IiNmZmYiLz48L3N2Zz4K",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://zswap.wei.limo/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/z-fi/zFi"
+      }
+    ]
+  },
+  {
+    "name": "Kohaku CLI",
+    "category": "wallet",
+    "description": "A terminal wallet for public and private Ethereum balances. Resolve, register, renew, transfer, and manage `.gwei` names from the command line.",
+    "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAHdElNRQfpCwQWDDMO47d0AAARfUlEQVRo3s2ZeZxU1ZXHv+e+V+/V0lXddPUCTXfT0HQ3Cs2+2SCIAuIWcEtMZjQmGs3MZJkxk08mMRpjNIszSVxiRvNJPo5Ro/MxLolR45KIRFBARCASoNkaaGh6qV6qu9b37p0/CjqguMRoMueP+tSn6r53z+/8zv3dc88VPmAb3ziDNuXgGMOQKIrwR+aRxb5hqdbmZI0pVkjSUvKqLfw07ZSsG53poX3H+vc1n/1BOl/RNJtGL8U+FUBhih30JSnNlQbTHI2E3MrSEiLhIKl0loNdiWmZbLYllOtbnlDWrvc75wcGoKxpNoLhqUCMEHpKCm42hrMa6karCxfPY0nLNOqqRxIJubS1d3LFdbeypXVvLKDEMn/FvB8IgPKm2QhwWByC+Iuz2vyoOBpp+sxFy/jUBUuxLYt0JkNprIhwOMRdDz3Jn3bv9wMiP0yPmLojnniNzN8DwOkNk9moQlhoOiRAEH9JTpufjqmqrP3eNZ+irrqSXzzxe8JBl3NPm4PrOnQl+njkuTV4nvdKkSX/4/S+jo+8bx/U+3loTONMmNDCehViUBQdVoQQel7ecGdlfETtN/754xzq7uWLN99FRbyEOVNOIplKY4whlc6Q6E8isDqJ1Ysx9CmbmsZZ7wvAXwR9csM0Wi0X2xhSoogYXZQTafGQ5T6ca6C2NBqhtqKU1r3tKBHKy0bQN5RmbPUoFs2ZQmlxET+891ESvQObbOE7jjHPDInqKzIaX4Qpfpo1rZs+eABlTbMZr3NstIKEjQmmRM7JI1cD84qNDo/VORp1llo/R6nOUyRggBRCQmwOisV+bA4FghxSNskC+XkLXrYwt0eNfmJQVC4jNlU6y8Ht701W3xOAWNMcFNAnFiH0xLzhWi1yfp3OB5d6SRZ4Q9SZPBGjURiEgvNHJzCAQcgDA2KxTwV41QqxyoqwzXLJIWkbHghgbsoibdU6z5Aourev++sAzC2vYHN8HMoY6kxetSrnwpw2Nxe5gYYV2X4+nu6m2ngIoI9x+oSmNSiFaI1SgkHoE8XLVpiHA8VsskJoWOdg/jWNernCePhAz7uAsN7pz0RtMwK4GOeQsq/J++a/xteNrvrep1Zw0baNxPoSaBHeTcfFtin56IWUXn4ZJpclu3cfRoQghkadZaGfosT4tFru6KSoRS5mW7+yd5UYn0hZNUM97X85gFjTHBAIGuMMiro2r831c6dMCN/9zS+weOYkBp58mtzhTkS9i5BpTWDUKKq+exORU1tw6+tJ/u4F9OAQSIGJIIYpOsMEnWWbFRzRJfYCF72pX6y9ye1rebBxBj09h947gLKm2WiEKuOpw8r+Uh65btGcqc7dN3yB5sY6jONiRaNkd+1GD6Ugnz8S6hNnpAqHKF5+HlYshlVSTPr1TWR3tL4FfK3JM8nPstkKlXSJPTOEWXljWXVXr9jo7gPvDcCMhmmUGZ9dymVQ1Efzhv+cFguGb12xgKbGsRApAsBtbCC2ZDGRlrmI65Jt3Qm+f0IQEgxSvOIj2PE4yrYxmSxDL64qrItjxhuESuMxTudZZ4cr+sWqDRvzlBKy0XgV6ROk0lsA9FfUcUjZOJiTc8hPaow36vrBA1SvXsXAylXY8VLc8fWFyEaLcMeNJTLvFPxEL5nNWzBaF5TBGNAaYwzF555N8YrzhiPu1NaQ7+ggu3XbW5gzCKONRwTNy3a4MScqkVHOmlKd58xojK193W8PoLFxBikUIYyTEnVLELPoS9lu5nuD+L7G6+om/eprhJonEqitGXZSAgFCkydBIADGoFwXVRQhMLqKkosvpOxfrsaKxf7MiOsSmjYVP9FDbucujOchxzInwlidY69yZIdymkLGfy4lqqvNcsm+iYXjACTL68iJ4IssyyPXn5NPOpfn+4brDVEKP5kEIHrGouHI+b6PH3AYsXA+0bPOLET8ghWMuORiYkvOwIpGERFEqYKjAioSIdIyl0BtDSaTwWRzSCCAKIXJ53EEKo3Hi3akJCUq95VM9zOv2SFSbwJwXMIWN83BgmC/qIfixl9+R/ogJ+ss/jFjjOcRXXIG1Xfehtg2IpBOZ3noyZVUVcZZemqhptHJJF6iF7+nB7+3D53JIEqholGskmICVVVYpSMKQRkcxDvciclm8RIJun54B+nXNmKU4ttuBb8MxPYHMUuA7SO1x54drw77M1yNVjfNoksEgakaFs73hmh8k/NQ0PTIvFMQxzmS4xAOB2mZPpHP3fRjuts7WNK2ncGX1+J1d6OTg5hcDqP1MIvByc1UfPnfCJfOwPg+KhzGGTe2INuWjZ/o5eCWP2L5Hsu8JL+1i2oyos7KI9v3hEcDJwBQanwOKIeA0UuDmJJF/hA25vhSV2uiSxdTvPwjhfwf/tlw0vhals6bwbduvYeK/r1UZ1OYozJ5NL+1JtIyl1HfvI5gQwPGaIwGbczw+wwe7vh6VLQI3dvHBJ2loVCDnVlqvLt0uiPTd0xAh4V4nwQYob2QD6eO0nkm+Fn0cc4bis5YxMjrryVQOuI4AEdt0exm+myH9TgoSxUcL7CK0hpvTB2DV1zJpoxm1bpNvLplB/s7uvA8H9uyCutDG6x4HLusDK01UaOZ6qcBmtOiarJvkulhBnKFPyo0jB8vPqXaw8gROTSG6LKljLrh66QiRSQOd1MeLzlOOYwxjCwrJVYcY3cigEGGo9MlFi86MZ7NhGj/zs8YHErh+1oHbEuVFkeZOmEc5y9uYen8mRRHI9hlcUovv5TOW74PfX2cpLMEoFxDo0ZaLxg3kUd3v3E8AL+woivFmNLpS0+jeM8WBjdtQRyH6BmLGHndV+mxAnz+az+gK9HP/bd8meqR5QX6j5UE+bMytKkAz6sIzwSK2Gm5+Cm/Xw123ici6wVyKajo7U/OaG07ePoTL66rXnLKNG78/KVMahxLycUXYldW0n3zdxnVdoig0U5a1HgP6LDstzJgCh8llojbOH8O1dd8muSGjVixGKGpU3BGFPPq82t4ctV65kxuwnWd44o4JYo9BzpI9A5wSAX4tlPGGidKPh5HGwgkB/EyuaAoFXeFP2SRPT4wy0/LH+3gpFze+8ETK9cuPtiV4N5vX0PTuFqiixdhEgmiX/8WQTQp1CgjCveYoFkANU2zGBQLYLJY1iUfO2uBap4xGaepEWdMLeIEMNoQi4SZfnI9n7loGTWjKjBHXqRESA6luPHHv2DD1p3sd8LsL4njh8JcvKSFa6/6GOef0UIo6Ng79x9qTmXzM13hBQv6MiIkxeoUkfK4mDP7Ojo5nM6xbP4MLKWw43E6Vr/CY4kMg8p63Yh62kaTOFLcKQAxhrwoDEwJOgErXhLDaI3xPIzvgzGFHC8v5ZKzT6NxbM2w85alSA6lufnuh3jsd2tQIti2xZcvW8ETP7qe+TMmsWP3AUZXlHLHtf/ELdd8mqJIeF7O8B8lxrdzCL4K4CHV43WOy/0Bnl65lrWbt6EE7MoKSq++EgmHj1GqN6lQShQjdc72tJ5aVRGnqW70sG4PD1SqcHA5UuvYloXn+6x9fRtXfeM2br//19r3/Mds4bpMNtf+s8eeY8+BDpafcQqfvGAp4aBLNpvnshWLWX76XDytz+8Xa1JGFDE/GwamlxqPqSZLqn+AZ1e/hjGF0x0NDfihEMqYITDU6vzxa0CAep3zuyTY2z84xI62dkZVxrFRGGNIZ7Mc6Ogm5DqIEroTA2zatptnVm9g5frNdPb0H7CV/Cgs5r8HxB4I4r+4e/+hm6+64Y5TH31uNZecvZDpExtQVqGUOHXGRB586sVyrfVkLfK6hbEUJrRXOTxix0iJYuuufWRzeUKuS2dPH0PpDCLSIUaTOqaZYgP0iMVaK2wCmHs6e/oWf+b626o/cc4iTpvdzOjKMmJFYR56ciUPP/MSntb0Jwe9RP9gKp/P77GU+m3QkgfSVmSL4w9R52c5oAJ/CCsuyqTSVzz87EuX/WbV+sbRFXFVXRknHAyyt/0wxpiUCN0An833JG93yl/aptzZ25Rr8H2/b2DQzuc9wkGX1r3tZLK5vC3ssoFyvOOEj+bG6XSKxWErQlBnFuS0+XdgfiQcGhErCjNtwjg+fvZC/rDhDe55/Hm8fP63jnCLJWwaVKGEqzOUGJ8cQhGG/RIgjCYlNhHj1eQNCz2t52ljxmFwlJLOgKV+5RrziIasJ4KCKg+uFPCynv7kwlnNjb+68xsEXYerrr+Nn//qdwfDtlpkYEd62yvHM7Blx2uMaJpDpT9Ej9irisWsT4tMyqTTM1JDqZrfdHS1rN649dSFM5utSfU1vL5j76keDArmRkdnE1GjWZoZ4L627fQeeXG4aTZxk6VHrP2+yP06WHp/RS7halDFxs/txvKPCnFGLMLGP5hD3RhEnw9UVVWUEgq6tB/uZu3m7Shhs2v0PoOQPtFO3Lt9LfWNM+gR8CFtYL0var22hBi6JJkcuuTXv3/lHx3HHlcYggHyYOjevo773lRWHG2JnNIwhe0qSCjXQw7JAiTFImJ0oXQ/su3ZxsQc9Pl5uNGyraL50yfiOAFWrtvMnvbD2Eo93SsqQ3DkiUsJgF07NgAwAPzD+JNZrcLsVQ4+ps9T1l0x4/8i63mVARE/YvSBAVG53Lt0J19u3URLwxQ2qSA2kBYhV7Ocon2PlwvUK2PqLe1NHNB6geMEZgZt2x1dEWdJy3R6+5I88JsXyOXze8KWespCU5HaR9vbATjWHti5dfh7rGkW43WePSowICIDAN6RWuckneFP7wCgqmkWa5RL0HhEjA5kkRar7fGLB7VZIIoxIdeJxqMRmTC2hsYxo1i5bgufvvBM6sdUcd/jz7N641ZspbYWG7/NR2g75izwjgCOtUPb1/PmpsbRPHwn50c1zeLsfJJ7HBsFYxOor/m+ubisNFY8p7mJ+dMnMrlpLCPLRtC6t52fPvIM5542h6s/djad3b3c9b9PkcnmCVgqPmRUsJCyx9sHekNzrLWMn8IaK8g9YuNgpme0uSscCs66eOl8rrxoGZObxhII2Pxp1z6e+P0r7Gk/zGcvOYcz588gHAzy1Ivr6Ez00dwwhjd2tsU9JVGB5N8MwGY7SFDnUVCf0ebu8tKSmTd94VI+ce4iXNdBa0Nv3wCDQ2nOO30uDXWjGUgO0dndS21VJS+9tpVzFswi73ls2bEnrESFTtQIfV/3A+9ml46biG2gxPh2zvCVSDg48+YvXsYVFy0jFHQRBKWEeGkx82c1M2XCOFr3tnPd7T9nKJ0llcnS2dPLBUvmEw4GobBfqRP1MD8UBvqloDYZrJnacGFJtIg/7drHV39wDyPLRlBfM4ry0mKUUnT39vPShjd46OlVlI+IUVUZp7Onj6qKONNOrufBp14A8IxI/kRzfSgAFJBF4aBPF5HSQ12J3u/f+1h/YRdWMdcNhEOuo0SETDbnpTLZLuPr4oYxVeGg69Dd28/pc6bgOgEOdiYA+sSY5Inm+tDWgMJgwXOC6VawwbJUlwLHQKWfy9cms7lKA74S9odE9qSEO3N5b57n+ZQUhRlXPZLOnj5a2w6iRHZF0f15hMG/FQAtFp7x1/uw/tizm4GdWmS1d+SwL0DKCiL+0K5Ef3LeUDpDXc0oArbNo8+9xL6OLiyl1hwS5d07tI9P/i0APL6rcOA+mrRvd4VqgPzU8yDTgxJ2dPcO0NM7QEW8hKF0hgefXEk6kz0cstSzFppvhiqB47vUH4oK/SU2ZegAFgZL5MBgKk133wCWZfH482t4ds1GbKUeq9TeGyGj2X2k1Pl/BaBdBQryLvhaa+N7Hi+8vJEb7ryfVDqzzRFu7VC2773NbdiHtgbeq5Ubj27lEDBmoiglv3z2JZ5ds5E97YcPukq+lEJt/1yuh83KZdUJnn//V+QfkAUnzEXgpDzyBCL1GGO01hscJV/NiP18mc4hQNfbXPb93RnwECzMNKBGjGkVzMOukp+kkLZyncND6N2+9m2f/z8K4LaCufEOCAAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNS0xMS0wNFQyMjoxMjozOSswMDowMH7/WoAAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjUtMTEtMDRUMjI6MTI6MzkrMDA6MDAPouI8AAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI1LTExLTA0VDIyOjEyOjUxKzAwOjAwrTeEAwAAAABJRU5ErkJggg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://tatsumaki.gwei.domains/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/kassandraoftroy/kohaku-cli"
+      }
+    ]
+  },
+  {
+    "name": "micro-eth-signer",
+    "category": "developer",
+    "description": "A minimal, privacy-focused Ethereum library for signing and RPC data. Resolve and reverse-resolve `.gwei` names, read records, and check availability, expiries, and fees.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMzIgMzIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzE3MTcxNyIvPjxwYXRoIGQ9Ik05IDEwdjEwYTQgNCAwIDAgMCA4IDBWMTBtMCAxMGE0IDQgMCAwIDAgNCA0aDJNOSAyMHY2IiBmaWxsPSJub25lIiBzdHJva2U9IiNmNWY1ZjUiIHN0cm9rZS13aWR0aD0iMi4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48L3N2Zz4K",
+    "links": [
+      {
+        "label": "npm",
+        "url": "https://www.npmjs.com/package/micro-eth-signer"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/paulmillr/micro-eth-signer"
+      }
+    ]
+  },
+  {
+    "name": "Rebloom",
+    "category": "name management",
+    "description": "A minimal web app for renewing Ethereum names. Renew `.gwei` names for one or more years in a single transaction.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMzIgMzIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iI2Y0ZjBlNiIvPjxnIGZpbGw9IiNkODVkNDUiPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTAiIHI9IjUiLz48Y2lyY2xlIGN4PSIyMiIgY3k9IjE2IiByPSI1Ii8+PGNpcmNsZSBjeD0iMTYiIGN5PSIyMiIgcj0iNSIvPjxjaXJjbGUgY3g9IjEwIiBjeT0iMTYiIHI9IjUiLz48L2c+PGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iMy41IiBmaWxsPSIjZjJjMTRlIi8+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://bafybeigmnntcx7srljk5rsjbvep573cjob7kbe3u7vnepf5wat644wr3uy.ipfs.zoltu.io/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/DarkFlorist/rebloom"
+      }
+    ]
+  },
+  {
+    "name": "multisig.software",
+    "category": "wallet",
+    "description": "A multichain multisig wallet with an embedded timelock. Use `.gwei` names for vaults, owners, and transaction recipients.",
+    "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAADLElEQVR4nLRWvW4TQRCe2dv4Eie2MShJAYKUaSgiUVCBBC8ABUhBQjT8FFQIhHgEhEJJAaJDChIU8AIgkYqONiVBgJIQ4dhxHP/c7fKNN744du4ugP3JieZ29mdmZ77Z0advrI5mmDpgJmttEJKnSCm2lvogWqXIY+5XWrJhR7vTFL3OjFBGk/KIKTpGRGvaG0FgOYzl5I4Nigy0AUGQLaDzMH9XiyWhtfWGs5W0MVRrOJMtMx2I0OCkGC22C2GDmEh235Ljk9523cIDrtWtG0pAaJO0UJqgd/D7eoj/KjT25LQ3lmEaKLAhti3mlW406dtaSIMGIrxZNbhVhUOG4QEy01NcrlpFwwHszWXZHyGNdCxtWZez3fj8ctoJD59tLn1pHLjLuTn/yd0jTj57c61bhQ1x89lRZK3iwrji+Bt6MJ8f8w9QYxCquFW482MFhfxUpYr5uRGCbnGYOqruXJ7oH8cgVHGr4MFOwyLAEuRRn5FLCbhyITt7SneP4BODCUv8DOEAWC8eZH1OziKUikfXC6ozBQI+vcT8aLaEyeIB4rBRNv1BjuAiPDujr17M7jk0Iw59igk+gCoEJosHqUxeWKy4WnL70sRUUeHnQoLBp4uVuFV7TG61aGvHJlSa9ZJ5/q56bz4HX+9fy8MQCBh/8b4KFaVBFXIqN8bJPH77sbb8VYrZ+TkfuQ8Bn28+1BKWwOKtWjvIdAgYS49flaNyCwGfJrG+RkyWLALlEoLssLwSwA+KHFoJkuc7JnseCw9OTHp8iFqHSKz/NvhBSJ0cMVnDgzITmJzMNTGqYRdeV5xAaYAHeFAli/DXaFqXiKlYik/8Hjgm79aiVCb/AyIma8dkGjTArMq2vGh85tbqdNH7VTKpifRXwJVMFhUonM7k/4TOj3MQ2HpzwEc4HpCUXsXFnBpS2yJvMrKoVKGBI3qThQfjPv/YCHseEIQF1SbuVYEWFUnrfe1iN9CLag/J2mEy2hhQQzrcKGOV9L/oXKXxbJ8kbe3+fA7bBc+2e3KUnW6tZWmzEVp5mGSalQcEPTOOJeqNB9bDlrCthRE9OSdWGdH2d/ytgP4AAAD///s8/rUAAAAGSURBVAMAFW+pecQyjuYAAAAASUVORK5CYII=",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://www.multisig.software/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/src-company/multisig"
+      }
+    ]
+  },
+  {
+    "name": "Ambire",
+    "category": "wallet",
+    "description": "A self-custodial smart wallet for Ethereum and EVM networks. Resolve `.gwei` names when sending and see GNS identities throughout the wallet.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZmlsbD0iIzYwMDBmZiIgZD0iTTkuNTYzIDQuNTc1YS4yNS4yNSAwIDAgMSAuNDQ0LjIyTDguNzg0IDguMzAybC43MTQgMS4zODctMS42MiAyLjE5My0xLjI2Ni43MDNhLjI1MS4yNTEgMCAwIDEtLjM0NC0uMTA2bC0uNzY2LTEuNTMyYS4yNS4yNSAwIDAgMSAuMDE1LS4yNDlsNC4wNDUtNi4xMjNaTTE1Ljc4MyA5LjE3MWEuMjUuMjUgMCAwIDEgLjI4Mi4xMzhsMi42MjQgNS41NzZhLjI1LjI1IDAgMCAxLS4wNTMuMjg2bC02Ljk5NyA2Ljc3OGEuMjUuMjUgMCAwIDEtLjQyNC0uMTh2LTQuNjA0bDEuMjYyLTIuOTM0IDMuMTExLTIuOTU2di0xLjg2YS4yNS4yNSAwIDAgMSAuMTk1LS4yNDRaIi8+PHBhdGggZmlsbD0iIzYwMDBmZiIgc3Ryb2tlPSIjNjAwMGZmIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIHN0cm9rZS13aWR0aD0iLjUiIGQ9Im0xMS40NjUgNy40NDcuMDMzLTUuNDY3IDIuOTIgNy4xMDdMOS43MTUgMjAuMDJsLTQuNDI4LTQuMjEgNi4xNzctOC4zNjNaIi8+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://www.ambire.com/"
+      },
+      {
+        "label": "Chrome Web Store",
+        "url": "https://chromewebstore.google.com/detail/ambire-web3-wallet/ehgjhhccekdedpbkifaojjaefeohnoea"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/AmbireTech/extension"
+      }
+    ]
+  },
+  {
+    "name": "MetaMask Snap",
+    "category": "wallet",
+    "description": "Add GNS resolution to MetaMask. Send to `.gwei` names and reverse-resolve wallet addresses to forward-confirmed primary names on Ethereum mainnet and Sepolia.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyBmaWxsPSJub25lIiB2aWV3Qm94PSIwIDAgMTAwMCAxMDAwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxnIGZpbGw9IiNmZjVjMTYiPjxwYXRoIGQ9Im04NzguMDIxIDg4Ni41NzktMTg3LjM5Ny01NS4yMi0xNDEuMzI0IDgzLjYwMS05OC42LS4wNC0xNDEuNDA2LTgzLjU2MS0xODcuMzE1IDU1LjIyLTU2Ljk3OS0xOTAuMzQ2IDU2Ljk3OS0yMTEuMjU2LTU2Ljk3OS0xNzguNjExIDU2Ljk3OS0yMjEuMzY2IDI5Mi42OTYgMTczLjA0OWgxNzAuNjVsMjkyLjY5Ni0xNzMuMDQ5IDU2Ljk3OSAyMjEuMzY2LTU2Ljk3OSAxNzguNjExIDU2Ljk3OSAyMTEuMjU2eiIvPjxwYXRoIGQ9Im0xMjIuMDIgODUgMjkyLjY5NSAxNzMuMTcxLTExLjY0MSAxMTguODQ0eiIvPjxwYXRoIGQ9Im0zMDkuMzM1IDY5Ni4zMTYgMTI4Ljc4NSA5Ny4wODItMTI4Ljc4NSAzNy45NjN6Ii8+PHBhdGggZD0ibTQyNy44MjcgNTM1LjgxMi0yNC43NTMtMTU4LjcxNi0xNTguNDM4IDEwNy45MjItLjA4MS0uMDQxdi4wODFsLjQ5IDExMS4wODkgNjQuMjQ5LTYwLjMzNWguMDQxeiIvPjxwYXRoIGQ9Im04NzguMDIxIDg1LTI5Mi42OTYgMTczLjE3MSAxMS42IDExOC44NDR6Ii8+PHBhdGggZD0ibTY5MC43MDUgNjk2LjMxNi0xMjguNzg0IDk3LjA4MiAxMjguNzg0IDM3Ljk2M3oiLz48cGF0aCBkPSJtNzU1LjQ0NSA0ODUuMDU4aC4wNDEtLjA0MXYtLjA4MWwtLjA0MS4wNDEtMTU4LjQzOC0xMDcuOTIyLTI0Ljc1MiAxNTguNzE2aDExOC40OTFsNjQuMjkgNjAuMzM1eiIvPjwvZz48cGF0aCBkPSJtMzA5LjI5NCA4MzEuMzU3LTE4Ny4zMTUgNTUuMjItNTYuOTc5LTE5MC4yNjVoMjQ0LjI5NHoiIGZpbGw9IiNlMzQ4MDciLz48cGF0aCBkPSJtNDI3Ljc4NiA1MzUuNzcgMzUuNzggMjI5LjQ0Ni00OS41ODYtMTI3LjU3NC0xNjkuMDE3LTQxLjQ5NiA2NC4yOTEtNjAuMzc2aDExOC40OTF6IiBmaWxsPSIjZTM0ODA3Ii8+PHBhdGggZD0ibTY5MC43MDUgODMxLjM1NyAxODcuMzE2IDU1LjIyIDU2Ljk3OC0xOTAuMjY1aC0yNDQuMjk0eiIgZmlsbD0iI2UzNDgwNyIvPjxwYXRoIGQ9Im01NzIuMjE0IDUzNS43Ny0zNS43OCAyMjkuNDQ2IDQ5LjU4Ni0xMjcuNTc0IDE2OS4wMTYtNDEuNDk2LTY0LjMzMS02MC4zNzZ6IiBmaWxsPSIjZTM0ODA3Ii8+PHBhdGggZD0ibTY1IDY5Ni4yMzMgNTYuOTc5LTIxMS4yNTZoMTIyLjUzNWwuNDQ5IDExMS4xMjkgMTY5LjAxNyA0MS40OTYgNDkuNTg2IDEyNy41NzQtMjUuNDg3IDI4LjA5Ny0xMjguNzg1LTk3LjA4MWgtMjQ0LjI5NHoiIGZpbGw9IiNmZjhkNWQiLz48cGF0aCBkPSJtOTM1IDY5Ni4yMzMtNTYuOTc5LTIxMS4yNTZoLTEyMi41MzVsLS40NSAxMTEuMTI5LTE2OS4wMTYgNDEuNDk2LTQ5LjU4NiAxMjcuNTc0IDI1LjQ4NyAyOC4wOTcgMTI4Ljc4NC05Ny4wODFoMjQ0LjI5NXoiIGZpbGw9IiNmZjhkNWQiLz48cGF0aCBkPSJtNTg1LjMyNSAyNTguMDQ5aC04NS4zMjUtODUuMzI1bC0xMS42IDExOC44NDQgNjAuNDkxIDM4OC4xNjJoNzIuODY4bDYwLjUzMi0zODguMTYyeiIgZmlsbD0iI2ZmOGQ1ZCIvPjxnIGZpbGw9IiM2NjE4MDAiPjxwYXRoIGQ9Im0xMjEuOTc5IDg1LTU2Ljk3OSAyMjEuMzY2IDU2Ljk3OSAxNzguNjExaDEyMi41MzVsMTU4LjUyLTEwNy45NjJ6Ii8+PHBhdGggZD0ibTM5Mi4zNzMgNTgxLjg1NWgtNTUuNTA5bC0zMC4yMjUgMjkuMzE1IDEwNy4zODIgMjYuMzUxLTIxLjY0OC01NS43MDd6Ii8+PHBhdGggZD0ibTg3OC4wMjEgODUgNTYuOTc5IDIyMS4zNjYtNTYuOTc5IDE3OC42MTFoLTEyMi41MzVsLTE1OC41Mi0xMDcuOTYyeiIvPjxwYXRoIGQ9Im02MDcuNzA5IDU4MS44NTVoNTUuNTlsMzAuMjI1IDI5LjM1Ni0xMDcuNTA0IDI2LjM5MiAyMS42ODktNTUuNzg5eiIvPjxwYXRoIGQ9Im01NDkuMjYgODM5LjIzNiAxMi42NjItNDUuODgxLTI1LjQ4OC0yOC4wOTdoLTcyLjkwOGwtMjUuNDg3IDI4LjA5NyAxMi42NjIgNDUuODgxIi8+PC9nPjxwYXRoIGQ9Im01NDkuMjU5IDgzOS4yMzZ2NzUuNzY1aC05OC41NTl2LTc1Ljc2NXoiIGZpbGw9IiNjMGM0Y2QiLz48cGF0aCBkPSJtMzA5LjMzNSA4MzEuMjc4IDE0MS40NDcgODMuNjgydi03NS43NjRsLTEyLjY2Mi00NS44ODJ6IiBmaWxsPSIjZTdlYmY2Ii8+PHBhdGggZD0ibTY5MC43MDYgODMxLjI3OC0xNDEuNDQ3IDgzLjY4MnYtNzUuNzY0bDEyLjY2Mi00NS44ODJ6IiBmaWxsPSIjZTdlYmY2Ii8+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://snaps.metamask.io/snap/npm/donnoh/gwei-name-service-snap/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/lucadonnoh/gwei-names/tree/main/snap"
+      }
+    ]
+  },
+  {
+    "name": "gwei.site",
+    "category": "web access",
+    "description": "An edge gateway for decentralized websites on IPFS, IPNS, and Swarm. Open any `.gwei` site at `<name>.gwei.site`, or map it to a custom domain.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzA3MGIxNCIvPjxwYXRoIGQ9Ik0xMCAyN1YxMmE2IDYgMCAwIDEgMTIgMHYxNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZThkY2M0IiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+PGNpcmNsZSBjeD0iMTYiIGN5PSIxOCIgcj0iMy40IiBmaWxsPSIjN2JjOWEzIi8+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://gwei.site/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/nipsysdev/gwei-site"
+      }
+    ]
+  },
+  {
+    "name": "request-wallet-sign",
+    "category": "developer",
+    "description": "A local signing bridge that lets AI agents hand transactions to your browser wallet without seeing your private key. Use a `.gwei` name as the recipient and it resolves before you sign.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iNCIgeT0iNyIgd2lkdGg9IjI0IiBoZWlnaHQ9IjE4IiByeD0iMyIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIvPjxwYXRoIGQ9Ik00IDEyaDI0TTIwIDE3aDh2NmgtOGEzIDMgMCAwIDEgMC02WiIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIvPjxjaXJjbGUgY3g9IjIzIiBjeT0iMjAiIHI9IjEiIGZpbGw9ImN1cnJlbnRDb2xvciIvPjwvc3ZnPgo=",
+    "links": [
+      {
+        "label": "npm",
+        "url": "https://www.npmjs.com/package/request-wallet-sign"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/escottalexander/request-wallet-sign"
+      }
+    ]
+  },
+  {
+    "name": "DefiLlama",
+    "category": "defi",
+    "description": "An open DeFi analytics platform for TVL, fees, revenue, and more. Track `.gwei` registration and renewal fees on Ethereum.",
+    "logo": "data:image/png;base64,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",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://defillama.com/fees/gwei-name-service"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/DefiLlama/dimension-adapters/blob/master/fees/gwei-domains.ts"
+      }
+    ]
+  },
+  {
+    "name": "Snapshot",
+    "category": "community",
+    "description": "A voting platform for DAOs, DeFi protocols, and NFT communities, with flexible governance and no gas fees. Use `.gwei` names across proposals, votes, delegates, and transactions.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMzIgMzIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTIwLjY2NjcgMjkuOTk4OFYxMS4zMzI1QzI1LjgyMTMgMTEuMzMyNSAzMCAxNS41MTExIDMwIDIwLjY2NTZDMzAgMjUuODIwMiAyNS44MjEzIDI5Ljk5ODggMjAuNjY2NyAyOS45OTg4WiIgZmlsbD0iY3VycmVudENvbG9yIi8+PHBhdGggZD0iTTIgMTEuMzMzMUMyIDYuMTc4NjMgNi4xNzg3IDIgMTEuMzMzMyAyVjIwLjY2NjNDNi4xNzg3IDIwLjY2NjMgMiAxNi40ODc2IDIgMTEuMzMzMVoiIGZpbGw9ImN1cnJlbnRDb2xvciIvPjxwYXRoIGQ9Ik0xMS4zMzMxIDExLjMzMzFIMjkuOTk5N1YySDIwLjY2NjRDMTUuNTExNyAyIDExLjMzMzEgNi4xNzg2MyAxMS4zMzMxIDExLjMzMzFaIiBmaWxsPSJjdXJyZW50Q29sb3IiLz48cGF0aCBkPSJNMjAuNjY2NiAyMC42NjdIMlYzMC4wMDAxSDExLjMzMzNDMTYuNDg4IDMwLjAwMDEgMjAuNjY2NiAyNS44MjE1IDIwLjY2NjYgMjAuNjY3WiIgZmlsbD0iY3VycmVudENvbG9yIi8+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://snapshot.box/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/snapshot-labs/stamp/pull/480"
+      }
+    ]
+  },
+  {
+    "name": "POIDH",
+    "category": "community",
+    "description": "A social bounty platform with collectible NFTs on Arbitrum, Base, and Degen Chain. It displays `.gwei` names across profiles, leaderboards, bounties, and shared posts.",
+    "logo": "data:image/png;base64,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",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://poidh.xyz/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/picsoritdidnthappen/poidh-app"
+      }
+    ]
+  },
+  {
+    "name": "holders.vote",
+    "category": "community",
+    "description": "A signal-boosting consensus finding tool for token weighted communities to share information and prioritize.  Uses `.gwei` names as moderated and contextualized namespaces as well as user identity.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMzIgMzIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTE2IDUgTDI5IDI4IEgzIFoiIGZpbGw9IiMxNmIzNjQiIHN0cm9rZT0iIzE2YjM2NCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L3N2Zz4K",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://holders.vote/"
+      }
+    ]
+  },
+  {
+    "name": "ENS to GNS Migrator",
+    "category": "name management",
+    "description": "Register a `.gwei` name and migrate your ENS identity across to it, including your website, avatar, and primary name records.",
+    "logo": "data:image/png;base64,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",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://gwei.eth.sh/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/swiss-knife-xyz/swiss-knife"
+      }
+    ]
+  },
+  {
+    "name": "ethereum-names",
+    "category": "developer",
+    "description": "A developer library with one clean API to resolve Ethereum names across ENS, the Gwei Name Service, and the Wei Name Service, powered by viem. Point it at a `.gwei` name or an address and it resolves in a single call.",
+    "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAB+klEQVR4nOyZsariQBSGz2qEmCIElGCzRSwsrPQJtPIBfADBQiuxsPQZbCxsUlj7DlZ2VqbQKghiERVEImYaMY7L3jRLbiZ7F4uz4Z6vCjN/TuZTB+YY6fV6QZJJYS/gXUgAGxLAhgSwIQFsSAAbEsCGBLAhAWxIABsSwEb6PLTf7xljohsKhUIulwMAzrlt28/nU5Q0DENRFAC43+/b7VYUS6fTpVIplfr9UbquezgcRMlsNlssFkODP0J/qyyXy3a7LSoBAKqqLhYLWZYnk4lpmvl8PjLGGDMMYzabAUC327UsS1XVyOTlcmm1WoPBgHNer9fP53PM08fjcaPR+HMk/A0cj8eY+wHgdrsxxmRZPp1OnU6n1+tFxlarVb/fD64dxxmNRrVaLTJpmqZt2wDg+3786iOX99YekKSIX2Dk1NeT/0riNzEJYEMC2JAANiSADQlgQwLYvCXAORdNhRqdmGTM1FcIH2WDbisG5YMgOZ1O5/N5ZMx1XV3Xg2td14fDoaj1cRyn2WwG52pN067Xa8zTPxcJd2QAsF6vPc8Tlfj5AQA8Hg/LsnzfFyXL5bKmaQDged5msxG9UZckqVqtZjKZoF/Z7XaigoqiVCqVvwski++9if8HSAAbEsCGBLAhAWxIABsSwIYEsCEBbEgAm8QL/AoAAP//9j2mZCZIw+sAAAAASUVORK5CYII=",
+    "links": [
+      {
+        "label": "npm",
+        "url": "https://www.npmjs.com/package/@1001-digital/ethereum-names"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/1001-digital/ethereum-names"
+      }
+    ]
+  },
+  {
+    "name": "Cleave",
+    "category": "defi",
+    "description": "A decentralized options exchange on Ethereum. Write and trade options that can't be liquidated, with no margin calls or forced closes. It resolves addresses to their `.gwei` name, preferring it over `.eth` when both are set.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNsaXBQYXRoIGlkPSJjbGVhdmVDbGlwIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSIxNSIvPjwvY2xpcFBhdGg+PGcgY2xpcC1wYXRoPSJ1cmwoI2NsZWF2ZUNsaXApIiB0cmFuc2Zvcm09InJvdGF0ZSgxOCAxNiAxNikiPjxyZWN0IHg9Ii0yOSIgeT0iLTI5IiB3aWR0aD0iNDQuMjUiIGhlaWdodD0iOTAiIGZpbGw9IiMxNmEzNGEiLz48cmVjdCB4PSIxNi43NSIgeT0iLTI5IiB3aWR0aD0iNDUiIGhlaWdodD0iOTAiIGZpbGw9IiNmOTczMTYiLz48L2c+PC9zdmc+Cg==",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://cleave.market/"
+      }
+    ]
+  },
+  {
+    "name": "Freedom",
+    "category": "web access",
+    "description": "A minimalist desktop browser for Swarm and IPFS. Type a `.gwei` (and `.eth`) name, hash, or CID straight into the bar and connect to peers directly. No public gateway, no DNS in the middle.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA4MjggODI4Ij48cGF0aCBmaWxsLXJ1bGU9ImV2ZW5vZGQiIGNsaXAtcnVsZT0iZXZlbm9kZCIgZD0iTTgyNiAyNTguNjI3QzgyNiAyNDguODQ1IDgyNi4wMDQgMjM5LjA2MiA4MjUuOTQ0IDIyOS4yNzlDODI1Ljg5NSAyMjEuMDM4IDgyNS44IDIxMi43OTkgODI1LjU3NiAyMDQuNTYyQzgyNS4wOTIgMTg2LjYwOSA4MjQuMDMzIDE2OC41MDIgODIwLjg0IDE1MC43NDlDODE3LjYwMiAxMzIuNzQxIDgxMi4zMTQgMTE1Ljk4IDgwMy45ODEgOTkuNjE2NkM3OTUuNzg5IDgzLjUzMzcgNzg1LjA4OCA2OC44MTY4IDc3Mi4zMiA1Ni4wNTc4Qzc1OS41NTUgNDMuMjk4OSA3NDQuODM1IDMyLjYwNDkgNzI4Ljc0NiAyNC40MTc5QzcxMi4zNjYgMTYuMDgyOSA2OTUuNTg3IDEwLjc5NyA2NzcuNTU4IDcuNTU5OThDNjU5LjgwMyA0LjM3MTk5IDY0MS42OTEgMy4zMTUgNjIzLjczOCAyLjgzQzYxNS40OTUgMi42MDcgNjA3LjI1MyAyLjUxMyA1OTkuMDA4IDIuNDYyQzU4OS4yMiAyLjQwMiA1NzkuNDMyIDIuNDA3IDU2OS42NDQgMi40MDdMNDU1Ljk5NyAySDM3MC45OTdMMjU5LjM2MSAyLjQwN0MyNDkuNTU0IDIuNDA3IDIzOS43NDcgMi40MDIgMjI5Ljk0IDIuNDYyQzIyMS42NzggMi41MTMgMjEzLjQyIDIuNjA3IDIwNS4xNjIgMi44M0MxODcuMTY3IDMuMzE1IDE2OS4wMTQgNC4zNzI5OSAxNTEuMjE3IDcuNTY0OThDMTMzLjE2NCAxMC44MDEgMTE2LjM2IDE2LjA4NDkgOTkuOTU4MyAyNC40MTM5QzgzLjgzNTQgMzIuNjAxOSA2OS4wODI1IDQzLjI5NjkgNTYuMjkwNiA1Ni4wNTc4QzQzLjUwMDcgNjguODE1OCAzMi43Nzk4IDgzLjUyOTcgMjQuNTcyOSA5OS42MDk2QzE2LjIxNjkgMTE1Ljk4MSAxMC45MTkgMTMyLjc1MiA3LjY3Mjk5IDE1MC43N0M0LjQ3NzAxIDE2OC41MTYgMy40MTgwMiAxODYuNjE3IDIuOTMxMDIgMjA0LjU2MkMyLjcwOTAzIDIxMi44IDIuNjEzMDMgMjIxLjAzOSAyLjU2MzAzIDIyOS4yNzlDMi41MDMwMyAyMzkuMDYzIDIuMDAwMDMgMjUxLjIxNiAyLjAwMDAzIDI2MC45OTlWNDU2Ljk5OEwyLjUwODAzIDU2OS40MjdDMi41MDgwMyA1NzkuMjIzIDIuNTA0MDMgNTg5LjAxOSAyLjU2MzAzIDU5OC44MTVDMi42MTMwMyA2MDcuMDY3IDIuNzA5MDMgNjE1LjMxNyAyLjkzMjAyIDYyMy41NjZDMy40MTgwMiA2NDEuNTQyIDQuNDc5MDEgNjU5LjY3NSA3LjY3Nzk5IDY3Ny40NTJDMTAuOTIzIDY5NS40ODQgMTYuMjE5OSA3MTIuMjY5IDI0LjU2ODkgNzI4LjY1M0MzMi43NzY4IDc0NC43NTkgNDMuNDk5NyA3NTkuNDk1IDU2LjI5MDYgNzcyLjI3MkM2OS4wODE1IDc4NS4wNDkgODMuODMwNCA3OTUuNzU3IDk5Ljk1MDMgODAzLjk1NkMxMTYuMzYyIDgxMi4zMDIgMTMzLjE3NCA4MTcuNTk1IDE1MS4yMzggODIwLjgzNkMxNjkuMDI3IDgyNC4wMjkgMTg3LjE3NCA4MjUuMDg4IDIwNS4xNjIgODI1LjU3M0MyMTMuNDIgODI1Ljc5NiAyMjEuNjc5IDgyNS44OTEgMjI5Ljk0MSA4MjUuOTQxQzIzOS43NDggODI2LjAwMSAyNDkuNTU0IDgyNS45OTcgMjU5LjM2MSA4MjUuOTk3TDU2OS42NDQgODI1Ljk5NkM1NzkuNDMyIDgyNS45OTYgNTg5LjIyIDgyNi4wMDEgNTk5LjAwOCA4MjUuOTQxQzYwNy4yNTMgODI1Ljg5MSA2MTUuNDk1IDgyNS43OTYgNjIzLjczOCA4MjUuNTczQzY0MS42OTggODI1LjA4NyA2NTkuODE2IDgyNC4wMjcgNjc3LjU3OSA4MjAuODMyQzY5NS41OTcgODE3LjU5MSA3MTIuMzY4IDgxMi4zIDcyOC43MzkgODAzLjk1OUM3NDQuODMxIDc5NS43NjEgNzU5LjU1NCA3ODUuMDUxIDc3Mi4zMiA3NzIuMjcyQzc4NS4wODYgNzU5LjQ5NyA3OTUuNzg2IDc0NC43NjMgODAzLjk3OCA3MjguNjZDODEyLjMxNiA3MTIuMjY4IDgxNy42MDQgNjk1LjQ3NSA4MjAuODQ0IDY3Ny40MzFDODI0LjAzNCA2NTkuNjYxIDgyNS4wOTIgNjQxLjUzNSA4MjUuNTc3IDYyMy41NjZDODI1LjggNjE1LjMxNiA4MjUuODk1IDYwNy4wNjYgODI1Ljk0NCA1OTguODE1QzgyNi4wMDUgNTg5LjAxOSA4MjYgNTc5LjIyMyA4MjYgNTY5LjQyN0M4MjYgNTY5LjQyNyA4MjUuOTk0IDQ1OC45ODMgODI1Ljk5NCA0NTYuOTk4VjM3MC45OTlDODI1Ljk5NCAzNjkuNTMzIDgyNiAyNTguNjI3IDgyNiAyNTguNjI3WiIgZmlsbD0iIzFDMUUyNiIgc3Ryb2tlPSIjMjgyRDM2IiBzdHJva2Utd2lkdGg9IjQiLz48cGF0aCBkPSJNNDEyLjM2NCAzMTcuNDUxVjM3NC4zMDRIMjI4VjMxNy40NTFINDEyLjM2NFpNMjc0LjA5MSA2MjkuMzI3VjI4OC4wMUMyNzQuMDkxIDI2Ny4wMjggMjc4LjQyMyAyNDkuNTY3IDI4Ny4wODYgMjM1LjYyNEMyOTUuODg1IDIyMS42ODIgMzA3LjY2MSAyMTEuMjU5IDMyMi40MTYgMjA0LjM1NUMzMzcuMTcgMTk3LjQ1MiAzNTMuNTQ5IDE5NCAzNzEuNTUzIDE5NEMzODQuMjc3IDE5NCAzOTUuNTc5IDE5NS4wMTUgNDA1LjQ2MSAxOTcuMDQ2QzQxNS4zNDIgMTk5LjA3NiA0MjIuNjUyIDIwMC45MDQgNDI3LjM5IDIwMi41MjhMNDEyLjc3MSAyNTkuMzhDNDA5LjY1NyAyNTguNDMzIDQwNS43MzIgMjU3LjQ4NSA0MDAuOTk0IDI1Ni41MzhDMzk2LjI1NiAyNTUuNDU1IDM5MC45NzcgMjU0LjkxMyAzODUuMTU2IDI1NC45MTNDMzcxLjQ4NSAyNTQuOTEzIDM2MS44MDYgMjU4LjIzIDM1Ni4xMjEgMjY0Ljg2M0MzNTAuNTcxIDI3MS4zNiAzNDcuNzk2IDI4MC43IDM0Ny43OTYgMjkyLjg4M1Y2MjkuMzI3SDI3NC4wOTFaIiBmaWxsPSJ3aGl0ZSIvPjxwYXRoIGQ9Ik01MzAuMzMgNjMzLjc5NEM1MTguMDEyIDYzMy43OTQgNTA3LjQ1NCA2MjkuNDYzIDQ5OC42NTUgNjIwLjc5OUM0ODkuODU3IDYxMi4xMzYgNDg1LjUyNSA2MDEuNTc4IDQ4NS42NiA1ODkuMTI0QzQ4NS41MjUgNTc2Ljk0MiA0ODkuODU3IDU2Ni41MTkgNDk4LjY1NSA1NTcuODU2QzUwNy40NTQgNTQ5LjE5MiA1MTguMDEyIDU0NC44NjEgNTMwLjMzIDU0NC44NjFDNTQyLjI0MiA1NDQuODYxIDU1Mi41OTggNTQ5LjE5MiA1NjEuMzk2IDU1Ny44NTZDNTcwLjMzIDU2Ni41MTkgNTc0Ljg2NSA1NzYuOTQyIDU3NSA1ODkuMTI0QzU3NC44NjUgNTk3LjM4MiA1NzIuNjk5IDYwNC44OTQgNTY4LjUwMyA2MTEuNjYyQzU2NC40NDIgNjE4LjQzMSA1NTkuMDI3IDYyMy44NDUgNTUyLjI1OSA2MjcuOTA2QzU0NS42MjYgNjMxLjgzMSA1MzguMzE3IDYzMy43OTQgNTMwLjMzIDYzMy43OTRaIiBmaWxsPSIjMDBFOUM0Ii8+PHBhdGggZD0iTTQ5OC42NTUgMzk4LjI2M0M1MDcuNDU0IDQwNi45MjYgNTE4LjAxMiA0MTEuMjU3IDUzMC4zMyA0MTEuMjU3QzUzOC4zMTcgNDExLjI1NyA1NDUuNjI2IDQwOS4yMjcgNTUyLjI1OSA0MDUuMTY2QzU1OS4wMjcgNDAxLjEwNSA1NjQuNDQyIDM5NS42OTEgNTY4LjUwMyAzODguOTIzQzU3Mi42OTkgMzgyLjE1NCA1NzQuODY1IDM3NC43MDkgNTc1IDM2Ni41ODhDNTc0Ljg2NSAzNTQuNDA1IDU3MC4zMyAzNDMuOTgyIDU2MS4zOTYgMzM1LjMxOUM1NTIuNTk4IDMyNi41MiA1NDIuMjQyIDMyMi4xMjEgNTMwLjMzIDMyMi4xMjFDNTE4LjAxMiAzMjIuMTIxIDUwNy40NTQgMzI2LjUyIDQ5OC42NTUgMzM1LjMxOUM0ODkuODU3IDM0My45ODIgNDg1LjUyNSAzNTQuNDA1IDQ4NS42NiAzNjYuNTg4QzQ4NS41MjUgMzc4LjkwNiA0ODkuODU3IDM4OS40NjQgNDk4LjY1NSAzOTguMjYzWiIgZmlsbD0iI0ZGQjExMSIvPjwvc3ZnPgo=",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://freedombrowser.eth.limo/"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/solardev-xyz/freedom-browser"
+      }
+    ]
+  },
+  {
+    "name": "Kao",
+    "category": "wallet",
+    "description": "A cute, secure desktop wallet for Ethereum, built in pure Rust with no telemetry. Resolve, register, and manage `.gwei` names from its Names app, all verified by a Helios light client.",
+    "logo": "data:image/png;base64,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",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://kaowallet.com/"
+      },
+      {
+        "label": "Download",
+        "url": "https://github.com/kaowallet/kao/releases/latest"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/kaowallet/kao"
+      }
+    ]
+  },
+  {
+    "name": "WalletChan",
+    "category": "wallet",
+    "description": "A browser wallet extension for using your Bankr address across every dapp, like MetaMask. Send to `.gwei` (and `.eth`) names, and look them up in its built-in name browser.",
+    "logo": "data:image/png;base64,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",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://walletchan.com/"
+      },
+      {
+        "label": "Chrome Web Store",
+        "url": "https://chromewebstore.google.com/detail/walletchan/kofbkhbkfhiollbhjkbebajngppmpbgc"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/apoorvlathey/walletchan"
+      }
+    ]
+  },
+  {
+    "name": "dapp3",
+    "category": "web access",
+    "description": "A browser extension for opening `.gwei` (and `.eth`) sites like any other website, verified locally. It resolves names against Ethereum with a Helios light client and serves them from your own IPFS node. No public gateway, no hijackable DNS, nothing to trust in the middle.",
+    "logo": "data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMzIgMzIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTE2IDQgTDggMTcgTDE2IDEzIEwyNCAxNyBaIiBmaWxsPSIjMTBiOTgxIi8+PHBhdGggZD0iTTE2IDI4IEw4IDE5IEwxNiAxNSBMMjQgMTkgWiIgZmlsbD0iIzA1OTY2OSIvPjwvc3ZnPgo=",
+    "links": [
+      {
+        "label": "Website",
+        "url": "https://dapp3.eth.sh/"
+      },
+      {
+        "label": "Chrome Web Store",
+        "url": "https://chromewebstore.google.com/detail/dapp3eth/gagojfdpbmahciaapdcejmmaeehgpmib"
+      },
+      {
+        "label": "GitHub",
+        "url": "https://github.com/apoorvlathey/dapp3"
+      }
+    ]
+  }
+]
+</script>
 
 <!-- Network stats -->
 <div class="stats-section" id="statsSection" style="display:none;">
@@ -1347,6 +1434,63 @@ window.onerror = function(msg, url, line) {
   console.error('Global error:', msg, 'at', url, line);
   return false;
 };
+
+function integrationElement(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+function appendIntegrationDescription(element, description) {
+  for (const part of description.split(/(`[^`]+`)/g)) {
+    if (!part) continue;
+    if (part.startsWith('`') && part.endsWith('`')) {
+      element.appendChild(integrationElement('code', '', part.slice(1, -1)));
+    } else {
+      element.appendChild(document.createTextNode(part));
+    }
+  }
+}
+
+function renderIntegrations() {
+  const list = document.getElementById('integrationList');
+  const data = document.getElementById('integrationData');
+  if (!list || !data) return;
+
+  for (const integration of JSON.parse(data.textContent)) {
+    const card = integrationElement('div', 'int-card');
+    const head = integrationElement('div', 'int-head');
+    const logo = integrationElement('span', 'int-logo');
+    logo.setAttribute('aria-hidden', 'true');
+    const image = integrationElement('img');
+    image.src = integration.logo;
+    image.alt = '';
+    image.width = 18;
+    image.height = 18;
+    logo.appendChild(image);
+    head.appendChild(logo);
+    head.appendChild(integrationElement('span', 'int-name', integration.name));
+    head.appendChild(integrationElement('span', 'int-tag', integration.category));
+    card.appendChild(head);
+
+    const description = integrationElement('p', 'int-desc');
+    appendIntegrationDescription(description, integration.description);
+    card.appendChild(description);
+
+    const links = integrationElement('div', 'int-links');
+    for (const link of integration.links) {
+      const anchor = integrationElement('a', '', link.label + ' ↗');
+      anchor.href = link.url;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener';
+      links.appendChild(anchor);
+    }
+    card.appendChild(links);
+    list.appendChild(card);
+  }
+}
+renderIntegrations();
 
 // ── networks: supports mainnet + sepolia. Mainnet is disabled until NameNFT is
 //    deployed there; until then the dapp runs on Sepolia so prod stays testable. ──
