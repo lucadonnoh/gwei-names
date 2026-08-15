@@ -6,6 +6,10 @@ export const GNS_CONTRACT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6' as cons
 export const GWEI_NODE =
   '0xcca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f' as const
 
+/**
+ * @deprecated Legacy Base bridge address. It is not part of GNS and is retained only so existing
+ * imports do not break.
+ */
 export const BASE_PORTAL = '0x49048044D57e1C92A77f79988d21Fa8fAF74E97e' as const
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const
@@ -17,7 +21,7 @@ export const REGISTRATION_PERIOD = 365n * 24n * 60n * 60n
 export const GRACE_PERIOD = 90n * 24n * 60n * 60n
 
 /** Maximum subdomain depth. */
-export const MAX_SUBDOMAIN_DEPTH = 5
+export const MAX_SUBDOMAIN_DEPTH = 10
 
 /** Minimum commitment age in seconds before reveal. */
 export const MIN_COMMITMENT_AGE = 60
