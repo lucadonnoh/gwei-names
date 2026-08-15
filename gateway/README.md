@@ -7,10 +7,10 @@ gateway. If no `contenthash` is set it falls back to the ERC-6821 `contentcontra
 serves the site straight out of a smart contract over web3:// (ERC-6860), with no storage network in
 between.
 
-This is the one piece of off-chain infrastructure GNS relies on — the upstream wei-names repo
-doesn't include a gateway (it's run, not open-sourced), so this is written from scratch and kept
-here in the open. It follows the standard ENS-style contenthash-gateway pattern (the same idea as
-`eth.limo` for `.eth`).
+This is the one piece of off-chain infrastructure GNS relies on. It follows the standard ENS-style
+contenthash-gateway pattern (the same idea as `eth.limo` for `.eth`) and also serves contract-hosted
+websites. The load-shaping design borrows the useful operational lessons from wei-names' open WNS
+gateway while retaining GNS's IPFS, IPNS, Swarm, and `contentcontract` paths.
 
 ## Deploy
 
@@ -25,10 +25,11 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 2. **Deploy the Worker** (from this `gateway/` directory):
    ```bash
    npx wrangler login        # one-time, opens the browser
-   npx wrangler deploy       # creates the worker + the *.gwei.domains/* route
+   npx wrangler deploy       # creates the worker, RPC brokers, and wildcard route
    ```
-   Or, via the dashboard: Workers & Pages → Create → paste `worker.js` → add a route
-   `*.gwei.domains/*` on the `gwei.domains` zone.
+
+   `wrangler.toml` declares the `RpcBroker` Durable Object as well as the route, so deploy this
+   directory rather than pasting only `worker.js` into the dashboard editor.
 
 3. **Test:** open a name that has a website set, e.g. `https://donnoh.gwei.domains/`.
 
@@ -39,10 +40,19 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   if you stand up other services under `gwei.domains`.
 - Names with no `contenthash` and no usable `contentcontract` record return a friendly 404 linking
   to the dapp.
-- Network/contract addresses live at the top of `worker.js` — update `NAMENFT` (currently the
-  Sepolia deployment) and `RPCS` when GNS moves to another network.
+- The NameNFT address lives at the top of `worker.js`; chain and endpoint pools live in
+  `rpc-config.js`. A dedicated mainnet endpoint can be configured with
+  `npx wrangler secret put RPC_URL`. It remains preferred while healthy, with the public pool as
+  rotated fallback.
+- **RPC load shaping.** Normal Worker globals cannot safely share request-bound I/O promises. Four
+  Durable Object broker shards per continent therefore coordinate identical calls, rotate public
+  endpoints, cool down failing endpoints for 30 seconds, and apply explicit 5-second lookup and
+  15-second page-read timeouts. Each shard permits 6 active RPCs and 50 queued calls (24 active and 200
+  queued per regional pool); excess or overlong queue entries return a retryable, uncached 503.
+  The existing Cloudflare Cache API remains the bounded response cache, so no document bodies are
+  retained in broker memory.
 - **web3:// sites.** `contenthash` wins when a name has both records, so nothing that works today
-  changes. Chains a `contentcontract` record may name live in the `CHAINS` table in `worker.js`
+  changes. Chains a `contentcontract` record may name live in the `CHAINS` table in `rpc-config.js`
   (mainnet and Sepolia); adding one is a single entry. The gateway reads `resolveMode()` and serves
   ERC-6944 resource-request (`"5219"`) and manual mode; auto mode returns 415. Contract-supplied
   headers pass an allowlist, so a contract cannot set `set-cookie` or weaken the security headers on

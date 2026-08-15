@@ -10,26 +10,12 @@
 //
 // Deploy on a `*.gwei.domains/*` route (see gateway/README.md).
 
+import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN } from './rpc-config.js';
+
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
-// Public RPCs that reliably serve eth_call under load. (llamarpc/1rpc proved flaky from the Worker.)
-// For scale, set a dedicated endpoint as a secret — `wrangler secret put RPC_URL` — it's tried first.
-const RPCS = [
-  'https://0xrpc.io/eth',
-  'https://gateway.tenderly.co/public/mainnet',
-  'https://ethereum-rpc.publicnode.com',
-];
 // Chains a `contentcontract` record may point at, keyed by chain id, with their ERC-3770 short names.
 // Names themselves always resolve on mainnet (that's where the record lives); only the web3:// contract
-// call goes to the chain named in the record. Adding a chain is a single entry here.
-const SEPOLIA_RPCS = [
-  'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://sepolia.drpc.org',
-];
-const CHAINS = {
-  1: { short: 'eth', rpcs: RPCS },
-  11155111: { short: 'sep', rpcs: SEPOLIA_RPCS },
-};
-const SHORT_TO_CHAIN = Object.fromEntries(Object.entries(CHAINS).map(([id, c]) => [c.short, Number(id)]));
+// call goes to the chain named in the record. Endpoint configuration lives in rpc-config.js.
 // Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
 // Public Swarm (bzz) endpoint that serves the referenced content bytes. gateway.ethswarm.org is
@@ -55,9 +41,6 @@ const RESERVED = {
 const RESOLVE_TTL = 300;     // name → content reference (seconds)
 const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
 const CONTENT_TTL = 300;     // proxied content (seconds)
-// JSON-RPC wraps byte responses as hex, so this permits roughly 2 MiB of contract content while
-// bounding the JSON string and decoder copies well below the Worker's per-isolate memory limit.
-const MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024;
 // resolveMode() is `pure` on every contract we've seen, so its answer is effectively immutable and
 // worth caching hard: it saves an eth_call on every cold web3:// request.
 const MODE_TTL = 86400;      // contract → resolve mode (seconds)
@@ -389,68 +372,62 @@ function decodeIpns(cidHex) {
   if (hashCode.value === 0 && hashSize.value < 36) return null; // unsafe identity multihash
   return base36(bytes);
 }
-// Tries each RPC in turn. Returns { result } on success, or the definitive non-answers { empty } and
-// { reverted } — a contract with no `resolveMode()` gives exactly those, and they mean "auto mode"
-// rather than "the endpoint is down". Anything else (rate limit, node error) fails over. null if all fail.
-async function readRpcJson(response) {
-  const declaredLength = response.headers.get('content-length');
-  const declaredBytes = declaredLength && /^\d+$/.test(declaredLength) ? Number(declaredLength) : null;
-  if (declaredBytes !== null && declaredBytes > MAX_RPC_RESPONSE_BYTES) {
-    throw new Error('RPC response exceeds size limit');
-  }
-  if (!response.body) throw new Error('RPC response has no body');
+const LOCATION_HINT = {
+  AF: 'afr', AN: 'oc', AS: 'apac', EU: 'weur', NA: 'enam', OC: 'oc', SA: 'sam',
+};
 
-  const reader = response.body.getReader();
-  let bytes = new Uint8Array(
-    declaredBytes !== null && Number.isSafeInteger(declaredBytes) ? declaredBytes : 16 * 1024,
-  );
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const nextTotal = total + value.byteLength;
-      if (nextTotal > MAX_RPC_RESPONSE_BYTES) {
-        try { await reader.cancel('RPC response exceeds size limit'); } catch (_) {}
-        throw new Error('RPC response exceeds size limit');
-      }
-      if (nextTotal > bytes.byteLength) {
-        const capacity = Math.min(
-          MAX_RPC_RESPONSE_BYTES,
-          Math.max(nextTotal, Math.max(16 * 1024, bytes.byteLength * 2)),
-        );
-        const grown = new Uint8Array(capacity);
-        grown.set(bytes.subarray(0, total));
-        bytes = grown;
-      }
-      bytes.set(value, total);
-      total = nextTotal;
-    }
-  } finally {
-    reader.releaseLock();
-  }
+class RpcOverloadedError extends Error {}
 
-  return JSON.parse(new TextDecoder().decode(bytes.subarray(0, total)));
+function rpcRoute(request, env) {
+  const continent = request.cf?.continent;
+  const region = typeof continent === 'string' && /^[A-Z]{2}$/.test(continent)
+    ? continent
+    : 'ZZ';
+  return { env, region, locationHint: LOCATION_HINT[region] };
 }
-async function rpcCall(to, data, rpcs) {
-  for (const rpc of rpcs) {
-    try {
-      const r = await fetch(rpc, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to, data }, 'latest'] }),
-      });
-      const j = await readRpcJson(r);
-      if (j && j.result && j.result !== '0x') return { result: j.result };
-      if (j && j.result === '0x') return { empty: true };
-      if (j && j.error && /revert/i.test(j.error.message || '')) return { reverted: true };
-    } catch (_) {}
+
+// Fast deterministic routing, not a cryptographic hash. Exact calls in the same region always land
+// on the same broker (single-flight), while unrelated calls spread across four broker shards.
+function rpcShard(chainId, to, data, long) {
+  let hash = 0x811c9dc5;
+  const value = `${chainId}|${to}|${long ? 1 : 0}|${data}`;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % RPC_BROKER_SHARDS;
+}
+
+function isOverloadError(error) {
+  return /overload|queue full|gateway busy|too many requests/i.test(error?.message || '');
+}
+
+// Returns { result } on success, or the definitive non-answers { empty } and { reverted }. Endpoint
+// rotation, cooldowns, timeouts, concurrency limits, and exact-call coalescing live in the Durable
+// Object broker so they are safe and effective across concurrent Worker requests.
+async function rpcCall(chainId, to, data, route, { long = false } = {}) {
+  const namespace = route.env?.RPC_BROKER;
+  if (!namespace?.getByName) return null;
+  const name = `rpc:${route.region}:${chainId}:${rpcShard(chainId, to, data, long)}`;
+  try {
+    const stub = route.locationHint
+      ? namespace.getByName(name, { locationHint: route.locationHint })
+      : namespace.getByName(name);
+    const result = await stub.rpc({ chainId, to, data, long });
+    if (result?.overloaded) throw new RpcOverloadedError('RPC broker queue full');
+    if (result?.result || result?.empty || result?.reverted) return result;
+  } catch (error) {
+    if (error instanceof RpcOverloadedError || isOverloadError(error)) {
+      throw new RpcOverloadedError('RPC broker overloaded');
+    }
+    console.error(JSON.stringify({ event: 'rpc_broker_error', message: error?.message || String(error) }));
   }
   return null;
 }
+
 // Returns the first non-empty result, or null if the call failed, reverted, or returned nothing.
-async function ethCall(to, data, rpcs) {
-  const r = await rpcCall(to, data, rpcs);
+async function ethCall(chainId, to, data, route, options) {
+  const r = await rpcCall(chainId, to, data, route, options);
   return r && r.result ? r.result : null;
 }
 function page(title, body, status, cache = 'public, max-age=60') {
@@ -462,6 +439,12 @@ function page(title, body, status, cache = 'public, max-age=60') {
     `a{color:#e8e8e0}p{color:#b8b8b0;max-width:380px;margin:0}</style>${body}`,
     { status, headers },
   );
+}
+
+function busyPage(title) {
+  const response = page(title, '<p>The gateway is busy. Please retry shortly.</p>', 503, 'no-store');
+  response.headers.set('retry-after', '2');
+  return response;
 }
 
 // Parse an ERC-6821 `contentcontract` record: either an ERC-3770 chain-specific address
@@ -486,7 +469,7 @@ function parseContentContract(record) {
 // contenthash wins when both are set: it's the older record, so no existing site changes behavior by
 // virtue of a contentcontract record appearing. The extra text() call only happens on the path that
 // would otherwise already be a 404, and it's covered by the same negative cache.
-async function resolveName(name, rpcs, cache, ctx) {
+async function resolveName(name, route, cache, ctx) {
   const key = new Request(`${CACHE_BASE}/resolve/${encodeURIComponent(name)}`);
   const cached = await cache.match(key);
   if (cached) {
@@ -494,10 +477,10 @@ async function resolveName(name, rpcs, cache, ctx) {
   }
 
   // Transient RPC failures aren't cached, so a retry recovers.
-  const idRes = await ethCall(NAMENFT, encodeString(SEL_COMPUTEID, name), rpcs);
+  const idRes = await ethCall(1, NAMENFT, encodeString(SEL_COMPUTEID, name), route);
   if (!idRes) return { error: 'rpc' };
   const tokenIdHex = idRes.slice(2);
-  const chRes = await ethCall(NAMENFT, '0x' + SEL_CONTENTHASH + tokenIdHex, rpcs);
+  const chRes = await ethCall(1, NAMENFT, '0x' + SEL_CONTENTHASH + tokenIdHex, route);
   if (!chRes) return { error: 'rpc' };
 
   // Decode the contenthash → storage reference.
@@ -514,7 +497,7 @@ async function resolveName(name, rpcs, cache, ctx) {
     // a website. Only an explicit record counts.
     // An unset record still ABI-encodes to a non-empty result (offset + zero length), so a null here
     // means the lookup itself failed. Surface that rather than caching a 404 the retry can't clear.
-    const ccRes = await ethCall(NAMENFT, encodeTextCall(tokenIdHex, CONTENTCONTRACT), rpcs);
+    const ccRes = await ethCall(1, NAMENFT, encodeTextCall(tokenIdHex, CONTENTCONTRACT), route);
     if (!ccRes) return { error: 'rpc' };
     result = parseContentContract(readText(ccRes.slice(2), word(ccRes.slice(2), 0))) || { state: 'none' };
   } else {
@@ -545,13 +528,13 @@ async function resolveName(name, rpcs, cache, ctx) {
 
 // Read a contract's ERC-6860 resolve mode, caching it hard. A revert, an empty return, or an
 // all-zero word all mean "auto" — that's what a contract with no `resolveMode()` at all looks like.
-async function resolveMode(chainId, address, rpcs, cache, ctx) {
+async function resolveMode(chainId, address, route, cache, ctx) {
   const key = new Request(`${CACHE_BASE}/mode/${chainId}/${address}`);
   const cached = await cache.match(key);
   if (cached) {
     try { return (await cached.json()).mode; } catch (_) {}
   }
-  const r = await rpcCall(address, '0x' + SEL_RESOLVEMODE, rpcs);
+  const r = await rpcCall(chainId, address, '0x' + SEL_RESOLVEMODE, route);
   if (!r) return null; // every endpoint failed — don't cache, a retry recovers
   let mode = 'auto';
   if (r.result && r.result.length >= 66) {
@@ -575,13 +558,12 @@ async function resolveMode(chainId, address, rpcs, cache, ctx) {
 //              a body, and headers, so the contract speaks HTTP itself.
 //   "manual" — the raw path+query is the calldata; the return is ABI-encoded bytes.
 //   auto     — not served yet; needs path→method translation and the ERC-7087 MIME rules.
-async function serveWeb3(ref, name, url, cache, ctx, mainnetRpcs) {
+async function serveWeb3(ref, name, url, cache, ctx, route) {
   const chain = CHAINS[ref.chainId];
   if (!chain) return page(name, '<p>This name points to a contract on an unsupported chain.</p>', 415);
-  const contractRpcs = ref.chainId === 1 ? mainnetRpcs : chain.rpcs;
   const rpcFailed = () => page(name, '<p>Resolution failed (RPC).</p>', 502, 'no-store');
 
-  const mode = await resolveMode(ref.chainId, ref.address, contractRpcs, cache, ctx);
+  const mode = await resolveMode(ref.chainId, ref.address, route, cache, ctx);
   if (!mode) return rpcFailed();
 
   let status = 200;
@@ -592,7 +574,13 @@ async function serveWeb3(ref, name, url, cache, ctx, mainnetRpcs) {
     let resource = url.pathname.split('/').filter(Boolean);
     try { resource = resource.map(decodeURIComponent); } catch (_) {} // keep raw if percent-decoding fails
     const params = [...new URLSearchParams(url.search)];
-    const res = await ethCall(ref.address, encodeRequestCall(resource, params), contractRpcs);
+    const res = await ethCall(
+      ref.chainId,
+      ref.address,
+      encodeRequestCall(resource, params),
+      route,
+      { long: true },
+    );
     if (!res) return rpcFailed();
     const decoded = decodeRequestResult(res);
     if (!decoded) return page(name, '<p>This contract returned a malformed ERC-5219 response.</p>', 502, 'no-store');
@@ -617,7 +605,13 @@ async function serveWeb3(ref, name, url, cache, ctx, mainnetRpcs) {
   } else if (mode === 'manual') {
     // Calldata is the raw path+query bytes, with no selector — it lands in the contract's fallback.
     const pathQuery = (url.pathname || '/') + url.search;
-    const res = await ethCall(ref.address, '0x' + toHex(utf8(pathQuery)), contractRpcs);
+    const res = await ethCall(
+      ref.chainId,
+      ref.address,
+      '0x' + toHex(utf8(pathQuery)),
+      route,
+      { long: true },
+    );
     if (!res) return rpcFailed();
     const hex = res.slice(2);
     body = readDynamic(hex, word(hex, 0));
@@ -647,8 +641,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
-    // A dedicated RPC (set via `wrangler secret put RPC_URL`) is tried first, then the public pool.
-    const rpcs = (env && env.RPC_URL) ? [env.RPC_URL, ...RPCS] : RPCS;
+    const route = rpcRoute(request, env);
 
     // Only subdomains of gwei.domains; the apex (the dapp) is routed elsewhere.
     if (!host.endsWith('.gwei.domains')) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
@@ -669,7 +662,13 @@ export default {
     const cache = caches.default;
 
     // 1. Resolve the name's records on-chain (cached).
-    const r = await resolveName(name, rpcs, cache, ctx);
+    let r;
+    try {
+      r = await resolveName(name, route, cache, ctx);
+    } catch (error) {
+      if (error instanceof RpcOverloadedError) return busyPage(name);
+      throw error;
+    }
     if (r.error) return page('gwei gateway', '<p>Resolution failed (RPC).</p>', 502, 'no-store');
     if (r.state === 'none') {
       return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains">set one →</a></p>`, 404);
@@ -693,7 +692,13 @@ export default {
 
     // 2a. Contract-hosted site: call it over web3:// instead of proxying a storage gateway.
     if (r.kind === 'web3') {
-      const resp = await serveWeb3(r, name, url, cache, ctx, rpcs);
+      let resp;
+      try {
+        resp = await serveWeb3(r, name, url, cache, ctx, route);
+      } catch (error) {
+        if (error instanceof RpcOverloadedError) return busyPage(name);
+        throw error;
+      }
       if (request.method === 'GET' && resp.status === 200 && web3ResponseIsCacheable(resp)) {
         ctx.waitUntil(cache.put(contentKey, resp.clone()).catch(() => {}));
       }
