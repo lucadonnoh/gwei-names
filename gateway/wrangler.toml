@@ -1,6 +1,7 @@
 name = "gwei-gateway"
 main = "index.js"
 compatibility_date = "2026-08-15"
+workers_dev = false
 
 # Runs the worker for every subdomain of gwei.domains. Requires a proxied wildcard
 # DNS record for *.gwei.domains (see README.md). The apex gwei.domains and the
