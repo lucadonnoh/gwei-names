@@ -1580,6 +1580,8 @@ if (NET.chainId !== 1) {
 // Burned = NameNFT ETH balance (no withdraw exists, so collected fees are locked = burned).
 const STATS_NAME_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28'; // NameRegistered
 const STATS_CH_TOPIC = '0xe379c1624ed7e714cc0937528a32359d69d5281337765313dba4e081b72d7578';   // ContenthashChanged
+const STATS_TEXT_TOPIC = '0xd8c9334b1a9c2f9da342a0a2b32629c1a229b6445dad78947f674b44444a7550'; // TextChanged
+const STATS_CC_KEY = '0x58d1a44eb778f49875f62ace52dcda3a77ed4f1b085b6668edba23e2aea510ec';     // keccak256('contentcontract'), the indexed key of a TextChanged log
 const STATS_RPCS = NET.logsRpcs || [];
 const STATS_DEPLOY = NET.deployBlock || 0;
 const STATS_KEY = 'gwei_stats_' + CHAIN_ID;
@@ -1600,31 +1602,60 @@ function statsHexUtf8(hex) {
   for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
   try { return new TextDecoder().decode(b); } catch (e) { return ''; }
 }
+function statsRecordName(cache, node, label, len, top) {
+  cache.names[node] = { label: label, len: len, top: top };
+  // Re-registration increments recordVersion, so resolver records from the prior owner are stale.
+  delete cache.ch[node];
+  delete cache.cc[node];
+}
+// Names that serve a website, newest record first. A site lives either in the contenthash (IPFS,
+// IPNS, Swarm) or, when that is empty, in the ERC-6821 `contentcontract` text record (web3://).
+// Contenthash wins where both are set, the same precedence the gateway applies, so an entry is
+// dated by the record actually being served. Top-level names only: a subdomain has no gateway host.
+function recentWebsiteLabels(cache, limit) {
+  const cc = cache.cc || {};
+  const blocks = {};
+  for (const node of Object.keys(cache.names)) {
+    if (!cache.names[node].top) continue;
+    const rec = cache.ch[node] && cache.ch[node].len > 0 ? cache.ch[node] : (cc[node] && cc[node].len > 0 ? cc[node] : null);
+    if (rec) blocks[node] = rec.block;
+  }
+  return Object.keys(blocks)
+    .sort(function (a, b) { return blocks[b] - blocks[a]; })
+    .slice(0, limit)
+    .map(function (node) { return cache.names[node].label; });
+}
 async function loadStats() {
   const sec = document.getElementById('statsSection');
   if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
   sec.style.display = ''; // reveal the section with its loading line immediately, before any await
   let burned = null;
   try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
-  // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}} }
-  let cache = { lastBlock: STATS_DEPLOY - 1, names: {}, ch: {} };
-  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.names && c.ch && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
+  // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}}, cc:{node:{len,block}} }
+  // A cache written before `cc` existed is dropped, not upgraded: its lastBlock is already at the
+  // head, so keeping it would hide every contentcontract record set before this version shipped.
+  let cache = { lastBlock: STATS_DEPLOY - 1, names: {}, ch: {}, cc: {} };
+  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.names && c.ch && c.cc && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
   let ok = false;
   try {
     const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
     for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
       const to = Math.min(from + 9000, latest);
       const logs = await statsRpc('eth_getLogs', [{ address: CONTRACT,
-        topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC]],
+        topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC, STATS_TEXT_TOPIC]],
         fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }]);
       for (const log of logs) {
         const h = log.data.slice(2);
         if (log.topics[0] === STATS_NAME_TOPIC) {
           const expires = BigInt('0x' + h.slice(64, 128));
           const len = parseInt(h.slice(128, 192), 16);
-          cache.names[log.topics[1]] = { label: statsHexUtf8(h.slice(192, 192 + len * 2)), len: len, top: expires > 0n };
-        } else {
+          statsRecordName(cache, log.topics[1], statsHexUtf8(h.slice(192, 192 + len * 2)), len, expires > 0n);
+        } else if (log.topics[0] === STATS_CH_TOPIC) {
           cache.ch[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
+        } else if (log.topics[2] === STATS_CC_KEY) {
+          // TextChanged for every other key rides along in the same query; only the length matters,
+          // an empty value means the record was cleared.
+          cache.cc[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
         }
       }
     }
@@ -1654,14 +1685,10 @@ async function loadStats() {
     }
     he.innerHTML = rows;
   } else he.innerHTML = '';
-  // recent websites: top-level names with a non-empty contenthash, newest-set first (gateway = mainnet only)
+  // recent websites (gateway = mainnet only)
   const sitesEl = document.getElementById('statsSites'), listEl = document.getElementById('sitesList');
   if (sitesEl && listEl) {
-    const sites = Object.keys(cache.ch)
-      .filter(function (node) { return cache.ch[node].len > 0 && cache.names[node] && cache.names[node].top; })
-      .sort(function (a, b) { return cache.ch[b].block - cache.ch[a].block; })
-      .slice(0, 50)
-      .map(function (node) { return cache.names[node].label; });
+    const sites = recentWebsiteLabels(cache, 50);
     if (CHAIN_ID === 1 && sites.length) {
       listEl.innerHTML = '';
       for (const label of sites) {
