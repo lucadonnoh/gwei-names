@@ -765,6 +765,26 @@ function recentWebsites(cache, limit) {
   return [...context.recentWebsiteLabels(cache, limit)]; // copy out of the vm realm so deepEqual works
 }
 
+test('a re-registration drops website records from the prior record version', () => {
+  const start = html.indexOf('function statsRecordName(cache, node, label, len, top)');
+  const end = html.indexOf('// Names that serve a website', start);
+  assert.notEqual(start, -1, 'the name-record helper must exist');
+  assert.notEqual(end, -1, 'the name-record helper must be bounded');
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.statsRecordName = statsRecordName;', context);
+
+  const cache = {
+    names: { node: { label: 'old-owner', len: 9, top: true } },
+    ch: { node: { len: 36, block: 50 } },
+    cc: { node: { len: 46, block: 60 } }
+  };
+  context.statsRecordName(cache, 'node', 'new-owner', 9, true);
+
+  assert.equal(cache.names.node.label, 'new-owner');
+  assert.equal(cache.ch.node, undefined);
+  assert.equal(cache.cc.node, undefined);
+});
+
 // One name per case: an IPFS, a Swarm and an IPNS contenthash, a web3:// contract, a name whose
 // contenthash was cleared in favour of its contract, a name with neither record left, a subdomain
 // and a name that never set anything.

@@ -1602,6 +1602,12 @@ function statsHexUtf8(hex) {
   for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
   try { return new TextDecoder().decode(b); } catch (e) { return ''; }
 }
+function statsRecordName(cache, node, label, len, top) {
+  cache.names[node] = { label: label, len: len, top: top };
+  // Re-registration increments recordVersion, so resolver records from the prior owner are stale.
+  delete cache.ch[node];
+  delete cache.cc[node];
+}
 // Names that serve a website, newest record first. A site lives either in the contenthash (IPFS,
 // IPNS, Swarm) or, when that is empty, in the ERC-6821 `contentcontract` text record (web3://).
 // Contenthash wins where both are set, the same precedence the gateway applies, so an entry is
@@ -1643,7 +1649,7 @@ async function loadStats() {
         if (log.topics[0] === STATS_NAME_TOPIC) {
           const expires = BigInt('0x' + h.slice(64, 128));
           const len = parseInt(h.slice(128, 192), 16);
-          cache.names[log.topics[1]] = { label: statsHexUtf8(h.slice(192, 192 + len * 2)), len: len, top: expires > 0n };
+          statsRecordName(cache, log.topics[1], statsHexUtf8(h.slice(192, 192 + len * 2)), len, expires > 0n);
         } else if (log.topics[0] === STATS_CH_TOPIC) {
           cache.ch[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
         } else if (log.topics[2] === STATS_CC_KEY) {
