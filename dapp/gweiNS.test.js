@@ -13,9 +13,14 @@ test('integration cards use valid embedded structured data', () => {
   const categories = new Set(['community', 'defi', 'developer', 'name management', 'wallet', 'web access']);
   const linkLabels = new Set(['Chrome Web Store', 'Download', 'GitHub', 'npm', 'Website']);
   const names = new Set();
+  const ids = new Set();
 
   assert.ok(integrations.length > 0);
   for (const integration of integrations) {
+    assert.equal(typeof integration.id, 'string');
+    assert.match(integration.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.equal(ids.has(integration.id), false, `duplicate integration id: ${integration.id}`);
+    ids.add(integration.id);
     assert.equal(typeof integration.name, 'string');
     assert.ok(integration.name);
     assert.equal(names.has(integration.name), false, `duplicate integration: ${integration.name}`);
@@ -29,6 +34,226 @@ test('integration cards use valid embedded structured data', () => {
       assert.equal(new URL(link.url).protocol, 'https:');
     }
   }
+});
+
+function votingHarness() {
+  const start = html.indexOf('function votingPowerForLabelLength(length)');
+  const end = html.indexOf('// --- integration voting: chain index', start);
+  assert.notEqual(start, -1, 'voting allocation helpers must exist');
+  assert.notEqual(end, -1, 'voting allocation helpers must be bounded');
+  const context = vm.createContext({ console });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.votingApi = {
+        votingPowerForLabelLength,
+        normalizeVotingAllocations,
+        sumVotingAllocations,
+        votingAllocationsEqual,
+        aggregateVotingAllocations,
+        computeVotingTallies,
+        packVotingDraft,
+        buildChangedVotingBallots
+      };`,
+    context
+  );
+  return context.votingApi;
+}
+
+test('integration voting mirrors the byte-priced name schedule', () => {
+  const { votingPowerForLabelLength } = votingHarness();
+  assert.equal(votingPowerForLabelLength(0), 0);
+  assert.equal(votingPowerForLabelLength(1), 1000);
+  assert.equal(votingPowerForLabelLength(2), 200);
+  assert.equal(votingPowerForLabelLength(3), 100);
+  assert.equal(votingPowerForLabelLength(4), 20);
+  assert.equal(votingPowerForLabelLength(5), 1);
+  assert.equal(votingPowerForLabelLength(255), 1);
+  assert.equal(votingPowerForLabelLength(256), 0);
+  assert.equal(votingPowerForLabelLength(Number.MAX_SAFE_INTEGER), 0);
+  assert.equal(votingPowerForLabelLength(new TextEncoder().encode('🦄').length), 20);
+});
+
+test('integration tallies require the active top-level current owner and epoch', () => {
+  const { computeVotingTallies } = votingHarness();
+  const ballots = [
+    { tokenId: '1', voter: '0xalice', epoch: '2', integrationIds: ['0xaaa', '0xbbb'], votes: [4, 2] },
+    { tokenId: '2', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '3', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '4', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '5', voter: '0xalice', epoch: '1', integrationIds: ['0xunknown'], votes: [100] },
+    { tokenId: '6', voter: '0xprevious-owner', epoch: '1', integrationIds: ['0xaaa'], votes: [100] }
+  ];
+  const records = {
+    1: { label: 'ok', parent: '0', expiresAt: 1000, epoch: '2', owner: '0xalice' },
+    2: { label: 'old', parent: '0', expiresAt: 499, epoch: '1', owner: '0xalice' },
+    3: { label: 'sub', parent: '9', expiresAt: 1000, epoch: '1', owner: '0xalice' },
+    4: { label: 'new epoch', parent: '0', expiresAt: 1000, epoch: '2', owner: '0xalice' },
+    5: { label: 'unknown', parent: '0', expiresAt: 1000, epoch: '1', owner: '0xalice' },
+    6: { label: 'transferred', parent: '0', expiresAt: 1000, epoch: '1', owner: '0xnew-owner' }
+  };
+  const result = computeVotingTallies(ballots, records, { '0xaaa': 'ambire', '0xbbb': 'snapshot' }, 500);
+  assert.equal(result.ambire, 4);
+  assert.equal(result.snapshot, 2);
+  assert.deepEqual(Object.keys(result).sort(), ['ambire', 'snapshot']);
+});
+
+test('integration ballots stop and resume with ownership, expiry, and registration epoch', () => {
+  const { computeVotingTallies } = votingHarness();
+  const ballot = {
+    tokenId: '1',
+    voter: '0xalice',
+    epoch: '7',
+    integrationIds: ['0xaaa'],
+    votes: [3]
+  };
+  const known = { '0xaaa': 'ambire' };
+  const tally = (record, now = 1000) =>
+    computeVotingTallies([ballot], { 1: record }, known, now).ambire || 0;
+  const active = { label: 'alice', parent: '0', expiresAt: 1000, epoch: '7', owner: '0xalice' };
+
+  assert.equal(tally(active), 3, 'the exact expiry timestamp is still active');
+  assert.equal(tally({ ...active, owner: '0xbob' }), 0, 'transfer-away stops the old ballot');
+  assert.equal(tally(active), 3, 'transfer-back in the same epoch revives it');
+  assert.equal(tally({ ...active, expiresAt: 999 }), 0, 'expiry stops it');
+  assert.equal(tally({ ...active, expiresAt: 2000 }), 3, 'renewal in the same epoch revives it');
+  assert.equal(tally({ ...active, epoch: '8' }), 0, 're-registration cannot revive an old ballot');
+});
+
+function votingLogHarness() {
+  const start = html.indexOf('function votingLogPosition(log)');
+  const end = html.indexOf('async function loadVotingBallots()', start);
+  assert.notEqual(start, -1, 'voting event helpers must exist');
+  assert.notEqual(end, -1, 'voting event helpers must be bounded');
+  const context = vm.createContext({
+    VOTING_IFACE: {
+      parseLog(log) {
+        if (log.invalid) throw new Error('invalid log');
+        return log.parsed;
+      }
+    }
+  });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.votingLogApi = { votingLogPosition, applyVotingBallotLog };',
+    context
+  );
+  return context.votingLogApi;
+}
+
+test('voting event indexing keeps the latest replacement and accepts an empty clear', () => {
+  const { applyVotingBallotLog } = votingLogHarness();
+  const ballots = {};
+  const log = (blockNumber, logIndex, integrationIds, votes) => ({
+    blockNumber,
+    logIndex,
+    parsed: {
+      name: 'BallotCast',
+      args: { tokenId: 7n, voter: '0xAlice', epoch: 4n, integrationIds, votes }
+    }
+  });
+
+  assert.equal(applyVotingBallotLog(ballots, log('0xa', '0x1', ['0xAAA'], [2])), '7');
+  assert.equal(ballots['7'].votes[0], 2);
+  assert.equal(ballots['7'].integrationIds[0], '0xaaa');
+
+  applyVotingBallotLog(ballots, log('0x9', '0x8', ['0xBBB'], [9]));
+  assert.equal(ballots['7'].votes[0], 2, 'an older log cannot replace the ballot');
+
+  applyVotingBallotLog(ballots, log('0xa', '0x2', ['0xBBB'], [5]));
+  assert.equal(ballots['7'].votes[0], 5, 'the later log in one block wins');
+  assert.equal(ballots['7'].integrationIds[0], '0xbbb');
+
+  applyVotingBallotLog(ballots, log('0xb', '0x0', [], []));
+  assert.deepEqual(Array.from(ballots['7'].integrationIds), []);
+  assert.deepEqual(Array.from(ballots['7'].votes), []);
+
+  assert.equal(applyVotingBallotLog(ballots, { invalid: true }), undefined);
+});
+
+test('a pooled draft is packed across names while preserving signed placements', () => {
+  const { packVotingDraft, buildChangedVotingBallots } = votingHarness();
+  const names = [
+    { tokenId: '20', power: 1, allocations: { ambire: 1 } },
+    { tokenId: '10', power: 3, allocations: { ambire: 1, snapshot: 2 } }
+  ];
+  const packed = packVotingDraft(names, { ambire: 2, snapshot: 1, zswap: 1 });
+  const byToken = Object.fromEntries(Array.from(packed, name => [name.tokenId, { ...name.allocations }]));
+  assert.deepEqual(byToken['10'], { ambire: 1, snapshot: 1, zswap: 1 });
+  assert.deepEqual(byToken['20'], { ambire: 1 });
+
+  const ballots = buildChangedVotingBallots(names, packed, {
+    ambire: '0x' + '33'.repeat(32),
+    snapshot: '0x' + '11'.repeat(32),
+    zswap: '0x' + '22'.repeat(32)
+  });
+  assert.equal(ballots.length, 1, 'the unchanged name is not rewritten');
+  assert.equal(ballots[0].tokenId, 10n);
+  assert.deepEqual(Array.from(ballots[0].integrationIds), [
+    '0x' + '11'.repeat(32),
+    '0x' + '22'.repeat(32),
+    '0x' + '33'.repeat(32)
+  ]);
+  assert.deepEqual(Array.from(ballots[0].votes), [1, 1, 1]);
+});
+
+test('pooled votes split at name capacity and clearing emits an empty replacement ballot', () => {
+  const { packVotingDraft, buildChangedVotingBallots } = votingHarness();
+  const names = [
+    { tokenId: '1', power: 2, allocations: {} },
+    { tokenId: '2', power: 1, allocations: {} }
+  ];
+  const split = packVotingDraft(names, { ambire: 3 });
+  assert.equal(split[0].allocations.ambire, 2);
+  assert.equal(split[1].allocations.ambire, 1);
+
+  const clearingNames = [{ tokenId: '3', power: 1, allocations: { ambire: 1 } }];
+  const cleared = packVotingDraft(clearingNames, {});
+  const ballots = buildChangedVotingBallots(clearingNames, cleared, { ambire: '0x' + '44'.repeat(32) });
+  assert.equal(ballots.length, 1);
+  assert.deepEqual(Array.from(ballots[0].integrationIds), []);
+  assert.deepEqual(Array.from(ballots[0].votes), []);
+});
+
+test('integration voting stays page-native and submits every changed name in one cast', () => {
+  assert.match(html, /class="vote-dock" id="voteDock"/);
+  assert.match(html, /id="voteDockCount"/);
+  assert.match(html, /onclick="submitVotingDraft\(\)"/);
+  assert.match(html, /bindVotingHold\(plus, integration\.id, 1\)/);
+  assert.match(html, /localStorage\.setItem\(key, JSON\.stringify/);
+  assert.match(html, /voting\.cast\(ballots\)/);
+  assert.equal((html.match(/voting\.cast\(ballots\)/g) || []).length, 1);
+  assert.doesNotMatch(html, /vote-review-modal|voting dashboard|select names to vote/i);
+});
+
+test('integration voting estimates the complete batch before opening the wallet', () => {
+  const start = html.indexOf('async function submitVotingDraft()');
+  const end = html.indexOf('const eip6963Providers', start);
+  const source = html.slice(start, end);
+  const estimate = source.indexOf('voting.cast.estimateGas(ballots)');
+  const cast = source.indexOf('voting.cast(ballots)');
+
+  assert.notEqual(estimate, -1);
+  assert.notEqual(cast, -1);
+  assert.ok(estimate < cast, 'gas estimation must happen before the signing request');
+  assert.match(source, /estimatedGas >= VOTING_MAX_TX_GAS/);
+  assert.match(html, /const VOTING_MAX_TX_GAS = 1n << 24n;/);
+  assert.match(source, /too large for one Ethereum transaction/i);
+});
+
+test('integration voting translates contract reverts into useful messages', () => {
+  const abiStart = html.indexOf('const VOTING_ABI = [');
+  const abiEnd = html.indexOf('const VOTING_IFACE', abiStart);
+  const abiSource = html.slice(abiStart, abiEnd);
+  const helpStart = html.indexOf('const CONTRACT_ERROR_HELP = {');
+  const helpEnd = html.indexOf('function decodeContractError', helpStart);
+  const helpSource = html.slice(helpStart, helpEnd);
+
+  for (const error of ['NotNameOwner', 'InactiveName', 'TooManyAllocations', 'TooManyVotes']) {
+    assert.match(abiSource, new RegExp(`error ${error}\\(`));
+    assert.match(helpSource, new RegExp(`${error}:`));
+  }
+  assert.match(helpSource, /0x6babcc29': 'NotNameOwner'/);
+  assert.match(helpSource, /0x12d4e92d': 'InactiveName'/);
 });
 
 function pendingHarness(pending, committedAt) {

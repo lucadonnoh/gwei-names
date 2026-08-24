@@ -18,6 +18,9 @@ remappings = [
 [profile.via-ir]
 via_ir = true
 
+[fuzz]
+runs = 1000
+
 [fmt]
 line_length = 100
 
