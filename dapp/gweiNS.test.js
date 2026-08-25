@@ -55,6 +55,31 @@ test('integration voting is enabled only for the verified Sepolia deployment', (
     '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'
   );
   assert.equal(context.networks.sepolia.votingDeployBlock, 11562708);
+  assert.deepEqual(Array.from(context.networks.sepolia.rpc), [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+    'https://sepolia.gateway.tenderly.co/public',
+    'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
+  ]);
+  assert.deepEqual(Array.from(context.networks.sepolia.logsRpcs), [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+    'https://sepolia.gateway.tenderly.co/public'
+  ]);
+  assert.match(
+    html,
+    /const VOTING_ENABLED = Boolean\(VOTING_CONTRACT && VOTING_DEPLOY_BLOCK\);/
+  );
+});
+
+test('ens normalization imports only verified published package bytes', () => {
+  assert.doesNotMatch(html, /@adraffy\/ens-normalize@1\.11\.0\/\+esm/);
+  assert.match(
+    html,
+    /rel="modulepreload" href="https:\/\/cdn\.jsdelivr\.net\/npm\/@adraffy\/ens-normalize@1\.11\.0\/dist\/index\.mjs" integrity="sha384-wslUpfrOpXCfaW\/3TssDzpULPqQK2igO\/CDwvXIes3zxHdwdj\+kzqbP7dWuA4G13"/
+  );
+  assert.match(
+    html,
+    /const SOURCE_SHA384 = 'wslUpfrOpXCfaW\/3TssDzpULPqQK2igO\/CDwvXIes3zxHdwdj\+kzqbP7dWuA4G13';/
+  );
 });
 
 function votingHarness() {

@@ -12,19 +12,18 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js" integrity="sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM" crossorigin="anonymous"></script>
-<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm" integrity="sha384-wZEz5bl83QiQdUg5m/tIOQtZl9ncAoDleaNxEJNoNRmYLBpEprsT4si9P2xOvSbx" crossorigin="anonymous">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs" integrity="sha384-wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13" crossorigin="anonymous">
 <script>
-// Load ens-normalize with integrity via modulepreload. Some networks and content
-// blockers block the primary CDN entirely (the +esm module), so fall back to the
-// plain npm dist file on two mirrors, fetched and SHA-384-verified before import
-// so the fallbacks are integrity-pinned too.
+// Preload the package's published module with SRI. If the primary CDN is blocked,
+// fetch the same published bytes from a mirror and verify them before importing.
+// Avoid the CDN-generated +esm build: its bytes can change at a pinned version.
 (async () => {
+  const PRIMARY = 'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs';
   const MIRRORS = [
-    'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs',
     'https://unpkg.com/@adraffy/ens-normalize@1.11.0/dist/index.mjs'
   ];
-  // sha384 of the npm package's dist/index.mjs (identical bytes on both mirrors)
-  const MIRROR_SHA384 = 'wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13';
+  // SHA-384 of dist/index.mjs; the published bytes are identical on both CDNs.
+  const SOURCE_SHA384 = 'wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13';
 
   async function importVerified(url) {
     const res = await fetch(url, { mode: 'cors' });
@@ -33,18 +32,19 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
     let bin = '';
     for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
-    if (btoa(bin) !== MIRROR_SHA384) throw new Error('integrity mismatch');
+    if (btoa(bin) !== SOURCE_SHA384) throw new Error('integrity mismatch');
     const blobUrl = URL.createObjectURL(new Blob([buf], { type: 'text/javascript' }));
     try { return await import(blobUrl); } finally { URL.revokeObjectURL(blobUrl); }
   }
 
   let mod = null;
   try {
-    mod = await import('https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm');
+    mod = await import(PRIMARY);
   } catch (e) {
-    console.warn('Primary ens-normalize CDN failed, trying mirrors:', e);
+    console.warn('Primary ens-normalize CDN failed, trying mirror:', e);
     for (const url of MIRRORS) {
-      try { mod = await importVerified(url); break; } catch (e2) { console.warn('Mirror failed:', url, e2); }
+      try { mod = await importVerified(url); break; }
+      catch (mirrorError) { console.warn('ens-normalize mirror failed:', url, mirrorError); }
     }
   }
 
@@ -1756,8 +1756,15 @@ const NETWORKS = {
   sepolia: {
     key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
-    rpc: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://1rpc.io/sepolia', 'https://sepolia.drpc.org'],
-    logsRpcs: ['https://gateway.tenderly.co/public/sepolia'],
+    rpc: [
+      'https://ethereum-sepolia-rpc.publicnode.com',
+      'https://sepolia.gateway.tenderly.co/public',
+      'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
+    ],
+    logsRpcs: [
+      'https://ethereum-sepolia-rpc.publicnode.com',
+      'https://sepolia.gateway.tenderly.co/public'
+    ],
     deployBlock: 11142856,
     explorer: 'https://sepolia.etherscan.io',
     nft: { name: 'Etherscan', asset: 'https://sepolia.etherscan.io/nft', collection: 'https://sepolia.etherscan.io/token' },
@@ -1794,7 +1801,7 @@ const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id
 const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
 const VOTING_CONTRACT = NET.voting;
 const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
-const VOTING_ENABLED = NET.chainId === 1 && Boolean(VOTING_CONTRACT && VOTING_DEPLOY_BLOCK);
+const VOTING_ENABLED = Boolean(VOTING_CONTRACT && VOTING_DEPLOY_BLOCK);
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
