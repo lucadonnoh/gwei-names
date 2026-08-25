@@ -36,6 +36,27 @@ test('integration cards use valid embedded structured data', () => {
   }
 });
 
+test('integration voting is enabled only for the verified Sepolia deployment', () => {
+  const start = html.indexOf('const NETWORKS = {');
+  const end = html.indexOf('const NET_STORAGE_KEY', start);
+  assert.notEqual(start, -1, 'network configuration must exist');
+  assert.notEqual(end, -1, 'network configuration must be bounded');
+
+  const context = vm.createContext({});
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.networks = NETWORKS;',
+    context
+  );
+
+  assert.equal(context.networks.ethereum.voting, null);
+  assert.equal(context.networks.ethereum.votingDeployBlock, null);
+  assert.equal(
+    context.networks.sepolia.voting,
+    '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'
+  );
+  assert.equal(context.networks.sepolia.votingDeployBlock, 11562708);
+});
+
 function votingHarness() {
   const start = html.indexOf('function votingPowerForLabelLength(length)');
   const end = html.indexOf('// --- integration voting: chain index', start);

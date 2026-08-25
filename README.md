@@ -223,7 +223,7 @@ Renewal costs the same length-based fee as registration. No premium is charged o
 
 ---
 
-## Integration Voting (Implementation Ready, Not Deployed)
+## Integration Voting (Sepolia Test Deployment)
 
 The website can order its curated integration cards by `.gwei` voting power. Voting changes only the order; adding or removing an integration remains a curated decision.
 
@@ -249,7 +249,7 @@ The website combines every eligible name owned by the connected address into one
 - Integration IDs are `keccak256` hashes of stable website slugs. The current tally is reconstructed from the latest event per token and checked against current `NameNFT` records, so expiry, transfer, and re-registration are reflected without a governance transaction. A ballot stops counting while its signer does not own the name or the name is expired. It can resume after a transfer back or renewal in the same registration epoch; re-registration increments the epoch and permanently invalidates the old ballot.
 - A ballot cannot contain more nonzero allocations than its name has voting power, so oversized arrays fail before the contract walks them. The website estimates the complete batch before opening the wallet and refuses a batch at Ethereum's per-transaction gas cap. Tests cover 100-name batches with both one allocation per name and all 24 current integrations per name.
 
-Deployment is intentionally a separate step. Until a verified mainnet address and deployment block are set in `dapp/gweiNS.html`, the voting controls remain hidden and the existing integration order is unchanged. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).
+The contract is deployed and verified on Sepolia at [`0xaA2c…5005`](https://sepolia.etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005), from block `11,562,708`. Voting is enabled only when the website is switched to Sepolia; mainnet keeps the existing integration order until it has its own verified deployment. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).
 
 ---
 
