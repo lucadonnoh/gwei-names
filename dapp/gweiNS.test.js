@@ -332,7 +332,7 @@ test('pooled votes split at name capacity and clearing emits an empty replacemen
 });
 
 test('integration voting stays page-native and submits every changed name in one cast', () => {
-  assert.match(html, /class="vote-dock" id="voteDock"/);
+  assert.match(html, /class="vote-dock" id="voteDock" aria-live="polite" aria-hidden="true" inert/);
   assert.match(html, /id="voteDockCount"/);
   assert.match(html, /onclick="submitVotingDraft\(\)"/);
   assert.match(html, /bindVotingHold\(plus, integration\.id, 1\)/);
@@ -340,6 +340,16 @@ test('integration voting stays page-native and submits every changed name in one
   assert.match(html, /voting\.cast\(ballots\)/);
   assert.equal((html.match(/voting\.cast\(ballots\)/g) || []).length, 1);
   assert.doesNotMatch(html, /vote-review-modal|voting dashboard|select names to vote/i);
+});
+
+test('the signing dock appears only after the voter changes an allocation', () => {
+  assert.match(
+    html,
+    /const showDock = VOTING_ENABLED && votingReady && ownedVotingNames\.length > 0 && votingDraftDirty\(\);/
+  );
+  assert.match(html, /dock\.classList\.toggle\('show', showDock\);/);
+  assert.match(html, /dock\.setAttribute\('aria-hidden', String\(!showDock\)\);/);
+  assert.match(html, /dock\.inert = !showDock;/);
 });
 
 test('integration voting estimates the complete batch before opening the wallet', () => {

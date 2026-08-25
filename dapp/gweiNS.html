@@ -1128,7 +1128,7 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div class="int-list" id="integrationList"></div>
 </div>
 
-<div class="vote-dock" id="voteDock" aria-live="polite">
+<div class="vote-dock" id="voteDock" aria-live="polite" aria-hidden="true" inert>
   <div class="vote-dock-count" id="voteDockCount"></div>
   <button type="button" class="vote-reset" id="voteReset" onclick="resetVotingDraft()">reset</button>
   <button type="button" class="vote-sign" id="voteSign" onclick="submitVotingDraft()">sign votes</button>
@@ -3000,10 +3000,12 @@ function updateVotingUi({ animate = false, success = false } = {}) {
   const count = $('voteDockCount');
   const reset = $('voteReset');
   const sign = $('voteSign');
-  const showDock = VOTING_ENABLED && votingReady && ownedVotingNames.length > 0;
+  const showDock = VOTING_ENABLED && votingReady && ownedVotingNames.length > 0 && votingDraftDirty();
   if (dock) {
     dock.classList.toggle('show', showDock);
     dock.classList.toggle('success', success);
+    dock.setAttribute('aria-hidden', String(!showDock));
+    dock.inert = !showDock;
   }
   document.body.classList.toggle('vote-dock-open', showDock);
   if (showDock && count) {
