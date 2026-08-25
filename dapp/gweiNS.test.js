@@ -462,12 +462,16 @@ test('integration heading keeps voting context on one compact line', () => {
   assert.notEqual(end, -1, 'the integration voting caption must be bounded');
   const caption = html.slice(start, end);
 
-  assert.match(caption, /<summary>ranked by \.gwei votes<\/summary>/);
+  assert.match(caption, /<summary>vote ranking<\/summary>/);
   assert.doesNotMatch(caption, /<summary>shorter names carry more weight<\/summary>/);
   assert.match(caption, /<details class="int-power" id="integrationVotePower">/);
   assert.match(caption, /class="int-power-separator" aria-hidden="true"> · <\/span>/);
   assert.match(html, /\.int-vote-caption \.int-power \{ display: none;/);
   assert.match(html, /\.int-vote-caption \.int-power\.show \{ display: inline; \}/);
+  assert.match(
+    html,
+    /summary\.textContent = `\$\{ownedVotingNames\.length\} \$\{nameWord\} · \$\{formatVoteCount\(votingTotalPower\)\} \$\{voteWord\}`;/
+  );
 });
 
 test('the signing dock appears only after the voter changes an allocation', () => {

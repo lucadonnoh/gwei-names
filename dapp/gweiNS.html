@@ -1109,7 +1109,7 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div class="int-label">integrations</div>
   <div class="int-vote-caption" id="integrationVoteCaption">
     <details class="int-vote-help">
-      <summary>ranked by .gwei votes</summary>
+      <summary>vote ranking</summary>
       <div class="int-vote-rules">
         <p>shorter names carry more weight</p>
         <div><span>1 byte</span><span>1,000 votes</span></div>
@@ -3034,18 +3034,20 @@ function renderVotingPower() {
   if (!show) return;
 
   if (votingLoading) {
-    summary.textContent = 'finding your .gwei names…';
+    summary.textContent = 'finding names…';
     list.replaceChildren();
     panel.open = false;
     return;
   }
 
   if (!ownedVotingNames.length) {
-    summary.textContent = 'no active .gwei names';
+    summary.textContent = 'no active names';
     list.replaceChildren(integrationElement('div', 'int-power-row', 'register a name to vote'));
     return;
   }
-  summary.textContent = `${formatVoteCount(votingTotalPower)} votes from ${ownedVotingNames.length} ${ownedVotingNames.length === 1 ? 'name' : 'names'}`;
+  const voteWord = votingTotalPower === 1 ? 'vote' : 'votes';
+  const nameWord = ownedVotingNames.length === 1 ? 'name' : 'names';
+  summary.textContent = `${ownedVotingNames.length} ${nameWord} · ${formatVoteCount(votingTotalPower)} ${voteWord}`;
   const rows = [...ownedVotingNames].sort((a, b) => a.label.localeCompare(b.label)).map(name => {
     const row = integrationElement('div', 'int-power-row');
     row.append(
