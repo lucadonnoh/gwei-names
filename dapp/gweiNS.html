@@ -680,12 +680,12 @@ body.modal-open { overflow: hidden; }
 .int-vote.show { display: flex; }
 .int-vote.draft .int-vote-total::after { content: ' · draft'; color: var(--fg-dim); }
 .int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.int-vote button { width: 34px; height: 34px; min-width: 34px; margin: 0; padding: 0; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1; touch-action: manipulation; user-select: none; }
+.int-vote button { width: 34px; height: 34px; min-width: 34px; margin: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1; letter-spacing: 0; touch-action: manipulation; user-select: none; }
 .int-vote button:hover:not(:disabled) { border-color: var(--fg); background: var(--fg); color: var(--bg); }
 .int-vote button:disabled { opacity: 0.35; background: var(--bg); color: var(--fg-muted); border-color: var(--border-muted); }
 .int-vote .int-vote-own { width: auto; max-width: none; padding: 0 7px; font-size: 10px; font-variant-numeric: tabular-nums; }
 .int-vote .int-vote-minus { display: none; }
-.int-vote.has-own .int-vote-minus { display: inline-block; }
+.int-vote.has-own .int-vote-minus { display: inline-flex; }
 .int-vote-exact { display: none; width: 58px; height: 34px; min-width: 0; padding: 0 5px; border: 1px solid var(--fg); background: var(--bg); color: var(--fg); font: inherit; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
 .int-vote.editing .int-vote-own { display: none; }
 .int-vote.editing .int-vote-exact { display: inline-block; }

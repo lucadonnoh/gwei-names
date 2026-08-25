@@ -352,6 +352,14 @@ test('the signing dock appears only after the voter changes an allocation', () =
   assert.match(html, /dock\.inert = !showDock;/);
 });
 
+test('vote characters are centered without inherited button letter spacing', () => {
+  assert.match(
+    html,
+    /\.int-vote button \{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: center;[^}]*letter-spacing: 0;/
+  );
+  assert.match(html, /\.int-vote\.has-own \.int-vote-minus \{ display: inline-flex; \}/);
+});
+
 test('integration voting estimates the complete batch before opening the wallet', () => {
   const start = html.indexOf('async function submitVotingDraft()');
   const end = html.indexOf('const eip6963Providers', start);
