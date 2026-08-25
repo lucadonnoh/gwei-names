@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {NameNFT} from "../src/NameNFT.sol";
 import {GnsIntegrationVoting, IGnsVotingNameNFT} from "../src/GnsIntegrationVoting.sol";
+import {DeployGnsIntegrationVoting} from "../script/DeployGnsIntegrationVoting.s.sol";
 
 contract VotingFeeScheduleMock is IGnsVotingNameNFT {
     mapping(uint256 labelLength => uint256 fee) internal fees;
@@ -193,6 +194,26 @@ contract GnsIntegrationVotingTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(GnsIntegrationVoting.InactiveName.selector, tokenId));
         voting.cast(_singleChoice(tokenId, AMBIRE, 1));
+    }
+
+    function test_PermissionlessRenewalKeepsOwnerEpochAndBallotIdentity() public {
+        uint256 tokenId = _registerName("alice", alice);
+        vm.prank(alice);
+        voting.cast(_singleChoice(tokenId, AMBIRE, 1));
+
+        uint256 oldExpiry = nft.expiresAt(tokenId);
+        (,,, uint64 oldEpoch,) = nft.records(tokenId);
+        vm.warp(oldExpiry + 1);
+        assertEq(voting.votingPower(tokenId), 0);
+
+        vm.prank(bob);
+        nft.renew{value: nft.getFee(5)}(tokenId);
+
+        (,, uint64 newExpiry, uint64 newEpoch,) = nft.records(tokenId);
+        assertEq(nft.ownerOf(tokenId), alice);
+        assertEq(newEpoch, oldEpoch);
+        assertGt(newExpiry, block.timestamp);
+        assertEq(voting.votingPower(tokenId), 1);
     }
 
     function test_RevertEmptyBallots() public {
@@ -522,6 +543,9 @@ contract GnsIntegrationVotingMainnetForkTest is Test {
     function testFork_CastsAgainstPinnedMainnetNameNft() public {
         vm.createSelectFork(vm.rpcUrl("main3"), FORK_BLOCK);
         assertEq(NAME_NFT.codehash, NAME_NFT_CODEHASH);
+
+        DeployGnsIntegrationVoting deployment = new DeployGnsIntegrationVoting();
+        deployment.validateDeploymentTarget();
 
         NameNFT live = NameNFT(NAME_NFT);
         GnsIntegrationVoting voting = new GnsIntegrationVoting(IGnsVotingNameNFT(NAME_NFT));

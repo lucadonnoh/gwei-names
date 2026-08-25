@@ -668,6 +668,7 @@ body.modal-open { overflow: hidden; }
 .int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-size: 11px; }
 .int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
+.int-vote-disclosure { padding: 8px 12px; border-top: 1px solid var(--border-muted); color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
@@ -1129,6 +1130,7 @@ body.vote-dock-open { padding-bottom: 104px; }
           <div class="int-power-heading">your names</div>
           <div class="int-power-list" id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"></div>
         </div>
+        <div class="int-vote-disclosure">votes are public onchain · network gas applies</div>
       </div>
     </details>
   </div>
@@ -1580,7 +1582,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="#" target="_blank" rel="noopener" style="display:none;">Voting</a><span id="votingExplorerSeparator" style="display:none;"> · </span><a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
 <script>
@@ -1901,6 +1903,7 @@ if (NET.chainId !== 1) {
 { const _en = document.getElementById('nftExplorerLink'); if (_en) _en.href = EXPLORER + '/address/' + CONTRACT; }
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
 { const _eh = document.getElementById('humanExplorerLink'); if (_eh) { if (zkEnabled()) { _eh.href = EXPLORER + '/address/' + HUMAN_REGISTRAR; _eh.style.display = ''; } else { _eh.style.display = 'none'; } } }
+{ const _ev = document.getElementById('votingExplorerLink'); const _evs = document.getElementById('votingExplorerSeparator'); if (_ev && _evs && VOTING_ENABLED) { _ev.href = EXPLORER + '/address/' + VOTING_CONTRACT; _ev.style.display = ''; _evs.style.display = ''; } }
 
 // ── Network stats: scan NameRegistered + ContenthashChanged logs (chunked + cached) ──
 // Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
@@ -2602,6 +2605,18 @@ function aggregateVotingAllocations(names) {
   return aggregate;
 }
 
+function rebaseVotingDraft(previousDraft, nextConfirmed, nextTotalPower) {
+  if (!previousDraft) {
+    return { allocations: { ...nextConfirmed }, preserved: true };
+  }
+  const allocations = normalizeVotingAllocations(previousDraft);
+  const preserved = sumVotingAllocations(allocations) <= nextTotalPower;
+  return {
+    allocations: preserved ? allocations : { ...nextConfirmed },
+    preserved
+  };
+}
+
 function computeVotingTallies(ballots, recordsByToken, knownIdsByHash, now) {
   const tallies = {};
   const records = recordsByToken instanceof Map
@@ -2620,10 +2635,32 @@ function computeVotingTallies(ballots, recordsByToken, knownIdsByHash, now) {
     const integrationIds = ballot.integrationIds || [];
     const votes = ballot.votes || [];
     if (integrationIds.length !== votes.length) continue;
+    const power = votingPowerForLabelLength(textEncoder.encode(record.label).length);
+    if (!power || integrationIds.length > power) continue;
+    let allocated = 0;
+    let previousIntegrationId = '';
+    let valid = true;
+    for (let i = 0; i < integrationIds.length; i++) {
+      const integrationId = String(integrationIds[i]).toLowerCase();
+      const amount = Number(votes[i]);
+      if (!integrationId.startsWith('0x') || /^0x0*$/.test(integrationId) ||
+          (i && integrationId <= previousIntegrationId) ||
+          !Number.isSafeInteger(amount) || amount <= 0) {
+        valid = false;
+        break;
+      }
+      previousIntegrationId = integrationId;
+      allocated += amount;
+      if (allocated > power) {
+        valid = false;
+        break;
+      }
+    }
+    if (!valid) continue;
     for (let i = 0; i < integrationIds.length; i++) {
       const id = known(integrationIds[i]);
       const amount = Number(votes[i]);
-      if (!id || !Number.isSafeInteger(amount) || amount <= 0) continue;
+      if (!id) continue;
       tallies[id] = (tallies[id] || 0) + amount;
     }
   }
@@ -2728,16 +2765,22 @@ const VOTING_BALLOT_TOPIC = VOTING_IFACE.getEvent('BallotCast').topicHash;
 const VOTING_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const VOTING_HASH_BY_ID = new Map(INTEGRATIONS.map(integration => [integration.id, ethers.id(integration.id).toLowerCase()]));
 const VOTING_ID_BY_HASH = new Map([...VOTING_HASH_BY_ID].map(([id, hash]) => [hash, id]));
-const VOTING_FINALITY_BLOCKS = 12;
+const VOTING_FINALITY_FALLBACK_BLOCKS = 64;
+const VOTING_LOG_MAX_BLOCK_SPAN = 100000;
+const VOTING_LOG_RESULT_THRESHOLD = 1000;
+const VOTING_REFRESH_INTERVAL_MS = 60000;
+const VOTING_FOCUS_REFRESH_AGE_MS = 15000;
 const VOTING_MAX_TX_GAS = 1n << 24n;
-const VOTING_BALLOT_CACHE_VERSION = 3;
-const VOTING_OWNED_CACHE_VERSION = 2;
+const VOTING_BALLOT_CACHE_VERSION = 4;
+const VOTING_OWNED_CACHE_VERSION = 3;
 
 let votingBallots = new Map();
 let votingRecords = new Map();
 let votingTallies = {};
 let votingNow = 0;
 let votingLoadPromise = null;
+let votingRefreshPromise = null;
+let votingLastLoadedAt = 0;
 let votingTalliesReady = false;
 let ownedVotingNames = [];
 let votingConfirmed = {};
@@ -2758,24 +2801,129 @@ async function votingGetLogs(address, topics, fromBlock, toBlock) {
   }]);
 }
 
+function votingLogMatches(log, address, topics) {
+  if (String(log?.address).toLowerCase() !== String(address).toLowerCase()) return false;
+  for (let i = 0; i < topics.length; i++) {
+    const expected = topics[i];
+    if (expected == null) continue;
+    const actual = String(log.topics?.[i] || '').toLowerCase();
+    const choices = Array.isArray(expected) ? expected : [expected];
+    if (!choices.some(choice => String(choice).toLowerCase() === actual)) return false;
+  }
+  return true;
+}
+
+async function votingGetBlockLogs(address, topics, blockNumber) {
+  const blockTag = '0x' + blockNumber.toString(16);
+  const block = await statsRpc('eth_getBlockByNumber', [blockTag, false]);
+  if (!block?.hash || !Array.isArray(block.transactions)) {
+    throw new Error(`Could not read voting block ${blockNumber}`);
+  }
+  const transactionHashes = block.transactions.map(hash => String(hash).toLowerCase());
+  const receiptsCoverBlock = receipts => Array.isArray(receipts) &&
+    receipts.length === transactionHashes.length &&
+    receipts.every((receipt, index) =>
+      String(receipt?.transactionHash).toLowerCase() === transactionHashes[index]
+    );
+
+  let receipts = null;
+  try {
+    const blockReceipts = await statsRpc('eth_getBlockReceipts', [blockTag]);
+    if (receiptsCoverBlock(blockReceipts)) receipts = blockReceipts;
+  } catch (e) {}
+
+  // Not every RPC implements eth_getBlockReceipts. Fall back to small,
+  // sequential groups of standard receipt requests without creating a burst.
+  if (!receipts) {
+    receipts = [];
+    for (let i = 0; i < transactionHashes.length; i += 10) {
+      const chunk = transactionHashes.slice(i, i + 10);
+      receipts.push(...await Promise.all(
+        chunk.map(hash => statsRpc('eth_getTransactionReceipt', [hash]))
+      ));
+    }
+  }
+
+  const blockHash = String(block.hash).toLowerCase();
+  if (!receiptsCoverBlock(receipts) ||
+      receipts.some(receipt => String(receipt.blockHash).toLowerCase() !== blockHash)) {
+    throw new Error(`Voting block ${blockNumber} changed while reading receipts`);
+  }
+  return receipts.flatMap(receipt => receipt.logs || [])
+    .filter(log => votingLogMatches(log, address, topics));
+}
+
 async function scanVotingRanges(address, topics, fromBlock, toBlock, consume) {
   if (fromBlock > toBlock) return;
 
-  // Address- and topic-filtered voting queries are normally small, so try the
-  // complete range first. If an RPC caps block ranges, retry sequentially in
-  // conservative chunks without creating a burst of parallel requests.
-  try {
-    const logs = await votingGetLogs(address, topics, fromBlock, toBlock);
+  async function scanRange(from, to) {
+    let logs;
+    try {
+      logs = await votingGetLogs(address, topics, from, to);
+    } catch (error) {
+      if (from === to) {
+        for (const log of await votingGetBlockLogs(address, topics, from)) consume(log);
+        return;
+      }
+      const middle = Math.floor((from + to) / 2);
+      await scanRange(from, middle);
+      await scanRange(middle + 1, to);
+      return;
+    }
+
+    // Common public RPCs silently cap successful eth_getLogs responses at
+    // 1,000 results. Split those responses too, so an incomplete page is never
+    // accepted as a complete voting history.
+    if (logs.length >= VOTING_LOG_RESULT_THRESHOLD) {
+      if (from === to) {
+        for (const log of await votingGetBlockLogs(address, topics, from)) consume(log);
+        return;
+      }
+      const middle = Math.floor((from + to) / 2);
+      await scanRange(from, middle);
+      await scanRange(middle + 1, to);
+      return;
+    }
+
     for (const log of logs) consume(log);
-    return;
-  } catch (error) {
-    if (toBlock - fromBlock <= 9000) throw error;
   }
 
-  for (let from = fromBlock; from <= toBlock; from += 9001) {
-    const to = Math.min(from + 9000, toBlock);
-    const logs = await votingGetLogs(address, topics, from, to);
-    for (const log of logs) consume(log);
+  // Bound cold-start responses even when an RPC would accept the full history.
+  // Ranges and retries stay sequential to avoid rate-limit bursts.
+  for (let from = fromBlock; from <= toBlock; from += VOTING_LOG_MAX_BLOCK_SPAN) {
+    const to = Math.min(from + VOTING_LOG_MAX_BLOCK_SPAN - 1, toBlock);
+    await scanRange(from, to);
+  }
+}
+
+async function loadVotingHeads(deployBlock) {
+  const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
+  let finalized = null;
+  try {
+    const block = await statsRpc('eth_getBlockByNumber', ['finalized', false]);
+    if (block?.number != null) finalized = Number(BigInt(block.number));
+  } catch (e) {}
+  const stableHead = Math.max(
+    deployBlock - 1,
+    Math.min(latest, finalized ?? latest - VOTING_FINALITY_FALLBACK_BLOCKS)
+  );
+  return { latest, stableHead };
+}
+
+async function votingBlockHash(blockNumber, deployBlock) {
+  if (blockNumber < deployBlock) return null;
+  const block = await statsRpc('eth_getBlockByNumber', ['0x' + blockNumber.toString(16), false]);
+  if (!block?.hash) throw new Error(`Could not checkpoint voting block ${blockNumber}`);
+  return String(block.hash).toLowerCase();
+}
+
+async function votingCheckpointMatches(cache, deployBlock) {
+  if (cache.lastBlock === deployBlock - 1) return cache.lastBlockHash == null;
+  if (typeof cache.lastBlockHash !== 'string') return false;
+  try {
+    return await votingBlockHash(cache.lastBlock, deployBlock) === cache.lastBlockHash.toLowerCase();
+  } catch (e) {
+    return false;
   }
 }
 
@@ -2811,17 +2959,18 @@ function applyVotingBallotLog(ballots, log) {
 async function loadVotingBallots() {
   const deployBlock = Number(VOTING_DEPLOY_BLOCK);
   const cacheKey = `gwei_voting_ballots_${CHAIN_ID}_${String(VOTING_CONTRACT).toLowerCase()}`;
-  const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
-  const stableHead = Math.max(deployBlock - 1, latest - VOTING_FINALITY_BLOCKS);
+  const { latest, stableHead } = await loadVotingHeads(deployBlock);
   let cache = {
     version: VOTING_BALLOT_CACHE_VERSION,
     lastBlock: deployBlock - 1,
+    lastBlockHash: null,
     ballots: {}
   };
   try {
     const stored = JSON.parse(localStorage.getItem(cacheKey));
     if (stored?.version === VOTING_BALLOT_CACHE_VERSION && stored.ballots &&
-        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead) cache = stored;
+        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead &&
+        await votingCheckpointMatches(stored, deployBlock)) cache = stored;
   } catch (e) {}
 
   if (cache.lastBlock < stableHead) {
@@ -2833,6 +2982,7 @@ async function loadVotingBallots() {
       log => applyVotingBallotLog(cache.ballots, log)
     );
     cache.lastBlock = stableHead;
+    cache.lastBlockHash = await votingBlockHash(stableHead, deployBlock);
     try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
   }
 
@@ -2899,19 +3049,22 @@ async function loadIntegrationVoting() {
   votingNow = Number(latestBlock.timestamp);
   recomputeVotingTallies();
   votingTalliesReady = true;
+  votingLastLoadedAt = Date.now();
   const orderChanged = settleIntegrationOrder();
   saveIntegrationOrder();
   updateVotingUi({ animate: orderChanged });
 }
 
-function ensureIntegrationVotingLoaded() {
+function ensureIntegrationVotingLoaded({ force = false } = {}) {
   if (!VOTING_ENABLED) return Promise.resolve();
+  if (!force && votingTalliesReady) return Promise.resolve();
   if (!votingLoadPromise) {
-    votingLoadPromise = loadIntegrationVoting().catch(error => {
-      votingLoadPromise = null;
-      console.warn('Could not load integration voting:', error);
-      throw error;
-    });
+    votingLoadPromise = loadIntegrationVoting()
+      .catch(error => {
+        console.warn('Could not load integration voting:', error);
+        throw error;
+      })
+      .finally(() => { votingLoadPromise = null; });
   }
   return votingLoadPromise;
 }
@@ -2919,17 +3072,18 @@ function ensureIntegrationVotingLoaded() {
 async function loadOwnedVotingTokenIds(address) {
   const deployBlock = Number(NET.deployBlock);
   const cacheKey = `gwei_voting_owned_${CHAIN_ID}_${address.toLowerCase()}`;
-  const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
-  const stableHead = Math.max(deployBlock - 1, latest - VOTING_FINALITY_BLOCKS);
+  const { latest, stableHead } = await loadVotingHeads(deployBlock);
   let cache = {
     version: VOTING_OWNED_CACHE_VERSION,
     lastBlock: deployBlock - 1,
+    lastBlockHash: null,
     tokenIds: []
   };
   try {
     const stored = JSON.parse(localStorage.getItem(cacheKey));
     if (stored?.version === VOTING_OWNED_CACHE_VERSION && Array.isArray(stored.tokenIds) &&
-        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead) cache = stored;
+        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead &&
+        await votingCheckpointMatches(stored, deployBlock)) cache = stored;
   } catch (e) {}
 
   const stableIds = new Set(cache.tokenIds.map(String));
@@ -2940,6 +3094,7 @@ async function loadOwnedVotingTokenIds(address) {
   if (cache.lastBlock < stableHead) {
     await scanVotingRanges(CONTRACT, [VOTING_TRANSFER_TOPIC, null, toTopic], cache.lastBlock + 1, stableHead, consume);
     cache.lastBlock = stableHead;
+    cache.lastBlockHash = await votingBlockHash(stableHead, deployBlock);
     cache.tokenIds = [...stableIds];
     try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
   }
@@ -3119,22 +3274,34 @@ function clearVotingWalletState() {
   updateVotingUi();
 }
 
-async function initializeVotingWallet() {
+async function initializeVotingWallet({
+  refreshVoting = false,
+  preserveDraft = false,
+  silent = false
+} = {}) {
   if (!VOTING_ENABLED || !connectedAddress) {
     clearVotingWalletState();
-    return;
+    return { ok: true, baselineChanged: false, draftPreserved: true };
   }
   const address = connectedAddress;
-  votingReady = false;
-  votingLoading = true;
-  updateVotingUi();
+  const previousBaseline = votingReady ? votingBaselineFingerprint() : null;
+  const previousDraft = preserveDraft && votingDraftDirty()
+    ? normalizeVotingAllocations(votingDraft)
+    : null;
+  if (!silent) {
+    votingReady = false;
+    votingLoading = true;
+    updateVotingUi();
+  }
   try {
-    await ensureIntegrationVotingLoaded();
+    await ensureIntegrationVotingLoaded({ force: refreshVoting });
     const tokenIds = await loadOwnedVotingTokenIds(address);
     const records = await loadVotingRecords(tokenIds, true);
     const latestBlock = await (await getRpc()).getBlock('latest');
     const now = Number(latestBlock.timestamp);
-    if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) return;
+    if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
+      return { ok: false, cancelled: true };
+    }
 
     const names = [];
     for (const tokenId of tokenIds) {
@@ -3162,29 +3329,77 @@ async function initializeVotingWallet() {
       votingRecords.set(String(tokenId), record);
     }
 
+    const nextTotalPower = names.reduce((sum, name) => sum + name.power, 0);
+    const nextConfirmed = aggregateVotingAllocations(names);
+    const rebasedDraft = rebaseVotingDraft(previousDraft, nextConfirmed, nextTotalPower);
     ownedVotingNames = names;
-    votingTotalPower = names.reduce((sum, name) => sum + name.power, 0);
-    votingConfirmed = aggregateVotingAllocations(names);
-    votingDraft = { ...votingConfirmed };
+    votingTotalPower = nextTotalPower;
+    votingConfirmed = nextConfirmed;
+    votingDraft = rebasedDraft.allocations;
     votingNow = now;
     recomputeVotingTallies();
     votingReady = true;
     votingLoading = false;
-    restoreVotingDraft();
+    if (!preserveDraft) restoreVotingDraft();
+    else saveVotingDraft();
     updateVotingUi();
+
+    const baselineChanged = previousBaseline != null &&
+      previousBaseline !== votingBaselineFingerprint();
+    if (previousDraft && baselineChanged) {
+      showStatus(
+        rebasedDraft.preserved
+          ? 'Voting changed onchain. Your draft was kept and updated.'
+          : 'Your voting power changed. Review your votes before signing.',
+        rebasedDraft.preserved ? '' : 'error'
+      );
+    }
 
     if (pendingVoteIntent) {
       const intent = pendingVoteIntent;
       pendingVoteIntent = null;
       changeIntegrationVote(intent.id, intent.delta);
     }
+    return { ok: true, baselineChanged, draftPreserved: rebasedDraft.preserved };
   } catch (error) {
     console.warn('Could not load owned voting power:', error);
-    votingReady = false;
-    votingLoading = false;
-    updateVotingUi();
-    showStatus('Could not load your voting power. Try again.', 'error');
+    if (!silent) {
+      votingReady = false;
+      votingLoading = false;
+      updateVotingUi();
+      showStatus('Could not load your voting power. Try again.', 'error');
+    }
+    return { ok: false, error };
   }
+}
+
+function refreshIntegrationVoting({ refreshWallet = true, preserveDraft = true } = {}) {
+  if (!VOTING_ENABLED) return Promise.resolve({ ok: true });
+  if (!votingRefreshPromise) {
+    votingRefreshPromise = (async () => {
+      await ensureIntegrationVotingLoaded({ force: true });
+      if (refreshWallet && connectedAddress) {
+        return initializeVotingWallet({ preserveDraft, silent: true });
+      }
+      return { ok: true };
+    })().finally(() => { votingRefreshPromise = null; });
+  }
+  return votingRefreshPromise;
+}
+
+function refreshIntegrationVotingInBackground() {
+  if (!VOTING_ENABLED || document.hidden || votingSubmitting || votingLoading) return;
+  refreshIntegrationVoting()
+    .then(result => {
+      if (!result?.ok) throw result?.error || new Error('Could not refresh voting state');
+      const caption = $('integrationVoteCaption');
+      if (caption) caption.title = '';
+    })
+    .catch(error => {
+      console.warn('Could not refresh integration voting:', error);
+      const caption = $('integrationVoteCaption');
+      if (caption) caption.title = 'Voting data may be stale. It will retry automatically.';
+    });
 }
 
 function setIntegrationVote(id, amount) {
@@ -3303,24 +3518,28 @@ function resetVotingDraft() {
 
 async function submitVotingDraft() {
   if (!VOTING_ENABLED || !signer || !votingReady || votingSubmitting || !votingDraftDirty()) return;
-  let packed;
-  let ballots;
-  try {
-    packed = packVotingDraft(ownedVotingNames, votingDraft);
-    ballots = buildChangedVotingBallots(ownedVotingNames, packed, VOTING_HASH_BY_ID);
-  } catch (error) {
-    showStatus(error.message || 'Could not prepare votes', 'error');
-    return;
-  }
-  if (!ballots.length) {
-    resetVotingDraft();
-    return;
-  }
-
   votingSubmitting = true;
   let succeeded = false;
+  let minedTxHash = null;
   updateVotingUi();
   try {
+    const requestedDraft = normalizeVotingAllocations(votingDraft);
+    const refreshed = await refreshIntegrationVoting({ preserveDraft: true });
+    if (!refreshed?.ok) throw refreshed?.error || new Error('Could not refresh voting state');
+    if (!refreshed.draftPreserved || !votingAllocationsEqual(requestedDraft, votingDraft)) {
+      throw new Error('Your voting power changed. Review your votes and sign again.');
+    }
+    if (!votingDraftDirty()) {
+      saveVotingDraft();
+      showStatus('Votes are already up to date.', 'success');
+      succeeded = true;
+      return;
+    }
+
+    const packed = packVotingDraft(ownedVotingNames, votingDraft);
+    const ballots = buildChangedVotingBallots(ownedVotingNames, packed, VOTING_HASH_BY_ID);
+    if (!ballots.length) throw new Error('Could not prepare votes');
+
     const voting = new ethers.Contract(VOTING_CONTRACT, VOTING_ABI, signer);
     const estimatedGas = await voting.cast.estimateGas(ballots);
     if (estimatedGas >= VOTING_MAX_TX_GAS) {
@@ -3328,74 +3547,83 @@ async function submitVotingDraft() {
     }
     const tx = await wcTransaction(voting.cast(ballots), 'Approve all integration votes');
     const receipt = await waitForTx(tx);
+    minedTxHash = tx.hash;
+
+    // Re-read the public index after mining, then merge the canonical receipt
+    // logs in case the public RPC is a block behind the wallet's RPC.
+    try {
+      await ensureIntegrationVotingLoaded({ force: true });
+    } catch (error) {
+      console.warn('Could not immediately refresh mined votes:', error);
+    }
     const mutableBallots = Object.fromEntries(votingBallots);
-    const receiptTokens = new Set();
-    const ownedNamesByToken = new Map(
-      ownedVotingNames.map(name => [String(name.tokenId), name])
-    );
     for (const log of receipt.logs || []) {
       if (String(log.address).toLowerCase() === VOTING_CONTRACT.toLowerCase()) {
-        const tokenId = applyVotingBallotLog(mutableBallots, log);
-        if (tokenId) receiptTokens.add(tokenId);
+        applyVotingBallotLog(mutableBallots, log);
       }
     }
-    // Public RPC receipts normally include the decoded events. Keep the just-signed
-    // state responsive even if a wallet returns only a minimal receipt.
-    for (const ballot of ballots) {
-      const tokenId = ballot.tokenId.toString();
-      if (receiptTokens.has(tokenId)) continue;
-      const name = ownedNamesByToken.get(tokenId);
-      mutableBallots[tokenId] = {
-        tokenId,
-        voter: connectedAddress,
-        epoch: String(name?.epoch || 0),
-        integrationIds: Array.from(ballot.integrationIds, value => String(value).toLowerCase()),
-        votes: Array.from(ballot.votes, Number),
-        blockNumber: Number(receipt.blockNumber || 0),
-        logIndex: Number.MAX_SAFE_INTEGER
-      };
-    }
     votingBallots = new Map(Object.entries(mutableBallots));
-
-    const packedByToken = new Map(packed.map(name => [String(name.tokenId), name.allocations]));
-    ownedVotingNames = ownedVotingNames.map(name => ({
-      ...name,
-      allocations: { ...(packedByToken.get(String(name.tokenId)) || name.allocations) }
-    }));
-    votingConfirmed = aggregateVotingAllocations(ownedVotingNames);
-    votingDraft = { ...votingConfirmed };
-    recomputeVotingTallies();
-    saveVotingDraft();
+    const walletRefresh = await initializeVotingWallet({ preserveDraft: false, silent: true });
+    if (!walletRefresh?.ok) throw walletRefresh?.error || new Error('Could not refresh mined votes');
     settleIntegrationOrder();
     saveIntegrationOrder();
-    showStatus('Votes signed.', 'success');
+    showStatus('Votes counted.', 'success', tx.hash);
     succeeded = true;
   } catch (error) {
-    handleError(error);
+    if (minedTxHash) {
+      console.warn('Vote mined but the refreshed state could not be shown:', error);
+      showStatus('Votes mined. Live totals will refresh automatically.', 'success', minedTxHash);
+      succeeded = true;
+    } else {
+      handleError(error);
+    }
   } finally {
     votingSubmitting = false;
     updateVotingUi({ animate: succeeded, success: succeeded });
-    if (succeeded) setTimeout(() => $('voteDock')?.classList.remove('success'), 1600);
+    if (succeeded) {
+      setTimeout(() => $('voteDock')?.classList.remove('success'), 1600);
+      refreshIntegrationVotingInBackground();
+    }
   }
 }
 
 const eip6963Providers = new Map();
 
-// WalletConnect transaction helper - shows notification and handles deep links
+function safeWalletDeepLink(value) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const url = new URL(value);
+    if (['javascript:', 'data:', 'file:', 'vbscript:'].includes(url.protocol.toLowerCase())) return null;
+    return url.href;
+  } catch (e) {
+    return null;
+  }
+}
+
+// WalletConnect transaction helper - shows notification and returns mobile users to their wallet.
 async function wcTransaction(txPromise, message = 'Confirm in your wallet app') {
   if (!isWalletConnect) return txPromise;
+  const deepLink = safeWalletDeepLink(wcDeepLink);
 
   // Show persistent notification
   const notif = document.createElement('div');
   notif.id = 'wcNotif';
   notif.innerHTML = `
-    <div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:16px;text-align:center;z-index:10000;font-size:14px;">
-      <div style="margin-bottom:8px;">📱 ${message}</div>
-      <div style="font-size:12px;opacity:0.7;">Open your wallet app to approve the transaction</div>
-      ${wcDeepLink ? `<a href="${wcDeepLink}" style="display:inline-block;margin-top:8px;padding:8px 16px;background:#fff;color:#000;border-radius:4px;text-decoration:none;">Open Wallet</a>` : ''}
+      <div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:16px;text-align:center;z-index:10000;font-size:14px;">
+        <div style="margin-bottom:8px;">📱 ${message}</div>
+        <div style="font-size:12px;opacity:0.7;">Open your wallet app to approve the transaction</div>
+      ${deepLink ? `<a href="${escapeHtml(deepLink)}" style="display:inline-block;margin-top:8px;padding:8px 16px;background:#fff;color:#000;border-radius:4px;text-decoration:none;">Open Wallet</a>` : ''}
     </div>
   `;
   document.body.appendChild(notif);
+
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  const insideWalletBrowser = Boolean(window.ethereum);
+  if (deepLink && isMobile && !insideWalletBrowser) {
+    setTimeout(() => {
+      if (!document.hidden) window.location.href = deepLink;
+    }, 2000);
+  }
 
   try {
     const result = await txPromise;
@@ -3575,7 +3803,7 @@ async function connectWithWallet(walletKey) {
         projectId: '1e8390ef1c1d8a185e035912a1409749',
         chains: [CHAIN_ID],
         showQrModal: true,
-        rpcMap: { [CHAIN_ID]: 'https://ethereum-rpc.publicnode.com' },
+        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
         metadata: {
           name: 'Gwei Name Service',
           description: 'Register .gwei names',
@@ -4605,6 +4833,9 @@ document.addEventListener('visibilitychange', () => {
     // Resume timer if there's a pending commitment
     const pending = loadPending();
     if (pending) updateTimer(pendingTimerId);
+    if (Date.now() - votingLastLoadedAt >= VOTING_FOCUS_REFRESH_AGE_MS) {
+      refreshIntegrationVotingInBackground();
+    }
   }
 });
 
@@ -6649,6 +6880,7 @@ ensureIntegrationVotingLoaded().catch(error => {
   const caption = $('integrationVoteCaption');
   if (caption) caption.title = 'Voting data could not be loaded. Refresh to retry.';
 });
+if (VOTING_ENABLED) setInterval(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS);
 
 // Check for pending commit on page load (before wallet connects)
 initPending();
@@ -6877,7 +7109,6 @@ window.zkpReady = true;
 window.dispatchEvent(new Event("zkp-ready"));
 </script>
 
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>

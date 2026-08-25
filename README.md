@@ -239,7 +239,7 @@ Voting power is proportional to the fixed annual registration price, with a 5+ b
 
 Only currently active, top-level names are eligible. Expired names and subdomains contribute zero. Premiums and transaction gas do not affect voting power.
 
-The website combines every eligible name owned by the connected address into one pool. The user allocates that pool directly on the integration cards, sees the remaining amount in a small fixed dock, and signs once. The dapp deterministically packs the pooled allocation into complete per-name ballots and calls `cast(...)` once, so any number of owned names can vote in one transaction.
+The website combines every eligible name owned by the connected address into one pool. The user allocates that pool directly on the integration cards, sees the remaining amount in a small fixed dock, and signs once. The dapp deterministically packs the pooled allocation into complete per-name ballots and calls `cast(...)` once. The practical name limit depends on the allocation shape, so the complete batch is gas-estimated before the wallet opens.
 
 [`GnsIntegrationVoting.sol`](src/GnsIntegrationVoting.sol) is an ownerless, non-upgradeable, stateless event emitter:
 
@@ -247,6 +247,7 @@ The website combines every eligible name owned by the connected address into one
 - It has no admin, allowlist, treasury, fees, or mutable storage.
 - Each `BallotCast` event is the complete replacement ballot for one `(tokenId, epoch)`; an empty allocation clears it.
 - Integration IDs are `keccak256` hashes of stable website slugs. The current tally is reconstructed from the latest event per token and checked against current `NameNFT` records, so expiry, transfer, and re-registration are reflected without a governance transaction. A ballot stops counting while its signer does not own the name or the name is expired. It can resume after a transfer back or renewal in the same registration epoch; re-registration increments the epoch and permanently invalidates the old ballot.
+- `NameNFT` renewal is permissionless: anyone may pay to keep a name and its already-signed ballot active. Expiry is therefore not revocation; the owner revokes with an empty replacement ballot.
 - A ballot cannot contain more nonzero allocations than its name has voting power, so oversized arrays fail before the contract walks them. The website estimates the complete batch before opening the wallet and refuses a batch at Ethereum's per-transaction gas cap. Tests cover 100-name batches with both one allocation per name and all 24 current integrations per name.
 
 The contract is deployed and verified on Sepolia at [`0xaA2c…5005`](https://sepolia.etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005), from block `11,562,708`. Voting is enabled only when the website is switched to Sepolia; mainnet keeps the existing integration order until it has its own verified deployment. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).

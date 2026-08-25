@@ -86,7 +86,7 @@ function votingHarness() {
   const end = html.indexOf('// --- integration voting: chain index', start);
   assert.notEqual(start, -1, 'voting allocation helpers must exist');
   assert.notEqual(end, -1, 'voting allocation helpers must be bounded');
-  const context = vm.createContext({ console });
+  const context = vm.createContext({ console, textEncoder: new TextEncoder() });
   vm.runInContext(
     html.slice(start, end) + `
       globalThis.votingApi = {
@@ -95,6 +95,7 @@ function votingHarness() {
         sumVotingAllocations,
         votingAllocationsEqual,
         aggregateVotingAllocations,
+        rebaseVotingDraft,
         computeVotingTallies,
         packVotingDraft,
         buildChangedVotingBallots
@@ -116,6 +117,39 @@ test('integration voting mirrors the byte-priced name schedule', () => {
   assert.equal(votingPowerForLabelLength(256), 0);
   assert.equal(votingPowerForLabelLength(Number.MAX_SAFE_INTEGER), 0);
   assert.equal(votingPowerForLabelLength(new TextEncoder().encode('🦄').length), 20);
+});
+
+test('a fresh canonical baseline rebases a pooled draft without changing its intent', () => {
+  const { rebaseVotingDraft, packVotingDraft, buildChangedVotingBallots } = votingHarness();
+
+  const externalChange = rebaseVotingDraft(
+    { ambire: 1, snapshot: 1 },
+    { rotki: 2 },
+    2
+  );
+  assert.equal(externalChange.preserved, true);
+  assert.equal(JSON.stringify(externalChange.allocations), JSON.stringify({ ambire: 1, snapshot: 1 }));
+
+  const lostPower = rebaseVotingDraft(
+    { ambire: 2 },
+    { rotki: 1 },
+    1
+  );
+  assert.equal(lostPower.preserved, false);
+  assert.equal(JSON.stringify(lostPower.allocations), JSON.stringify({ rotki: 1 }));
+
+  const freshNames = [
+    { tokenId: '1', power: 1, allocations: { external: 1 } },
+    { tokenId: '2', power: 1, allocations: { ambire: 1 } }
+  ];
+  const packed = packVotingDraft(freshNames, externalChange.allocations);
+  const ballots = buildChangedVotingBallots(freshNames, packed, {
+    ambire: '0x' + '11'.repeat(32),
+    snapshot: '0x' + '22'.repeat(32)
+  });
+  assert.equal(ballots.length, 1, 'only the externally changed name needs replacement');
+  assert.equal(ballots[0].tokenId, 1n);
+  assert.deepEqual(Array.from(ballots[0].votes), [1]);
 });
 
 function integrationOrderHarness(storedOrder) {
@@ -223,6 +257,34 @@ test('cached order is restored before first render and refreshed after on-chain 
   assert.match(load, /updateVotingUi\(\{ animate: orderChanged \}\);/);
 });
 
+test('voting refreshes in the background and rebases immediately before signing', () => {
+  assert.match(html, /const VOTING_REFRESH_INTERVAL_MS = 60000;/);
+  assert.match(html, /setInterval\(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS\)/);
+  assert.match(html, /Date\.now\(\) - votingLastLoadedAt >= VOTING_FOCUS_REFRESH_AGE_MS/);
+
+  const submitStart = html.indexOf('async function submitVotingDraft()');
+  const submitEnd = html.indexOf('const eip6963Providers', submitStart);
+  const submit = html.slice(submitStart, submitEnd);
+  const refresh = submit.indexOf('await refreshIntegrationVoting({ preserveDraft: true })');
+  const pack = submit.indexOf('packVotingDraft(ownedVotingNames, votingDraft)');
+  const estimate = submit.indexOf('voting.cast.estimateGas(ballots)');
+  const minedRefresh = submit.indexOf('await ensureIntegrationVotingLoaded({ force: true })');
+  assert.ok(refresh >= 0 && refresh < pack && pack < estimate, 'fresh state must be packed before estimation');
+  assert.ok(minedRefresh > submit.indexOf('await waitForTx(tx)'), 'mined votes must be re-read');
+  assert.doesNotMatch(submit, /Number\.MAX_SAFE_INTEGER/, 'the UI must not synthesize missing events');
+});
+
+test('voting is disclosed and discoverable with mobile WalletConnect recovery', () => {
+  assert.match(html, /id="votingExplorerLink"/);
+  assert.match(html, /EXPLORER \+ '\/address\/' \+ VOTING_CONTRACT/);
+  assert.match(html, /votes are public onchain · network gas applies/);
+  assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: RPC_ENDPOINTS\[0\] \}/);
+  assert.match(html, /if \(deepLink && isMobile && !insideWalletBrowser\)/);
+  assert.match(html, /window\.location\.href = deepLink/);
+  assert.match(html, /}, 2000\);/);
+  assert.equal((html.match(/static\.cloudflareinsights\.com\/beacon\.min\.js/g) || []).length, 1);
+});
+
 test('integration tallies require the active top-level current owner and epoch', () => {
   const { computeVotingTallies } = votingHarness();
   const ballots = [
@@ -254,19 +316,26 @@ test('integration ballots stop and resume with ownership, expiry, and registrati
     voter: '0xalice',
     epoch: '7',
     integrationIds: ['0xaaa'],
-    votes: [3]
+    votes: [1]
   };
   const known = { '0xaaa': 'ambire' };
   const tally = (record, now = 1000) =>
     computeVotingTallies([ballot], { 1: record }, known, now).ambire || 0;
   const active = { label: 'alice', parent: '0', expiresAt: 1000, epoch: '7', owner: '0xalice' };
 
-  assert.equal(tally(active), 3, 'the exact expiry timestamp is still active');
+  assert.equal(tally(active), 1, 'the exact expiry timestamp is still active');
   assert.equal(tally({ ...active, owner: '0xbob' }), 0, 'transfer-away stops the old ballot');
-  assert.equal(tally(active), 3, 'transfer-back in the same epoch revives it');
+  assert.equal(tally(active), 1, 'transfer-back in the same epoch revives it');
   assert.equal(tally({ ...active, expiresAt: 999 }), 0, 'expiry stops it');
-  assert.equal(tally({ ...active, expiresAt: 2000 }), 3, 'renewal in the same epoch revives it');
+  assert.equal(tally({ ...active, expiresAt: 2000 }), 1, 'renewal in the same epoch revives it');
   assert.equal(tally({ ...active, epoch: '8' }), 0, 're-registration cannot revive an old ballot');
+
+  const intermediateClear = { ...ballot, voter: '0xbob', integrationIds: [], votes: [] };
+  assert.equal(
+    computeVotingTallies([intermediateClear], { 1: active }, known, 1000).ambire || 0,
+    0,
+    'an intermediate owner replacement remains the latest ballot after transfer-back'
+  );
 });
 
 function votingLogHarness() {
@@ -290,17 +359,59 @@ function votingLogHarness() {
   return context.votingLogApi;
 }
 
-function votingRangeHarness(votingGetLogs) {
+function votingRangeHarness(votingGetLogs, votingGetBlockLogs = async () => {
+  throw new Error('unexpected single-block fallback');
+}) {
   const start = html.indexOf('async function scanVotingRanges(');
   const end = html.indexOf('function votingLogPosition(log)', start);
   assert.notEqual(start, -1, 'voting range scanner must exist');
   assert.notEqual(end, -1, 'voting range scanner must be bounded');
-  const context = vm.createContext({ votingGetLogs });
+  const context = vm.createContext({
+    votingGetLogs,
+    votingGetBlockLogs,
+    VOTING_LOG_MAX_BLOCK_SPAN: 100000,
+    VOTING_LOG_RESULT_THRESHOLD: 1000
+  });
   vm.runInContext(
     html.slice(start, end) + '\nglobalThis.scanVotingRanges = scanVotingRanges;',
     context
   );
   return context.scanVotingRanges;
+}
+
+function votingReceiptHarness(statsRpc) {
+  const start = html.indexOf('function votingLogMatches(');
+  const end = html.indexOf('async function scanVotingRanges(', start);
+  assert.notEqual(start, -1, 'voting receipt fallback must exist');
+  assert.notEqual(end, -1, 'voting receipt fallback must be bounded');
+  const context = vm.createContext({ statsRpc });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.votingReceiptApi = { votingLogMatches, votingGetBlockLogs };',
+    context
+  );
+  return context.votingReceiptApi;
+}
+
+function votingCheckpointHarness(statsRpc) {
+  const start = html.indexOf('async function loadVotingHeads(');
+  const end = html.indexOf('function votingLogPosition(log)', start);
+  assert.notEqual(start, -1, 'voting checkpoint helpers must exist');
+  assert.notEqual(end, -1, 'voting checkpoint helpers must be bounded');
+  const context = vm.createContext({
+    statsRpc,
+    VOTING_FINALITY_FALLBACK_BLOCKS: 64
+  });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.votingCheckpointApi = {
+        loadVotingHeads,
+        votingBlockHash,
+        votingCheckpointMatches
+      };`,
+    context
+  );
+  return context.votingCheckpointApi;
 }
 
 test('voting ownership discovery uses one filtered historical request when supported', async () => {
@@ -322,7 +433,7 @@ test('voting ownership discovery uses one filtered historical request when suppo
   assert.deepEqual(consumed, ['1', '2']);
 });
 
-test('voting ownership discovery retries capped ranges sequentially', async () => {
+test('voting ownership discovery recursively retries capped ranges sequentially', async () => {
   const calls = [];
   let active = 0;
   let maxActive = 0;
@@ -343,23 +454,151 @@ test('voting ownership discovery retries capped ranges sequentially', async () =
 
   assert.deepEqual(calls, [
     [0, 20000],
-    [0, 9000],
-    [9001, 18001],
-    [18002, 20000]
+    [0, 10000],
+    [10001, 20000]
   ]);
   assert.equal(maxActive, 1, 'fallback requests must not create an RPC burst');
   assert.deepEqual(consumed, [
-    { fromBlock: 0, toBlock: 9000 },
-    { fromBlock: 9001, toBlock: 18001 },
-    { fromBlock: 18002, toBlock: 20000 }
+    { fromBlock: 0, toBlock: 10000 },
+    { fromBlock: 10001, toBlock: 20000 }
   ]);
 });
 
+test('voting ownership discovery keeps bisecting when small ranges are capped', async () => {
+  const calls = [];
+  let active = 0;
+  let maxActive = 0;
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (toBlock - fromBlock >= 1000) throw new Error('range capped');
+      return [{ fromBlock, toBlock }];
+    } finally {
+      active--;
+    }
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 0, 5000, log => consumed.push(log));
+
+  assert.ok(calls.some(([from, to]) => to - from < 9000), 'fallback must go below the old fixed chunk');
+  assert.equal(maxActive, 1, 'recursive requests must remain sequential');
+  assert.equal(consumed[0].fromBlock, 0);
+  assert.equal(consumed.at(-1).toBlock, 5000);
+  for (let i = 1; i < consumed.length; i++) {
+    assert.equal(consumed[i].fromBlock, consumed[i - 1].toBlock + 1);
+  }
+});
+
+test('voting log discovery splits suspicious successful result caps', async () => {
+  const calls = [];
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    if (fromBlock !== toBlock) return Array.from({ length: 1000 }, () => ({}));
+    return [{ blockNumber: fromBlock }];
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xvoting', ['0xballot'], 20, 23, log => consumed.push(log));
+
+  assert.deepEqual(consumed, [
+    { blockNumber: 20 },
+    { blockNumber: 21 },
+    { blockNumber: 22 },
+    { blockNumber: 23 }
+  ]);
+  assert.ok(calls.length > consumed.length);
+});
+
+test('voting log discovery recovers a dense single block from complete receipts', async () => {
+  const completeLogs = Array.from({ length: 1200 }, (_, index) => ({ blockNumber: 42, index }));
+  const scanVotingRanges = votingRangeHarness(
+    async () => Array.from({ length: 1000 }, () => ({})),
+    async (_address, _topics, blockNumber) => {
+      assert.equal(blockNumber, 42);
+      return completeLogs;
+    }
+  );
+  const consumed = [];
+
+  await scanVotingRanges('0xvoting', ['0xballot'], 42, 42, log => consumed.push(log));
+
+  assert.equal(consumed.length, 1200);
+  assert.equal(consumed[0].index, 0);
+  assert.equal(consumed.at(-1).index, 1199);
+});
+
+test('voting log discovery also uses receipts when a single-block query errors', async () => {
+  const scanVotingRanges = votingRangeHarness(
+    async () => { throw new Error('response too large'); },
+    async () => [{ blockNumber: 42, recovered: true }]
+  );
+  const consumed = [];
+  await scanVotingRanges('0xvoting', ['0xballot'], 42, 42, log => consumed.push(log));
+  assert.deepEqual(consumed, [{ blockNumber: 42, recovered: true }]);
+});
+
+test('single-block recovery filters complete standard transaction receipts', async () => {
+  const calls = [];
+  const blockHash = '0xblock';
+  const receipts = {
+    '0xtx1': {
+      blockHash,
+      transactionHash: '0xtx1',
+      logs: [
+        { address: '0xVoting', topics: ['0xBallot'], token: 'keep' },
+        { address: '0xOther', topics: ['0xBallot'], token: 'wrong address' }
+      ]
+    },
+    '0xtx2': {
+      blockHash,
+      transactionHash: '0xtx2',
+      logs: [
+        { address: '0xVoting', topics: ['0xOther'], token: 'wrong topic' },
+        { address: '0xVoting', topics: ['0xBallot'], token: 'also keep' }
+      ]
+    }
+  };
+  const { votingGetBlockLogs } = votingReceiptHarness(async (method, params) => {
+    calls.push([method, ...Array.from(params)]);
+    if (method === 'eth_getBlockByNumber') {
+      return { hash: blockHash, transactions: ['0xtx1', '0xtx2'] };
+    }
+    if (method === 'eth_getBlockReceipts') throw new Error('unsupported');
+    if (method === 'eth_getTransactionReceipt') return receipts[params[0]];
+    throw new Error(`unexpected method ${method}`);
+  });
+
+  const logs = await votingGetBlockLogs('0xVoting', ['0xBallot'], 42);
+
+  assert.deepEqual(Array.from(logs, log => log.token), ['keep', 'also keep']);
+  assert.equal(calls.filter(([method]) => method === 'eth_getTransactionReceipt').length, 2);
+});
+
+test('voting caches accept only a matching canonical block checkpoint', async () => {
+  let canonicalHash = '0xaaa';
+  const api = votingCheckpointHarness(async (method, params) => {
+    assert.equal(method, 'eth_getBlockByNumber');
+    assert.deepEqual(Array.from(params), ['0x2a', false]);
+    return { number: '0x2a', hash: canonicalHash };
+  });
+  const cache = { lastBlock: 42, lastBlockHash: '0xaaa' };
+
+  assert.equal(await api.votingCheckpointMatches(cache, 10), true);
+  canonicalHash = '0xbbb';
+  assert.equal(await api.votingCheckpointMatches(cache, 10), false);
+  assert.equal(await api.votingCheckpointMatches({ lastBlock: 9, lastBlockHash: null }, 10), true);
+});
+
 test('voting caches invalidate incomplete historical RPC results', () => {
-  assert.match(html, /const VOTING_BALLOT_CACHE_VERSION = 3;/);
-  assert.match(html, /const VOTING_OWNED_CACHE_VERSION = 2;/);
+  assert.match(html, /const VOTING_BALLOT_CACHE_VERSION = 4;/);
+  assert.match(html, /const VOTING_OWNED_CACHE_VERSION = 3;/);
   assert.match(html, /stored\?\.version === VOTING_BALLOT_CACHE_VERSION/);
   assert.match(html, /stored\?\.version === VOTING_OWNED_CACHE_VERSION/);
+  assert.match(html, /await votingCheckpointMatches\(stored, deployBlock\)/);
+  assert.match(html, /cache\.lastBlockHash = await votingBlockHash\(stableHead, deployBlock\)/);
 });
 
 test('voting event indexing keeps the latest replacement and accepts an empty clear', () => {
