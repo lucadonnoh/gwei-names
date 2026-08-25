@@ -61,7 +61,6 @@ test('integration voting is enabled only for the verified Sepolia deployment', (
     'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
   ]);
   assert.deepEqual(Array.from(context.networks.sepolia.logsRpcs), [
-    'https://ethereum-sepolia-rpc.publicnode.com',
     'https://sepolia.gateway.tenderly.co/public'
   ]);
   assert.match(
@@ -185,6 +184,78 @@ function votingLogHarness() {
   );
   return context.votingLogApi;
 }
+
+function votingRangeHarness(votingGetLogs) {
+  const start = html.indexOf('async function scanVotingRanges(');
+  const end = html.indexOf('function votingLogPosition(log)', start);
+  assert.notEqual(start, -1, 'voting range scanner must exist');
+  assert.notEqual(end, -1, 'voting range scanner must be bounded');
+  const context = vm.createContext({ votingGetLogs });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.scanVotingRanges = scanVotingRanges;',
+    context
+  );
+  return context.scanVotingRanges;
+}
+
+test('voting ownership discovery uses one filtered historical request when supported', async () => {
+  const calls = [];
+  const scanVotingRanges = votingRangeHarness(async (address, topics, fromBlock, toBlock) => {
+    calls.push({ address, topics, fromBlock, toBlock });
+    return [{ token: '1' }, { token: '2' }];
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 10, 25000, log => consumed.push(log.token));
+
+  assert.deepEqual(calls, [{
+    address: '0xnames',
+    topics: ['0xtransfer'],
+    fromBlock: 10,
+    toBlock: 25000
+  }]);
+  assert.deepEqual(consumed, ['1', '2']);
+});
+
+test('voting ownership discovery retries capped ranges sequentially', async () => {
+  const calls = [];
+  let active = 0;
+  let maxActive = 0;
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (calls.length === 1) throw new Error('range capped');
+      return [{ fromBlock, toBlock }];
+    } finally {
+      active--;
+    }
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 0, 20000, log => consumed.push(log));
+
+  assert.deepEqual(calls, [
+    [0, 20000],
+    [0, 9000],
+    [9001, 18001],
+    [18002, 20000]
+  ]);
+  assert.equal(maxActive, 1, 'fallback requests must not create an RPC burst');
+  assert.deepEqual(consumed, [
+    { fromBlock: 0, toBlock: 9000 },
+    { fromBlock: 9001, toBlock: 18001 },
+    { fromBlock: 18002, toBlock: 20000 }
+  ]);
+});
+
+test('voting caches invalidate incomplete historical RPC results', () => {
+  assert.match(html, /const VOTING_BALLOT_CACHE_VERSION = 3;/);
+  assert.match(html, /const VOTING_OWNED_CACHE_VERSION = 2;/);
+  assert.match(html, /stored\?\.version === VOTING_BALLOT_CACHE_VERSION/);
+  assert.match(html, /stored\?\.version === VOTING_OWNED_CACHE_VERSION/);
+});
 
 test('voting event indexing keeps the latest replacement and accepts an empty clear', () => {
   const { applyVotingBallotLog } = votingLogHarness();

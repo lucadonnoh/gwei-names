@@ -1762,7 +1762,6 @@ const NETWORKS = {
       'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
     ],
     logsRpcs: [
-      'https://ethereum-sepolia-rpc.publicnode.com',
       'https://sepolia.gateway.tenderly.co/public'
     ],
     deployBlock: 11142856,
@@ -2659,6 +2658,8 @@ const VOTING_HASH_BY_ID = new Map(INTEGRATIONS.map(integration => [integration.i
 const VOTING_ID_BY_HASH = new Map([...VOTING_HASH_BY_ID].map(([id, hash]) => [hash, id]));
 const VOTING_FINALITY_BLOCKS = 12;
 const VOTING_MAX_TX_GAS = 1n << 24n;
+const VOTING_BALLOT_CACHE_VERSION = 3;
+const VOTING_OWNED_CACHE_VERSION = 2;
 
 let votingBallots = new Map();
 let votingRecords = new Map();
@@ -2686,15 +2687,23 @@ async function votingGetLogs(address, topics, fromBlock, toBlock) {
 }
 
 async function scanVotingRanges(address, topics, fromBlock, toBlock, consume) {
-  const ranges = [];
-  for (let from = fromBlock; from <= toBlock; from += 9001) {
-    ranges.push([from, Math.min(from + 9000, toBlock)]);
+  if (fromBlock > toBlock) return;
+
+  // Address- and topic-filtered voting queries are normally small, so try the
+  // complete range first. If an RPC caps block ranges, retry sequentially in
+  // conservative chunks without creating a burst of parallel requests.
+  try {
+    const logs = await votingGetLogs(address, topics, fromBlock, toBlock);
+    for (const log of logs) consume(log);
+    return;
+  } catch (error) {
+    if (toBlock - fromBlock <= 9000) throw error;
   }
-  for (let i = 0; i < ranges.length; i += 4) {
-    const chunks = await Promise.all(ranges.slice(i, i + 4).map(([from, to]) =>
-      votingGetLogs(address, topics, from, to)
-    ));
-    for (const logs of chunks) for (const log of logs) consume(log);
+
+  for (let from = fromBlock; from <= toBlock; from += 9001) {
+    const to = Math.min(from + 9000, toBlock);
+    const logs = await votingGetLogs(address, topics, from, to);
+    for (const log of logs) consume(log);
   }
 }
 
@@ -2732,10 +2741,14 @@ async function loadVotingBallots() {
   const cacheKey = `gwei_voting_ballots_${CHAIN_ID}_${String(VOTING_CONTRACT).toLowerCase()}`;
   const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
   const stableHead = Math.max(deployBlock - 1, latest - VOTING_FINALITY_BLOCKS);
-  let cache = { version: 2, lastBlock: deployBlock - 1, ballots: {} };
+  let cache = {
+    version: VOTING_BALLOT_CACHE_VERSION,
+    lastBlock: deployBlock - 1,
+    ballots: {}
+  };
   try {
     const stored = JSON.parse(localStorage.getItem(cacheKey));
-    if (stored?.version === 2 && stored.ballots &&
+    if (stored?.version === VOTING_BALLOT_CACHE_VERSION && stored.ballots &&
         stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead) cache = stored;
   } catch (e) {}
 
@@ -2834,10 +2847,14 @@ async function loadOwnedVotingTokenIds(address) {
   const cacheKey = `gwei_voting_owned_${CHAIN_ID}_${address.toLowerCase()}`;
   const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
   const stableHead = Math.max(deployBlock - 1, latest - VOTING_FINALITY_BLOCKS);
-  let cache = { version: 1, lastBlock: deployBlock - 1, tokenIds: [] };
+  let cache = {
+    version: VOTING_OWNED_CACHE_VERSION,
+    lastBlock: deployBlock - 1,
+    tokenIds: []
+  };
   try {
     const stored = JSON.parse(localStorage.getItem(cacheKey));
-    if (stored?.version === 1 && Array.isArray(stored.tokenIds) &&
+    if (stored?.version === VOTING_OWNED_CACHE_VERSION && Array.isArray(stored.tokenIds) &&
         stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead) cache = stored;
   } catch (e) {}
 
