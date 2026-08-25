@@ -653,14 +653,16 @@ body.modal-open { overflow: hidden; }
 .int-vote-caption summary { display: inline-block; cursor: pointer; color: var(--fg); list-style: none; white-space: nowrap; }
 .int-vote-caption summary::-webkit-details-marker { display: none; }
 .int-vote-summary-label { text-decoration: underline; text-underline-offset: 2px; }
-.int-vote-rules { text-align: left; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border-muted); background: var(--surface); color: var(--fg-muted); }
+.int-vote-panel { width: min(100%, 320px); margin: 10px auto 0; border: 1px solid var(--border-muted); background: var(--surface); text-align: left; }
+.int-vote-rules { padding: 10px 12px; color: var(--fg-muted); }
 .int-vote-rules p { margin: 0 0 6px; color: var(--fg); }
 .int-vote-rules div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
 .int-vote-caption .int-power { display: none; color: var(--fg); }
 .int-vote-caption .int-power.show { display: inline; }
 .int-power-separator { color: var(--fg-muted); }
-.int-power-list { display: none; width: min(100%, 240px); margin: 8px auto 0; padding: 9px 11px; border: 1px solid var(--border-muted); background: var(--surface); }
-.int-power-list.show { display: block; }
+.int-power-section { display: none; padding: 9px 12px 10px; border-top: 1px solid var(--border-muted); }
+.int-power-section.show { display: block; }
+.int-power-heading { margin-bottom: 4px; color: var(--fg); }
 .int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 11px; }
 .int-power-row span:last-child { font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
@@ -1111,15 +1113,20 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div class="int-vote-caption" id="integrationVoteCaption">
     <details class="int-vote-details" id="integrationVoteDetails">
       <summary><span class="int-vote-summary-label">vote ranking</span><span class="int-power" id="integrationVotePower"><span class="int-power-separator" aria-hidden="true"> · </span><span id="integrationVotePowerSummary"></span></span></summary>
-      <div class="int-vote-rules">
-        <p>shorter names carry more weight</p>
-        <div><span>1 byte</span><span>1,000 votes</span></div>
-        <div><span>2 bytes</span><span>200 votes</span></div>
-        <div><span>3 bytes</span><span>100 votes</span></div>
-        <div><span>4 bytes</span><span>20 votes</span></div>
-        <div><span>5+ bytes</span><span>1 vote</span></div>
+      <div class="int-vote-panel">
+        <div class="int-vote-rules">
+          <p>shorter names carry more weight</p>
+          <div><span>1 byte</span><span>1,000 votes</span></div>
+          <div><span>2 bytes</span><span>200 votes</span></div>
+          <div><span>3 bytes</span><span>100 votes</span></div>
+          <div><span>4 bytes</span><span>20 votes</span></div>
+          <div><span>5+ bytes</span><span>1 vote</span></div>
+        </div>
+        <div class="int-power-section" id="integrationVotePowerSection">
+          <div class="int-power-heading">your names</div>
+          <div class="int-power-list" id="integrationVotePowerList"></div>
+        </div>
       </div>
-      <div class="int-power-list" id="integrationVotePowerList"></div>
     </details>
   </div>
   <div class="int-list" id="integrationList"></div>
@@ -3026,11 +3033,12 @@ function renderVotingPower() {
   const details = $('integrationVoteDetails');
   const power = $('integrationVotePower');
   const summary = $('integrationVotePowerSummary');
+  const section = $('integrationVotePowerSection');
   const list = $('integrationVotePowerList');
-  if (!details || !power || !summary || !list) return;
+  if (!details || !power || !summary || !section || !list) return;
   const show = VOTING_ENABLED && Boolean(connectedAddress) && (votingReady || votingLoading);
   power.classList.toggle('show', show);
-  list.classList.toggle('show', show);
+  section.classList.toggle('show', show);
   if (!show) return;
 
   if (votingLoading) {

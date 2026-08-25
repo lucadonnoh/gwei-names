@@ -470,14 +470,25 @@ test('integration heading uses one disclosure so Chrome keeps voting context on 
   assert.match(html, /\.int-vote-caption summary \{[^}]*display: inline-block;[^}]*white-space: nowrap;/);
   assert.match(html, /\.int-vote-caption \.int-power \{ display: none;/);
   assert.match(html, /\.int-vote-caption \.int-power\.show \{ display: inline; \}/);
-  assert.match(html, /\.int-power-list\.show \{ display: block; \}/);
   assert.match(html, /power\.classList\.toggle\('show', show\);/);
-  assert.match(html, /list\.classList\.toggle\('show', show\);/);
   assert.match(html, /details\.open = false;/);
   assert.match(
     html,
     /summary\.textContent = `\$\{ownedVotingNames\.length\} \$\{nameWord\} · \$\{formatVoteCount\(votingTotalPower\)\} \$\{voteWord\}`;/
   );
+});
+
+test('expanded voting details share one compact panel', () => {
+  const panelStart = html.indexOf('<div class="int-vote-panel">');
+  const rulesStart = html.indexOf('<div class="int-vote-rules">', panelStart);
+  const namesStart = html.indexOf('<div class="int-power-section" id="integrationVotePowerSection">', rulesStart);
+  assert.notEqual(panelStart, -1, 'the combined voting panel must exist');
+  assert.ok(panelStart < rulesStart && rulesStart < namesStart, 'rules and names must share one ordered panel');
+  assert.match(html, /<div class="int-power-heading">your names<\/div>/);
+  assert.match(html, /\.int-vote-panel \{[^}]*width: min\(100%, 320px\);[^}]*border: 1px solid var\(--border-muted\);/);
+  assert.match(html, /\.int-power-section \{[^}]*display: none;[^}]*border-top: 1px solid var\(--border-muted\);/);
+  assert.match(html, /\.int-power-section\.show \{ display: block; \}/);
+  assert.match(html, /section\.classList\.toggle\('show', show\);/);
 });
 
 test('the signing dock appears only after the voter changes an allocation', () => {
