@@ -455,6 +455,61 @@ test('integration links share one compact footer with voting controls', () => {
   assert.match(html, /if \(displayLabel !== link\.label\) anchor\.title = link\.label;/);
 });
 
+function votingPowerUiHarness({ names = [], totalPower = 0, loading = false } = {}) {
+  const start = html.indexOf('function renderVotingPower()');
+  const end = html.indexOf('function updateVotingUi(', start);
+  assert.notEqual(start, -1, 'the voting-power renderer must exist');
+  assert.notEqual(end, -1, 'the voting-power renderer must be bounded');
+
+  function makeElement(className = '', textContent = '') {
+    const classes = new Set(className ? className.split(' ') : []);
+    return {
+      className,
+      textContent,
+      title: '',
+      tabIndex: -1,
+      open: true,
+      children: [],
+      classList: {
+        toggle(name, force) {
+          const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+          if (enabled) classes.add(name);
+          else classes.delete(name);
+          return enabled;
+        },
+        contains(name) { return classes.has(name); }
+      },
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; }
+    };
+  }
+
+  const elements = {
+    integrationVoteDetails: makeElement(),
+    integrationVotePower: makeElement('int-power'),
+    integrationVotePowerSummary: makeElement(),
+    integrationVotePowerSection: makeElement('int-power-section'),
+    integrationVotePowerList: makeElement('int-power-list')
+  };
+  const context = vm.createContext({
+    VOTING_ENABLED: true,
+    connectedAddress: '0x1234',
+    votingReady: !loading,
+    votingLoading: loading,
+    ownedVotingNames: names,
+    votingTotalPower: totalPower,
+    $: id => elements[id],
+    formatVoteCount: value => Number(value).toLocaleString('en-US'),
+    integrationElement: (_tag, className, textContent) => makeElement(className, textContent)
+  });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.renderVotingPower = renderVotingPower;',
+    context
+  );
+  context.renderVotingPower();
+  return elements;
+}
+
 test('integration heading uses one disclosure so Chrome keeps voting context on one line', () => {
   const start = html.indexOf('<div class="int-vote-caption" id="integrationVoteCaption">');
   const end = html.indexOf('<div class="int-list" id="integrationList">', start);
@@ -489,6 +544,57 @@ test('expanded voting details share one compact panel', () => {
   assert.match(html, /\.int-power-section \{[^}]*display: none;[^}]*border-top: 1px solid var\(--border-muted\);/);
   assert.match(html, /\.int-power-section\.show \{ display: block; \}/);
   assert.match(html, /section\.classList\.toggle\('show', show\);/);
+});
+
+test('voting-power details handle empty, ordinary, and 100-name wallets', () => {
+  const empty = votingPowerUiHarness();
+  assert.equal(empty.integrationVotePowerSummary.textContent, 'no active names');
+  assert.equal(empty.integrationVotePowerList.children.length, 1);
+  assert.equal(empty.integrationVotePowerList.children[0].textContent, 'register a name to vote');
+
+  const singular = votingPowerUiHarness({ names: [{ label: 'solo', power: 1 }], totalPower: 1 });
+  assert.equal(singular.integrationVotePowerSummary.textContent, '1 name · 1 vote');
+  assert.equal(singular.integrationVotePowerList.tabIndex, -1);
+
+  const ordinary = votingPowerUiHarness({
+    names: [
+      { label: 'charlie', power: 1 },
+      { label: 'alpha', power: 1 },
+      { label: 'bravo', power: 1 }
+    ],
+    totalPower: 3
+  });
+  assert.equal(ordinary.integrationVotePowerSummary.textContent, '3 names · 3 votes');
+  assert.deepEqual(
+    ordinary.integrationVotePowerList.children.map(row => row.children[0].textContent),
+    ['alpha.gwei', 'bravo.gwei', 'charlie.gwei']
+  );
+  assert.equal(ordinary.integrationVotePowerList.children[0].children[0].title, 'alpha.gwei');
+  assert.equal(ordinary.integrationVotePowerList.tabIndex, -1);
+
+  const hundredNames = Array.from({ length: 100 }, (_, index) => ({
+    label: `name${String(index).padStart(3, '0')}`,
+    power: 100
+  }));
+  const large = votingPowerUiHarness({ names: hundredNames, totalPower: 10_000 });
+  assert.equal(large.integrationVotePowerSummary.textContent, '100 names · 10,000 votes');
+  assert.equal(large.integrationVotePowerList.children.length, 100);
+  assert.equal(large.integrationVotePowerList.tabIndex, 0);
+
+  const loading = votingPowerUiHarness({ loading: true });
+  assert.equal(loading.integrationVotePowerSummary.textContent, 'finding names…');
+  assert.equal(loading.integrationVoteDetails.open, false);
+});
+
+test('voting detail rows share one rhythm and the names list stays bounded', () => {
+  assert.match(html, /\.int-vote-rules div \{[^}]*padding: 2px 0;[^}]*font-size: 11px;/);
+  assert.match(html, /\.int-power-section \{[^}]*padding: 10px 12px;/);
+  assert.match(html, /\.int-power-heading \{ margin-bottom: 6px;/);
+  assert.match(html, /\.int-power-list \{[^}]*max-height: 105px;[^}]*overflow-y: auto;/);
+  assert.match(html, /\.int-power-list:focus-visible \{[^}]*outline: 1px solid var\(--fg-muted\);/);
+  assert.match(html, /\.int-power-row \{[^}]*padding: 2px 0;[^}]*font-size: 11px;/);
+  assert.match(html, /\.int-power-row span:first-child \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(html, /id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"/);
 });
 
 test('the signing dock appears only after the voter changes an allocation', () => {

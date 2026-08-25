@@ -656,15 +656,18 @@ body.modal-open { overflow: hidden; }
 .int-vote-panel { width: min(100%, 320px); margin: 10px auto 0; border: 1px solid var(--border-muted); background: var(--surface); text-align: left; }
 .int-vote-rules { padding: 10px 12px; color: var(--fg-muted); }
 .int-vote-rules p { margin: 0 0 6px; color: var(--fg); }
-.int-vote-rules div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.int-vote-rules div { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .int-vote-caption .int-power { display: none; color: var(--fg); }
 .int-vote-caption .int-power.show { display: inline; }
 .int-power-separator { color: var(--fg-muted); }
-.int-power-section { display: none; padding: 9px 12px 10px; border-top: 1px solid var(--border-muted); }
+.int-power-section { display: none; padding: 10px 12px; border-top: 1px solid var(--border-muted); }
 .int-power-section.show { display: block; }
-.int-power-heading { margin-bottom: 4px; color: var(--fg); }
-.int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 11px; }
-.int-power-row span:last-child { font-variant-numeric: tabular-nums; color: var(--fg-muted); }
+.int-power-heading { margin-bottom: 6px; color: var(--fg); }
+.int-power-list { max-height: 105px; overflow-y: auto; }
+.int-power-list:focus-visible { outline: 1px solid var(--fg-muted); outline-offset: 2px; }
+.int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-size: 11px; }
+.int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
@@ -1124,7 +1127,7 @@ body.vote-dock-open { padding-bottom: 104px; }
         </div>
         <div class="int-power-section" id="integrationVotePowerSection">
           <div class="int-power-heading">your names</div>
-          <div class="int-power-list" id="integrationVotePowerList"></div>
+          <div class="int-power-list" id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"></div>
         </div>
       </div>
     </details>
@@ -3043,6 +3046,7 @@ function renderVotingPower() {
 
   if (votingLoading) {
     summary.textContent = 'finding names…';
+    list.tabIndex = -1;
     list.replaceChildren();
     details.open = false;
     return;
@@ -3050,16 +3054,21 @@ function renderVotingPower() {
 
   if (!ownedVotingNames.length) {
     summary.textContent = 'no active names';
+    list.tabIndex = -1;
     list.replaceChildren(integrationElement('div', 'int-power-row', 'register a name to vote'));
     return;
   }
   const voteWord = votingTotalPower === 1 ? 'vote' : 'votes';
   const nameWord = ownedVotingNames.length === 1 ? 'name' : 'names';
   summary.textContent = `${ownedVotingNames.length} ${nameWord} · ${formatVoteCount(votingTotalPower)} ${voteWord}`;
+  list.tabIndex = ownedVotingNames.length > 5 ? 0 : -1;
   const rows = [...ownedVotingNames].sort((a, b) => a.label.localeCompare(b.label)).map(name => {
     const row = integrationElement('div', 'int-power-row');
+    const label = `${name.label}.gwei`;
+    const labelElement = integrationElement('span', '', label);
+    labelElement.title = label;
     row.append(
-      integrationElement('span', '', `${name.label}.gwei`),
+      labelElement,
       integrationElement('span', '', formatVoteCount(name.power))
     );
     return row;
