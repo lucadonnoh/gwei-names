@@ -1608,6 +1608,72 @@ const INTEGRATIONS = JSON.parse(document.getElementById('integrationData').textC
 const INTEGRATION_BY_ID = new Map(INTEGRATIONS.map(integration => [integration.id, integration]));
 const INTEGRATION_INDEX = new Map(INTEGRATIONS.map((integration, index) => [integration.id, index]));
 const integrationCards = new Map();
+const INTEGRATION_ORDER_CACHE_VERSION = 1;
+let integrationDisplayOrder = INTEGRATIONS.map(integration => integration.id);
+
+function normalizeIntegrationOrderIds(ids) {
+  const normalized = [];
+  const seen = new Set();
+  for (const id of Array.isArray(ids) ? ids : []) {
+    if (!INTEGRATION_BY_ID.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  for (const integration of INTEGRATIONS) {
+    if (seen.has(integration.id)) continue;
+    seen.add(integration.id);
+    normalized.push(integration.id);
+  }
+  return normalized;
+}
+
+function integrationOrdersEqual(a, b) {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+function integrationOrderCacheKey() {
+  if (!VOTING_ENABLED) return null;
+  return `gwei_voting_order_${CHAIN_ID}_${VOTING_CONTRACT.toLowerCase()}`;
+}
+
+function restoreIntegrationOrder() {
+  const key = integrationOrderCacheKey();
+  if (!key) return;
+  try {
+    const stored = JSON.parse(localStorage.getItem(key));
+    if (stored?.version !== INTEGRATION_ORDER_CACHE_VERSION ||
+        !Array.isArray(stored.integrationIds)) return;
+    integrationDisplayOrder = normalizeIntegrationOrderIds(stored.integrationIds);
+  } catch (e) {}
+}
+
+function saveIntegrationOrder() {
+  const key = integrationOrderCacheKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      version: INTEGRATION_ORDER_CACHE_VERSION,
+      integrationIds: integrationDisplayOrder
+    }));
+  } catch (e) {}
+}
+
+function rankedIntegrationOrderIds() {
+  return [...INTEGRATIONS]
+    .sort((a, b) => {
+      const tallyDelta = integrationVotingCardState(b.id).total - integrationVotingCardState(a.id).total;
+      return tallyDelta || INTEGRATION_INDEX.get(a.id) - INTEGRATION_INDEX.get(b.id);
+    })
+    .map(integration => integration.id);
+}
+
+function settleIntegrationOrder() {
+  if (!VOTING_ENABLED || !votingTalliesReady || votingDraftDirty()) return false;
+  const nextOrder = rankedIntegrationOrderIds();
+  const changed = !integrationOrdersEqual(integrationDisplayOrder, nextOrder);
+  integrationDisplayOrder = nextOrder;
+  return changed;
+}
 
 function createIntegrationCard(integration) {
   const card = integrationElement('div', 'int-card');
@@ -1687,15 +1753,13 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
     for (const [id, refs] of integrationCards) oldRects.set(id, refs.card.getBoundingClientRect());
   }
 
-  let order = [...INTEGRATIONS];
+  let order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
   if (sort && VOTING_ENABLED && votingDraftDirty() && list.children.length) {
     const currentIds = Array.from(list.children, card => card.dataset.integrationId);
     order = currentIds.map(id => INTEGRATION_BY_ID.get(id)).filter(Boolean);
   } else if (sort && VOTING_ENABLED && votingTalliesReady) {
-    order.sort((a, b) => {
-      const tallyDelta = integrationVotingCardState(b.id).total - integrationVotingCardState(a.id).total;
-      return tallyDelta || INTEGRATION_INDEX.get(a.id) - INTEGRATION_INDEX.get(b.id);
-    });
+    settleIntegrationOrder();
+    order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
   }
 
   for (const integration of order) {
@@ -2826,7 +2890,9 @@ async function loadIntegrationVoting() {
   votingNow = Number(latestBlock.timestamp);
   recomputeVotingTallies();
   votingTalliesReady = true;
-  updateVotingUi({ animate: true });
+  const orderChanged = settleIntegrationOrder();
+  saveIntegrationOrder();
+  updateVotingUi({ animate: orderChanged });
 }
 
 function ensureIntegrationVotingLoaded() {
@@ -3280,6 +3346,8 @@ async function submitVotingDraft() {
     votingDraft = { ...votingConfirmed };
     recomputeVotingTallies();
     saveVotingDraft();
+    settleIntegrationOrder();
+    saveIntegrationOrder();
     showStatus('Votes signed.', 'success');
     succeeded = true;
   } catch (error) {
@@ -6555,6 +6623,7 @@ async function doVerifyNow() {
 
 // Render the page-native voting surface immediately; live tallies arrive without
 // blocking the rest of the dapp. The controls remain absent until a deployment is configured.
+restoreIntegrationOrder();
 updateVotingUi();
 ensureIntegrationVotingLoaded().catch(error => {
   const caption = $('integrationVoteCaption');

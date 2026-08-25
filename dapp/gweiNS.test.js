@@ -118,6 +118,111 @@ test('integration voting mirrors the byte-priced name schedule', () => {
   assert.equal(votingPowerForLabelLength(new TextEncoder().encode('🦄').length), 20);
 });
 
+function integrationOrderHarness(storedOrder) {
+  const integrations = [{ id: 'alpha' }, { id: 'bravo' }, { id: 'charlie' }];
+  const storage = new Map();
+  const key = 'gwei_voting_order_11155111_0xvote';
+  if (storedOrder !== undefined) storage.set(key, JSON.stringify(storedOrder));
+  const tallies = { alpha: 0, bravo: 0, charlie: 0 };
+  let dirty = false;
+  const start = html.indexOf('const INTEGRATION_ORDER_CACHE_VERSION = 1;');
+  const end = html.indexOf('function createIntegrationCard(integration)', start);
+  assert.notEqual(start, -1, 'integration order cache helpers must exist');
+  assert.notEqual(end, -1, 'integration order cache helpers must be bounded');
+
+  const context = vm.createContext({
+    CHAIN_ID: 11155111,
+    INTEGRATIONS: integrations,
+    INTEGRATION_BY_ID: new Map(integrations.map(integration => [integration.id, integration])),
+    INTEGRATION_INDEX: new Map(integrations.map((integration, index) => [integration.id, index])),
+    VOTING_CONTRACT: '0xVote',
+    VOTING_ENABLED: true,
+    integrationVotingCardState(id) { return { total: tallies[id] || 0 }; },
+    localStorage: {
+      getItem(storageKey) { return storage.get(storageKey) ?? null; },
+      setItem(storageKey, value) { storage.set(storageKey, value); }
+    },
+    votingDraftDirty() { return dirty; },
+    votingTalliesReady: true
+  });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.integrationOrderApi = {
+        integrationOrderCacheKey,
+        integrationOrdersEqual,
+        normalizeIntegrationOrderIds,
+        rankedIntegrationOrderIds,
+        restoreIntegrationOrder,
+        saveIntegrationOrder,
+        settleIntegrationOrder,
+        getOrder: () => integrationDisplayOrder
+      };`,
+    context
+  );
+  return {
+    api: context.integrationOrderApi,
+    key,
+    storage,
+    tallies,
+    setDirty(value) { dirty = value; }
+  };
+}
+
+test('cached integration order is sanitized against the current catalog', () => {
+  const harness = integrationOrderHarness({
+    version: 1,
+    integrationIds: ['bravo', 'removed', 'bravo', 'alpha']
+  });
+
+  harness.api.restoreIntegrationOrder();
+
+  assert.equal(harness.api.integrationOrderCacheKey(), harness.key);
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+  harness.api.saveIntegrationOrder();
+  const saved = JSON.parse(harness.storage.get(harness.key));
+  assert.deepEqual(saved, {
+    version: 1,
+    integrationIds: ['bravo', 'alpha', 'charlie']
+  });
+  assert.deepEqual(Object.keys(saved).sort(), ['integrationIds', 'version']);
+});
+
+test('background voting refresh changes cached order only when settled ranking changes', () => {
+  const harness = integrationOrderHarness({
+    version: 1,
+    integrationIds: ['bravo', 'alpha', 'charlie']
+  });
+  harness.api.restoreIntegrationOrder();
+  harness.tallies.bravo = 2;
+  harness.tallies.alpha = 1;
+
+  assert.equal(harness.api.settleIntegrationOrder(), false, 'the same ranking stays still');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+
+  harness.tallies.alpha = 3;
+  harness.setDirty(true);
+  assert.equal(harness.api.settleIntegrationOrder(), false, 'an unsaved draft cannot replace global order');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+
+  harness.setDirty(false);
+  assert.equal(harness.api.settleIntegrationOrder(), true, 'a real ranking change is detected');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['alpha', 'bravo', 'charlie']);
+});
+
+test('cached order is restored before first render and refreshed after on-chain loading', () => {
+  const bootStart = html.indexOf('// Render the page-native voting surface immediately');
+  const bootEnd = html.indexOf('// Check for pending commit on page load', bootStart);
+  const boot = html.slice(bootStart, bootEnd);
+  assert.ok(boot.indexOf('restoreIntegrationOrder();') < boot.indexOf('updateVotingUi();'));
+
+  const loadStart = html.indexOf('async function loadIntegrationVoting()');
+  const loadEnd = html.indexOf('function ensureIntegrationVotingLoaded()', loadStart);
+  const load = html.slice(loadStart, loadEnd);
+  assert.match(load, /const orderChanged = settleIntegrationOrder\(\);/);
+  assert.match(load, /saveIntegrationOrder\(\);/);
+  assert.match(load, /updateVotingUi\(\{ animate: orderChanged \}\);/);
+});
+
 test('integration tallies require the active top-level current owner and epoch', () => {
   const { computeVotingTallies } = votingHarness();
   const ballots = [
