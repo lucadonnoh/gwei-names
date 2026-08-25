@@ -649,17 +649,18 @@ body.modal-open { overflow: hidden; }
 .int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 8px; }
 .int-vote-caption { display: none; font-size: 11px; color: var(--fg-muted); line-height: 1.5; text-align: center; margin: 0 auto 14px; }
 .int-vote-caption.show { display: block; }
-.int-vote-caption details { display: inline; }
-.int-vote-caption summary { display: inline; cursor: pointer; color: var(--fg); list-style: none; }
+.int-vote-caption details { display: block; }
+.int-vote-caption summary { display: inline-block; cursor: pointer; color: var(--fg); list-style: none; white-space: nowrap; }
 .int-vote-caption summary::-webkit-details-marker { display: none; }
-.int-vote-help > summary, #integrationVotePowerSummary { text-decoration: underline; text-underline-offset: 2px; }
+.int-vote-summary-label { text-decoration: underline; text-underline-offset: 2px; }
 .int-vote-rules { text-align: left; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border-muted); background: var(--surface); color: var(--fg-muted); }
 .int-vote-rules p { margin: 0 0 6px; color: var(--fg); }
 .int-vote-rules div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
 .int-vote-caption .int-power { display: none; color: var(--fg); }
 .int-vote-caption .int-power.show { display: inline; }
 .int-power-separator { color: var(--fg-muted); }
-.int-power-list { min-width: 220px; margin-top: 8px; padding: 9px 11px; border: 1px solid var(--border-muted); background: var(--surface); }
+.int-power-list { display: none; width: min(100%, 240px); margin: 8px auto 0; padding: 9px 11px; border: 1px solid var(--border-muted); background: var(--surface); }
+.int-power-list.show { display: block; }
 .int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-size: 11px; }
 .int-power-row span:last-child { font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
@@ -1108,8 +1109,8 @@ body.vote-dock-open { padding-bottom: 104px; }
 <div class="integrations" id="integrations">
   <div class="int-label">integrations</div>
   <div class="int-vote-caption" id="integrationVoteCaption">
-    <details class="int-vote-help">
-      <summary>vote ranking</summary>
+    <details class="int-vote-details" id="integrationVoteDetails">
+      <summary><span class="int-vote-summary-label">vote ranking</span><span class="int-power" id="integrationVotePower"><span class="int-power-separator" aria-hidden="true"> · </span><span id="integrationVotePowerSummary"></span></span></summary>
       <div class="int-vote-rules">
         <p>shorter names carry more weight</p>
         <div><span>1 byte</span><span>1,000 votes</span></div>
@@ -1118,9 +1119,6 @@ body.vote-dock-open { padding-bottom: 104px; }
         <div><span>4 bytes</span><span>20 votes</span></div>
         <div><span>5+ bytes</span><span>1 vote</span></div>
       </div>
-    </details>
-    <details class="int-power" id="integrationVotePower">
-      <summary><span class="int-power-separator" aria-hidden="true"> · </span><span id="integrationVotePowerSummary"></span></summary>
       <div class="int-power-list" id="integrationVotePowerList"></div>
     </details>
   </div>
@@ -3025,18 +3023,20 @@ function restoreVotingDraft() {
 }
 
 function renderVotingPower() {
-  const panel = $('integrationVotePower');
+  const details = $('integrationVoteDetails');
+  const power = $('integrationVotePower');
   const summary = $('integrationVotePowerSummary');
   const list = $('integrationVotePowerList');
-  if (!panel || !summary || !list) return;
+  if (!details || !power || !summary || !list) return;
   const show = VOTING_ENABLED && Boolean(connectedAddress) && (votingReady || votingLoading);
-  panel.classList.toggle('show', show);
+  power.classList.toggle('show', show);
+  list.classList.toggle('show', show);
   if (!show) return;
 
   if (votingLoading) {
     summary.textContent = 'finding names…';
     list.replaceChildren();
-    panel.open = false;
+    details.open = false;
     return;
   }
 

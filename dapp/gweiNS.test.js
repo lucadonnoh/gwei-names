@@ -455,19 +455,25 @@ test('integration links share one compact footer with voting controls', () => {
   assert.match(html, /if \(displayLabel !== link\.label\) anchor\.title = link\.label;/);
 });
 
-test('integration heading keeps voting context on one compact line', () => {
+test('integration heading uses one disclosure so Chrome keeps voting context on one line', () => {
   const start = html.indexOf('<div class="int-vote-caption" id="integrationVoteCaption">');
   const end = html.indexOf('<div class="int-list" id="integrationList">', start);
   assert.notEqual(start, -1, 'the integration voting caption must exist');
   assert.notEqual(end, -1, 'the integration voting caption must be bounded');
   const caption = html.slice(start, end);
 
-  assert.match(caption, /<summary>vote ranking<\/summary>/);
+  assert.equal((caption.match(/<details\b/g) || []).length, 1);
+  assert.match(caption, /<details class="int-vote-details" id="integrationVoteDetails">/);
+  assert.match(caption, /<summary><span class="int-vote-summary-label">vote ranking<\/span><span class="int-power" id="integrationVotePower">/);
   assert.doesNotMatch(caption, /<summary>shorter names carry more weight<\/summary>/);
-  assert.match(caption, /<details class="int-power" id="integrationVotePower">/);
   assert.match(caption, /class="int-power-separator" aria-hidden="true"> · <\/span>/);
+  assert.match(html, /\.int-vote-caption summary \{[^}]*display: inline-block;[^}]*white-space: nowrap;/);
   assert.match(html, /\.int-vote-caption \.int-power \{ display: none;/);
   assert.match(html, /\.int-vote-caption \.int-power\.show \{ display: inline; \}/);
+  assert.match(html, /\.int-power-list\.show \{ display: block; \}/);
+  assert.match(html, /power\.classList\.toggle\('show', show\);/);
+  assert.match(html, /list\.classList\.toggle\('show', show\);/);
+  assert.match(html, /details\.open = false;/);
   assert.match(
     html,
     /summary\.textContent = `\$\{ownedVotingNames\.length\} \$\{nameWord\} · \$\{formatVoteCount\(votingTotalPower\)\} \$\{voteWord\}`;/
