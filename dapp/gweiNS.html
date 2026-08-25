@@ -671,12 +671,10 @@ body.modal-open { overflow: hidden; }
 .int-desc { font-size: 12.5px; color: var(--fg-muted); line-height: 1.6; margin: 10px 0 12px; }
 .int-desc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
 .int-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; }
-.int-footer.many-links { flex-wrap: wrap; }
-.int-footer.many-links .int-links { flex-basis: 100%; }
-.int-links { display: flex; gap: 14px; flex-wrap: wrap; }
+.int-links { display: flex; min-width: 0; gap: 2px 14px; flex-wrap: wrap; }
 .int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
 .int-links a:hover { text-decoration: underline; }
-.int-vote { display: none; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
+.int-vote { display: none; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
 .int-vote.show { display: flex; }
 .int-vote.draft .int-vote-total::after { content: ' · draft'; color: var(--fg-dim); }
 .int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
@@ -1633,13 +1631,14 @@ function createIntegrationCard(integration) {
   card.appendChild(description);
 
   const footer = integrationElement('div', 'int-footer');
-  if (integration.links.length >= 3) footer.classList.add('many-links');
   const links = integrationElement('div', 'int-links');
   for (const link of integration.links) {
-    const anchor = integrationElement('a', '', link.label + ' ↗');
+    const displayLabel = link.label === 'Chrome Web Store' ? 'Chrome' : link.label;
+    const anchor = integrationElement('a', '', displayLabel + ' ↗');
     anchor.href = link.url;
     anchor.target = '_blank';
     anchor.rel = 'noopener';
+    if (displayLabel !== link.label) anchor.title = link.label;
     links.appendChild(anchor);
   }
   footer.appendChild(links);

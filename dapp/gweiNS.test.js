@@ -342,6 +342,14 @@ test('integration voting stays page-native and submits every changed name in one
   assert.doesNotMatch(html, /vote-review-modal|voting dashboard|select names to vote/i);
 });
 
+test('integration links share one compact footer with voting controls', () => {
+  assert.doesNotMatch(html, /many-links/);
+  assert.match(html, /\.int-links \{[^}]*min-width: 0;[^}]*gap: 2px 14px;[^}]*flex-wrap: wrap;/);
+  assert.match(html, /\.int-vote \{[^}]*flex: 0 0 auto;/);
+  assert.match(html, /const displayLabel = link\.label === 'Chrome Web Store' \? 'Chrome' : link\.label;/);
+  assert.match(html, /if \(displayLabel !== link\.label\) anchor\.title = link\.label;/);
+});
+
 test('the signing dock appears only after the voter changes an allocation', () => {
   assert.match(
     html,
