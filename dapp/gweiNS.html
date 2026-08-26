@@ -1809,7 +1809,7 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
 }
 
 // ── networks: supports mainnet + sepolia. Integration voting is enabled only
-//    after the ownerless ballot emitter has a verified deployment below. ──
+//    for the verified ownerless ballot-emitter deployments below. ──
 const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
@@ -1823,8 +1823,8 @@ const NETWORKS = {
     freeRoot: 'id',
     humanRegistrar: '0xA4283D56f523d05bBd46e483f7861d6D10Cb330A', // HumanRegistrar (mainnet, domain=gwei.domains, allowDevMode=false)
     humanRegistrarBlock: 25460588, // deploy block, for counting HumanNameClaimed events
-    voting: null, // set with votingDeployBlock after GnsIntegrationVoting is deployed and verified
-    votingDeployBlock: null,
+    voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (mainnet, verified)
+    votingDeployBlock: 25838194,
     enabled: true
   },
   sepolia: {

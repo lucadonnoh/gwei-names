@@ -36,7 +36,7 @@ test('integration cards use valid embedded structured data', () => {
   }
 });
 
-test('integration voting is enabled only for the verified Sepolia deployment', () => {
+test('integration voting is enabled for both verified deployments', () => {
   const start = html.indexOf('const NETWORKS = {');
   const end = html.indexOf('const NET_STORAGE_KEY', start);
   assert.notEqual(start, -1, 'network configuration must exist');
@@ -48,8 +48,11 @@ test('integration voting is enabled only for the verified Sepolia deployment', (
     context
   );
 
-  assert.equal(context.networks.ethereum.voting, null);
-  assert.equal(context.networks.ethereum.votingDeployBlock, null);
+  assert.equal(
+    context.networks.ethereum.voting,
+    '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'
+  );
+  assert.equal(context.networks.ethereum.votingDeployBlock, 25838194);
   assert.equal(
     context.networks.sepolia.voting,
     '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'

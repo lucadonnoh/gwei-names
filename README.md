@@ -250,7 +250,7 @@ The website combines every eligible name owned by the connected address into one
 - `NameNFT` renewal is permissionless: anyone may pay to keep a name and its already-signed ballot active. Expiry is therefore not revocation; the owner revokes with an empty replacement ballot.
 - A ballot cannot contain more nonzero allocations than its name has voting power, so oversized arrays fail before the contract walks them. The website estimates the complete batch before opening the wallet and refuses a batch at Ethereum's per-transaction gas cap. Tests cover 100-name batches with both one allocation per name and all 24 current integrations per name.
 
-The contract is deployed and verified on Sepolia at [`0xaA2c…5005`](https://sepolia.etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005), from block `11,562,708`. Voting is enabled only when the website is switched to Sepolia; mainnet keeps the existing integration order until it has its own verified deployment. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).
+The contract is deployed and verified at the same address, [`0xaA2c…5005`](https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005), on Ethereum mainnet from block `25,838,194` and on [Sepolia](https://sepolia.etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005) from block `11,562,708`. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).
 
 ---
 
@@ -790,7 +790,7 @@ AI-assisted audits performed on the upstream codebase:
 
 - **Dapp:** [gwei.domains](https://gwei.domains) (source: `dapp/gweiNS.html`)
 - **JS SDK:** [`gns-utils`](sdk/)
-- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A)
+- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A) · [Integration Voting](https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005)
 - **Upstream (wei-names):** https://github.com/z0r0z/wei-names
 - **ENSIP-15:** https://docs.ens.domains/ensip/15/
 - **ens-normalize:** https://github.com/adraffy/ens-normalize.js
