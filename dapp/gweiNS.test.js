@@ -284,11 +284,10 @@ test('voting rebases before signing, applies the receipt immediately, then refre
   assert.doesNotMatch(submit, /Number\.MAX_SAFE_INTEGER/, 'the UI must not synthesize missing events');
 });
 
-test('voting is disclosed and discoverable with mobile WalletConnect recovery', () => {
+test('voting is discoverable with mobile WalletConnect recovery', () => {
   assert.match(html, /id="votingExplorerLink" href="https:\/\/etherscan\.io\/address\/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005"/);
   assert.doesNotMatch(html, /votingExplorerSeparator|id="votingExplorerLink"[^>]*display:none/);
   assert.match(html, /EXPLORER \+ '\/address\/' \+ VOTING_CONTRACT/);
-  assert.match(html, /votes are public onchain · network gas applies/);
   assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: RPC_ENDPOINTS\[0\] \}/);
   assert.match(html, /if \(deepLink && isMobile && !insideWalletBrowser\)/);
   assert.match(html, /window\.location\.href = deepLink/);
@@ -465,7 +464,6 @@ function votingCheckpointHarness(statsRpc) {
 function votingOwnedFastPathHarness({
   logs = [],
   results,
-  useIndexer = true,
   indexerTimeoutMs = 3000,
   fetchImpl = async () => { throw new Error('unexpected indexer request'); }
 }) {
@@ -482,7 +480,6 @@ function votingOwnedFastPathHarness({
     VOTING_INDEXER_TOTAL_TIMEOUT_MS: 5000,
     VOTING_INDEXER_MAX_PAGES: 20,
     VOTING_INDEXER_MAX_TOKENS: 2000,
-    votingUseIndexer: useIndexer,
     URL,
     AbortController,
     setTimeout,
@@ -583,19 +580,7 @@ test('indexed ownership pages are accepted only after the same onchain balance p
   assert.match(html, /if \(indexedIds !== null\) return indexedIds;/);
 });
 
-test('voters can skip the indexer and its timeout covers the complete response body', async () => {
-  let fetches = 0;
-  const rpcOnly = votingOwnedFastPathHarness({
-    useIndexer: false,
-    results: [],
-    async fetchImpl() { fetches++; }
-  });
-  assert.equal(
-    await rpcOnly.tryLoadIndexedOwnedVotingTokenIds('0xabc', 77),
-    null
-  );
-  assert.equal(fetches, 0, 'RPC-only mode must not contact Blockscout');
-
+test('the indexer timeout covers the complete response body', async () => {
   let responseSignal;
   const stalledBody = votingOwnedFastPathHarness({
     results: [],
@@ -619,10 +604,6 @@ test('voters can skip the indexer and its timeout covers the complete response b
   ]);
   assert.equal(result, null, 'a stalled JSON body must fall back instead of hanging');
   assert.equal(responseSignal.aborted, true);
-
-  assert.match(html, /names via Blockscout \(address \+ IP\)/);
-  assert.match(html, /use RPC only/);
-  assert.match(html, /localStorage\.setItem\(VOTING_LOOKUP_MODE_KEY, votingUseIndexer \? 'indexer' : 'rpc'\)/);
 });
 
 test('historical RPC requests have a bounded per-provider timeout', () => {
@@ -1044,7 +1025,6 @@ function votingPowerUiHarness({ names = [], totalPower = 0, loading = false } = 
     ownedVotingNames: names,
     votingTotalPower: totalPower,
     $: id => elements[id],
-    renderVotingLookupMode() {},
     formatVoteCount: value => Number(value).toLocaleString('en-US'),
     integrationElement: (_tag, className, textContent) => makeElement(className, textContent)
   });
