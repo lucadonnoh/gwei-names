@@ -1133,11 +1133,15 @@ test('the signing dock appears only after the voter changes an allocation', () =
   assert.match(html, /dock\.inert = !showDock;/);
 });
 
-test('vote characters are centered without inherited button letter spacing', () => {
+test('vote characters are optically centered without inherited button letter spacing', () => {
   assert.match(
     html,
-    /\.int-vote button \{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: center;[^}]*letter-spacing: 0;/
+    /\.int-vote button \{[^}]*width: 34px;[^}]*height: 34px;[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: center;[^}]*letter-spacing: 0;/
   );
+  assert.match(html, /\.int-vote-plus-arrow \{ display: block; transform: translateY\(-2px\); \}/);
+  assert.match(html, /const plusArrow = integrationElement\('span', 'int-vote-plus-arrow', '↑'\);/);
+  assert.match(html, /plusArrow\.setAttribute\('aria-hidden', 'true'\);/);
+  assert.match(html, /plus\.setAttribute\('aria-label', `Add one vote to \$\{integration\.name\}`\);/);
   assert.match(html, /\.int-vote\.has-own \.int-vote-minus \{ display: inline-flex; \}/);
 });
 
