@@ -680,19 +680,29 @@ body.modal-open { overflow: hidden; }
 .int-links { display: flex; min-width: 0; gap: 2px 14px; flex-wrap: wrap; }
 .int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
 .int-links a:hover { text-decoration: underline; }
-.int-vote { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
-.int-vote.draft .int-vote-total::after { content: ' · draft'; color: var(--fg-dim); }
+.int-vote { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; white-space: nowrap; }
 .int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.int-vote.has-own:not(.draft):not(.editing) .int-vote-total::after { content: ' ·'; color: var(--fg-dim); }
+.int-vote-stepper { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; height: 34px; }
 .int-vote button { width: 34px; height: 34px; min-width: 34px; margin: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1; letter-spacing: 0; touch-action: manipulation; user-select: none; }
 .int-vote button:hover:not(:disabled) { border-color: var(--fg); background: var(--fg); color: var(--bg); }
 .int-vote button:disabled { opacity: 0.35; background: var(--bg); color: var(--fg-muted); border-color: var(--border-muted); }
-.int-vote .int-vote-own { width: auto; max-width: none; padding: 0 7px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.int-vote .int-vote-own { display: none; width: auto; max-width: none; padding: 0 5px; border: 0; background: transparent; color: var(--fg-muted); font-size: 10px; text-transform: none; font-variant-numeric: tabular-nums; }
+.int-vote.has-own .int-vote-own, .int-vote.draft .int-vote-own { display: inline-flex; }
+.int-vote.has-own:not(.draft):not(.editing) .int-vote-own:hover:not(:disabled) { background: transparent; color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+.int-vote.has-own:not(.draft):not(.editing) .int-vote-own:focus-visible { outline: 1px solid var(--fg-muted); outline-offset: 2px; }
 .int-vote-plus-arrow { display: block; transform: translateY(-2px); }
 .int-vote .int-vote-minus { display: none; }
-.int-vote.has-own .int-vote-minus { display: inline-flex; }
+.int-vote.draft .int-vote-minus, .int-vote.editing .int-vote-minus { display: inline-flex; }
+.int-vote.draft .int-vote-stepper, .int-vote.editing .int-vote-stepper { gap: 0; box-shadow: inset 0 0 0 1px var(--border-muted); }
+.int-vote.draft .int-vote-stepper button, .int-vote.editing .int-vote-stepper button { height: 34px; border: 0; background: transparent; }
+.int-vote.draft .int-vote-stepper button:hover:not(:disabled), .int-vote.editing .int-vote-stepper button:hover:not(:disabled) { background: var(--fg); color: var(--bg); }
+.int-vote.draft .int-vote-own, .int-vote.editing .int-vote-own { padding: 0 9px; }
+.int-vote.draft .int-vote-own, .int-vote.draft .int-vote-plus, .int-vote.editing .int-vote-exact, .int-vote.editing .int-vote-plus { border-left: 1px solid var(--border-muted); }
 .int-vote-exact { display: none; width: 58px; height: 34px; min-width: 0; padding: 0 5px; border: 1px solid var(--fg); background: var(--bg); color: var(--fg); font: inherit; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
 .int-vote.editing .int-vote-own { display: none; }
-.int-vote.editing .int-vote-exact { display: inline-block; }
+.int-vote.editing .int-vote-exact { display: inline-block; height: 34px; border-top: 0; border-right: 0; border-bottom: 0; background: transparent; }
+.int-vote.editing .int-vote-exact:focus { outline: none; border-bottom: 2px solid var(--fg); }
 .vote-dock { position: fixed; z-index: 8000; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translate(-50%, 130%); width: min(456px, calc(100% - 24px)); display: flex; align-items: center; gap: 8px; padding: 9px; border: 1.5px solid var(--fg); background: var(--bg); color: var(--fg); box-shadow: 0 8px 30px rgba(0,0,0,0.14); opacity: 0; pointer-events: none; transition: transform 0.22s ease, opacity 0.18s ease; }
 .vote-dock.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
 .vote-dock-count { min-width: 0; flex: 1; padding-left: 3px; font-size: 11px; line-height: 1.25; color: var(--fg-muted); }
@@ -1716,13 +1726,15 @@ function createIntegrationCard(integration) {
 
   const vote = integrationElement('div', 'int-vote');
   const total = integrationElement('span', 'int-vote-total');
+  const stepper = integrationElement('div', 'int-vote-stepper');
+  stepper.setAttribute('role', 'group');
+  stepper.setAttribute('aria-label', `Vote allocation for ${integration.name}`);
   const minus = integrationElement('button', 'int-vote-minus', '−');
   minus.type = 'button';
   minus.setAttribute('aria-label', `Remove one vote from ${integration.name}`);
   const own = integrationElement('button', 'int-vote-own');
   own.type = 'button';
   own.title = 'Set an exact amount';
-  own.setAttribute('aria-label', `Edit your votes for ${integration.name}`);
   const exact = integrationElement('input', 'int-vote-exact');
   exact.type = 'number';
   exact.min = '0';
@@ -1745,11 +1757,24 @@ function createIntegrationCard(integration) {
     if (event.key === 'Escape') { event.preventDefault(); cancelExactVoteEdit(integration.id); }
   });
 
-  vote.append(total, minus, own, exact, plus);
+  stepper.append(minus, own, exact, plus);
+  vote.append(total, stepper);
   footer.appendChild(vote);
   card.appendChild(footer);
-  integrationCards.set(integration.id, { card, vote, total, minus, own, exact, plus });
+  integrationCards.set(integration.id, { card, vote, total, stepper, minus, own, exact, plus });
   return card;
+}
+
+function renderIntegrationVotingControls(refs, state) {
+  refs.vote.classList.toggle('has-own', state.own > 0);
+  refs.vote.classList.toggle('draft', state.draft);
+  refs.total.textContent = state.loading ? '…' : `${formatVoteCount(state.total)} votes`;
+  refs.own.textContent = `${formatVoteCount(state.own)} yours`;
+  refs.minus.disabled = !votingReady || state.own === 0 || votingSubmitting;
+  refs.own.disabled = !votingReady || votingSubmitting;
+  refs.plus.disabled = Boolean(connectedAddress) && (!votingReady || state.remaining === 0 || votingSubmitting);
+  refs.exact.disabled = !votingReady || votingSubmitting;
+  refs.exact.max = String(votingTotalPower);
 }
 
 function renderIntegrations({ sort = true, animate = false } = {}) {
@@ -1776,14 +1801,7 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
       return integrationCards.get(integration.id);
     })();
     const state = integrationVotingCardState(integration.id);
-    refs.vote.classList.toggle('has-own', state.own > 0);
-    refs.vote.classList.toggle('draft', state.draft);
-    refs.total.textContent = state.loading ? '…' : `${formatVoteCount(state.total)} votes`;
-    refs.own.textContent = `you ${formatVoteCount(state.own)}`;
-    refs.own.style.display = state.own > 0 ? '' : 'none';
-    refs.minus.disabled = !votingReady || state.own === 0 || votingSubmitting;
-    refs.plus.disabled = Boolean(connectedAddress) && (!votingReady || state.remaining === 0 || votingSubmitting);
-    refs.exact.max = String(votingTotalPower);
+    renderIntegrationVotingControls(refs, state);
     list.appendChild(refs.card);
   }
 

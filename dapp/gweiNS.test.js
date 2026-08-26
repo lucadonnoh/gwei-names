@@ -1133,16 +1133,96 @@ test('the signing dock appears only after the voter changes an allocation', () =
   assert.match(html, /dock\.inert = !showDock;/);
 });
 
-test('vote characters are optically centered without inherited button letter spacing', () => {
+function votingControlsHarness({ ready = true, submitting = false, connected = true, totalPower = 5 } = {}) {
+  const start = html.indexOf('function renderIntegrationVotingControls(refs, state)');
+  const end = html.indexOf('function renderIntegrations(', start);
+  assert.notEqual(start, -1, 'the voting-control renderer must exist');
+  assert.notEqual(end, -1, 'the voting-control renderer must be bounded');
+  const context = vm.createContext({
+    formatVoteCount: value => Number(value).toLocaleString('en-US'),
+    votingReady: ready,
+    votingSubmitting: submitting,
+    connectedAddress: connected ? '0x1234' : null,
+    votingTotalPower: totalPower
+  });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.renderVotingControls = renderIntegrationVotingControls;',
+    context
+  );
+  return context;
+}
+
+function votingControlRefs() {
+  const classes = new Set();
+  return {
+    classes,
+    refs: {
+      vote: { classList: { toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name) } },
+      total: {},
+      own: {},
+      minus: {},
+      plus: {},
+      exact: {}
+    }
+  };
+}
+
+test('settled vote controls stay quiet and draft controls expose one stepper', () => {
+  const context = votingControlsHarness();
+  const settled = votingControlRefs();
+  context.renderVotingControls(settled.refs, {
+    total: 5,
+    own: 4,
+    remaining: 1,
+    draft: false,
+    loading: false
+  });
+  assert.equal(settled.classes.has('has-own'), true);
+  assert.equal(settled.classes.has('draft'), false);
+  assert.equal(settled.refs.total.textContent, '5 votes');
+  assert.equal(settled.refs.own.textContent, '4 yours');
+  assert.equal(settled.refs.plus.disabled, false);
+  assert.equal(settled.refs.own.disabled, false);
+  assert.equal(settled.refs.exact.max, '5');
+
+  const clearedDraft = votingControlRefs();
+  context.renderVotingControls(clearedDraft.refs, {
+    total: 1,
+    own: 0,
+    remaining: 5,
+    draft: true,
+    loading: false
+  });
+  assert.equal(clearedDraft.classes.has('has-own'), false);
+  assert.equal(clearedDraft.classes.has('draft'), true);
+  assert.equal(clearedDraft.refs.own.textContent, '0 yours');
+  assert.equal(clearedDraft.refs.minus.disabled, true);
+
+  assert.doesNotMatch(html, /\.int-vote\.draft \.int-vote-total::after/);
+  assert.match(html, /\.int-vote\.has-own:not\(\.draft\):not\(\.editing\) \.int-vote-total::after \{ content: ' ·';/);
+  assert.match(html, /\.int-vote\.draft \.int-vote-stepper, \.int-vote\.editing \.int-vote-stepper \{ gap: 0; box-shadow: inset 0 0 0 1px var\(--border-muted\); \}/);
+  assert.match(html, /\.int-vote\.draft \.int-vote-stepper button, \.int-vote\.editing \.int-vote-stepper button \{ height: 34px;/);
+  assert.match(html, /\.int-vote\.editing \.int-vote-exact \{ display: inline-block; height: 34px;/);
+  assert.match(html, /\.int-vote\.draft \.int-vote-minus, \.int-vote\.editing \.int-vote-minus \{ display: inline-flex; \}/);
+  assert.match(html, /stepper\.append\(minus, own, exact, plus\);\s*vote\.append\(total, stepper\);/);
+  assert.match(html, /stepper\.setAttribute\('role', 'group'\);/);
+});
+
+test('vote controls keep stable targets, optical centering, and accessible labels', () => {
   assert.match(
     html,
     /\.int-vote button \{[^}]*width: 34px;[^}]*height: 34px;[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: center;[^}]*letter-spacing: 0;/
   );
+  assert.match(html, /\.int-vote-stepper \{[^}]*justify-content: flex-end;[^}]*height: 34px;/);
+  assert.match(html, /\.int-vote \.int-vote-own \{[^}]*border: 0;[^}]*background: transparent;[^}]*text-transform: none;/);
   assert.match(html, /\.int-vote-plus-arrow \{ display: block; transform: translateY\(-2px\); \}/);
   assert.match(html, /const plusArrow = integrationElement\('span', 'int-vote-plus-arrow', '↑'\);/);
   assert.match(html, /plusArrow\.setAttribute\('aria-hidden', 'true'\);/);
   assert.match(html, /plus\.setAttribute\('aria-label', `Add one vote to \$\{integration\.name\}`\);/);
-  assert.match(html, /\.int-vote\.has-own \.int-vote-minus \{ display: inline-flex; \}/);
+  assert.match(html, /stepper\.setAttribute\('aria-label', `Vote allocation for \$\{integration\.name\}`\);/);
+  assert.doesNotMatch(html, /own\.setAttribute\('aria-label'/);
+  assert.match(html, /refs\.own\.disabled = !votingReady \|\| votingSubmitting;/);
+  assert.match(html, /refs\.exact\.disabled = !votingReady \|\| votingSubmitting;/);
 });
 
 test('integration voting estimates the complete batch before opening the wallet', () => {
