@@ -257,7 +257,7 @@ test('cached order is restored before first render and refreshed after on-chain 
   assert.match(load, /updateVotingUi\(\{ animate: orderChanged \}\);/);
 });
 
-test('voting refreshes in the background and rebases immediately before signing', () => {
+test('voting rebases before signing, applies the receipt immediately, then refreshes in the background', () => {
   assert.match(html, /const VOTING_REFRESH_INTERVAL_MS = 60000;/);
   assert.match(html, /setInterval\(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS\)/);
   assert.match(html, /Date\.now\(\) - votingLastLoadedAt >= VOTING_FOCUS_REFRESH_AGE_MS/);
@@ -268,9 +268,19 @@ test('voting refreshes in the background and rebases immediately before signing'
   const refresh = submit.indexOf('await refreshIntegrationVoting({ preserveDraft: true })');
   const pack = submit.indexOf('packVotingDraft(ownedVotingNames, votingDraft)');
   const estimate = submit.indexOf('voting.cast.estimateGas(ballots)');
-  const minedRefresh = submit.indexOf('await ensureIntegrationVotingLoaded({ force: true })');
+  const receipt = submit.indexOf('const receipt = await waitForTx(tx)');
+  const applyReceipt = submit.indexOf('applyMinedVotingReceipt(receipt, ballots, requestedDraft, connectedAddress)');
+  const success = submit.indexOf("showStatus('Votes counted.'");
   assert.ok(refresh >= 0 && refresh < pack && pack < estimate, 'fresh state must be packed before estimation');
-  assert.ok(minedRefresh > submit.indexOf('await waitForTx(tx)'), 'mined votes must be re-read');
+  assert.ok(receipt >= 0 && receipt < applyReceipt && applyReceipt < success,
+    'the canonical receipt must update state before success is shown');
+  assert.doesNotMatch(
+    submit.slice(submit.indexOf('\n', receipt), success),
+    /\bawait\b/,
+    'no RPC refresh may block the mined success state'
+  );
+  assert.doesNotMatch(submit, /await ensureIntegrationVotingLoaded\(\{ force: true \}\)/);
+  assert.match(submit, /refreshIntegrationVotingInBackground\(\);/);
   assert.doesNotMatch(submit, /Number\.MAX_SAFE_INTEGER/, 'the UI must not synthesize missing events');
 });
 
@@ -284,6 +294,43 @@ test('voting is disclosed and discoverable with mobile WalletConnect recovery', 
   assert.match(html, /window\.location\.href = deepLink/);
   assert.match(html, /}, 2000\);/);
   assert.equal((html.match(/static\.cloudflareinsights\.com\/beacon\.min\.js/g) || []).length, 1);
+});
+
+test('transaction confirmation races wallet waiting against one-second public receipt polling', async () => {
+  const start = html.indexOf('const TX_RECEIPT_POLL_MS = 1000;');
+  const end = html.indexOf('// Multicall3 for batching RPC calls', start);
+  assert.notEqual(start, -1, 'receipt polling interval must exist');
+  assert.notEqual(end, -1, 'receipt waiter must be bounded');
+  const receipt = { status: 1, transactionHash: '0xtx' };
+  let walletWaitCalled = false;
+  const context = vm.createContext({
+    isWalletConnect: false,
+    console,
+    async getRpc() {
+      return { async getTransactionReceipt(hash) {
+        assert.equal(hash, '0xtx');
+        return receipt;
+      } };
+    },
+    setTimeout() { return 1; },
+    clearTimeout() {}
+  });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.waitForTx = waitForTx;',
+    context
+  );
+
+  const result = await context.waitForTx({
+    hash: '0xtx',
+    wait() {
+      walletWaitCalled = true;
+      return new Promise(() => {});
+    }
+  });
+
+  assert.equal(result, receipt);
+  assert.equal(walletWaitCalled, true, 'both confirmation sources must start');
+  assert.match(html.slice(start, end), /Promise\.race\(\[[\s\S]*tx\.wait\(\),[\s\S]*usablePublicPoll/);
 });
 
 test('integration tallies require the active top-level current owner and epoch', () => {
@@ -414,6 +461,177 @@ function votingCheckpointHarness(statsRpc) {
   );
   return context.votingCheckpointApi;
 }
+
+function votingOwnedFastPathHarness({
+  logs = [],
+  results,
+  useIndexer = true,
+  indexerTimeoutMs = 3000,
+  fetchImpl = async () => { throw new Error('unexpected indexer request'); }
+}) {
+  const start = html.indexOf('async function proveOwnedVotingTokenIds(');
+  const end = html.indexOf('async function loadIntegrationVoting()', start);
+  assert.notEqual(start, -1, 'fast ownership proof must exist');
+  assert.notEqual(end, -1, 'fast ownership proof must be bounded');
+  const calls = [];
+  const context = vm.createContext({
+    CONTRACT: '0xnames',
+    VOTING_TRANSFER_TOPIC: '0xtransfer',
+    VOTING_INDEXER: 'https://indexer.example',
+    VOTING_INDEXER_TIMEOUT_MS: indexerTimeoutMs,
+    VOTING_INDEXER_TOTAL_TIMEOUT_MS: 5000,
+    VOTING_INDEXER_MAX_PAGES: 20,
+    VOTING_INDEXER_MAX_TOKENS: 2000,
+    votingUseIndexer: useIndexer,
+    URL,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    fetch: fetchImpl,
+    ethers: { zeroPadValue: () => '0xowner-topic' },
+    async votingGetLogs(...args) {
+      calls.push({ type: 'logs', args });
+      return logs;
+    },
+    async votingMulticallAt(callBatch, blockNumber) {
+      calls.push({ type: 'multicall', callBatch, blockNumber });
+      return results;
+    }
+  });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.votingOwnedFastPathApi = {
+        proveOwnedVotingTokenIds,
+        tryLoadIndexedOwnedVotingTokenIds,
+        tryLoadLoggedOwnedVotingTokenIds
+      };`,
+    context
+  );
+  return { ...context.votingOwnedFastPathApi, calls };
+}
+
+test('cold ownership discovery accepts a capped response only when balance proves completeness', async () => {
+  const address = '0x0000000000000000000000000000000000000abc';
+  const tokenTopics = Array.from({ length: 1519 }, (_, index) => {
+    const tokenId = index < 1513 ? 1 : index - 1511;
+    return { topics: ['0xtransfer', '0xfrom', '0xto', '0x' + tokenId.toString(16)] };
+  });
+  const complete = votingOwnedFastPathHarness({
+    logs: tokenTopics,
+    results: [[7n], ...Array.from({ length: 7 }, () => [address])]
+  });
+
+  const ids = await complete.tryLoadLoggedOwnedVotingTokenIds(address, 10, 42);
+
+  assert.deepEqual(Array.from(ids), ['1', '2', '3', '4', '5', '6', '7']);
+  assert.equal(complete.calls.filter(call => call.type === 'logs').length, 1);
+  const proof = complete.calls.find(call => call.type === 'multicall');
+  assert.equal(proof.callBatch[0].fn, 'balanceOf');
+  assert.equal(proof.callBatch.length, 8, 'one balance plus seven unique owner checks');
+  assert.equal(proof.blockNumber, 42, 'logs and ownership must use the same block');
+
+  const incomplete = votingOwnedFastPathHarness({
+    logs: Array.from({ length: 1000 }, () => tokenTopics[0]),
+    results: [[2n], [address]]
+  });
+  assert.equal(
+    await incomplete.tryLoadLoggedOwnedVotingTokenIds(address, 10, 42),
+    null,
+    'a missing current token must force the complete recursive fallback'
+  );
+  assert.match(html, /cache\.lastBlock === deployBlock - 1[\s\S]*tryLoadLoggedOwnedVotingTokenIds/);
+});
+
+test('indexed ownership pages are accepted only after the same onchain balance proof', async () => {
+  const address = '0x0000000000000000000000000000000000000abc';
+  const urls = [];
+  const pages = [
+    { items: [{ id: '10' }], next_page_params: { unique_token: 10 } },
+    { items: [{ id: '20' }], next_page_params: null }
+  ];
+  const harness = votingOwnedFastPathHarness({
+    results: [[2n], [address], [address]],
+    async fetchImpl(url) {
+      urls.push(String(url));
+      return { ok: true, async json() { return pages.shift(); } };
+    }
+  });
+
+  const ids = await harness.tryLoadIndexedOwnedVotingTokenIds(address, 77);
+
+  assert.deepEqual(Array.from(ids), ['10', '20']);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0], /holder_address_hash=0x0000000000000000000000000000000000000abc/);
+  assert.match(urls[1], /unique_token=10/);
+  const proof = harness.calls.find(call => call.type === 'multicall');
+  assert.equal(proof.blockNumber, 77);
+  assert.equal(proof.callBatch[0].fn, 'balanceOf');
+
+  const stale = votingOwnedFastPathHarness({
+    results: [[3n], [address], [address]],
+    async fetchImpl() {
+      return { ok: true, async json() {
+        return { items: [{ id: '10' }, { id: '20' }], next_page_params: null };
+      } };
+    }
+  });
+  assert.equal(
+    await stale.tryLoadIndexedOwnedVotingTokenIds(address, 77),
+    null,
+    'a lagging indexer cannot hide a third currently owned token'
+  );
+  assert.match(html, /if \(indexedIds !== null\) return indexedIds;/);
+});
+
+test('voters can skip the indexer and its timeout covers the complete response body', async () => {
+  let fetches = 0;
+  const rpcOnly = votingOwnedFastPathHarness({
+    useIndexer: false,
+    results: [],
+    async fetchImpl() { fetches++; }
+  });
+  assert.equal(
+    await rpcOnly.tryLoadIndexedOwnedVotingTokenIds('0xabc', 77),
+    null
+  );
+  assert.equal(fetches, 0, 'RPC-only mode must not contact Blockscout');
+
+  let responseSignal;
+  const stalledBody = votingOwnedFastPathHarness({
+    results: [],
+    indexerTimeoutMs: 10,
+    async fetchImpl(_url, { signal }) {
+      responseSignal = signal;
+      return {
+        ok: true,
+        json() {
+          return new Promise((resolve, reject) => {
+            if (signal.aborted) reject(new Error('aborted'));
+            else signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          });
+        }
+      };
+    }
+  });
+  const result = await Promise.race([
+    stalledBody.tryLoadIndexedOwnedVotingTokenIds('0xabc', 77),
+    new Promise(resolve => setTimeout(() => resolve('hung'), 100))
+  ]);
+  assert.equal(result, null, 'a stalled JSON body must fall back instead of hanging');
+  assert.equal(responseSignal.aborted, true);
+
+  assert.match(html, /names via Blockscout \(address \+ IP\)/);
+  assert.match(html, /use RPC only/);
+  assert.match(html, /localStorage\.setItem\(VOTING_LOOKUP_MODE_KEY, votingUseIndexer \? 'indexer' : 'rpc'\)/);
+});
+
+test('historical RPC requests have a bounded per-provider timeout', () => {
+  assert.match(html, /const STATS_RPC_TIMEOUT_MS = 8000;/);
+  assert.match(html, /const VOTING_INDEXER_TOTAL_TIMEOUT_MS = 5000;/);
+  assert.match(html, /const controller = new AbortController\(\);/);
+  assert.match(html, /signal: controller\.signal/);
+  assert.match(html, /clearTimeout\(timeout\);/);
+});
 
 test('voting ownership discovery uses one filtered historical request when supported', async () => {
   const calls = [];
@@ -632,6 +850,94 @@ test('voting event indexing keeps the latest replacement and accepts an empty cl
   assert.equal(applyVotingBallotLog(ballots, { invalid: true }), undefined);
 });
 
+function minedVotingReceiptHarness() {
+  const allocationStart = html.indexOf('function votingAllocationsForName(');
+  const allocationEnd = html.indexOf('async function loadVotingBallots()', allocationStart);
+  const receiptStart = html.indexOf('function applyMinedVotingReceipt(');
+  const receiptEnd = html.indexOf('function refreshIntegrationVoting(', receiptStart);
+  assert.notEqual(allocationStart, -1, 'ballot allocation helper must exist');
+  assert.notEqual(receiptStart, -1, 'mined receipt helper must exist');
+  const address = '0x0000000000000000000000000000000000000abc';
+  const hashA = '0xaaa';
+  const hashB = '0xbbb';
+  const counters = { recompute: 0, settle: 0, saveOrder: 0, saveDraft: 0 };
+  const normalizedEntries = value => Object.entries(value || {})
+    .filter(([, amount]) => Number.isSafeInteger(Number(amount)) && Number(amount) > 0)
+    .map(([id, amount]) => [id, Number(amount)])
+    .sort(([a], [b]) => a.localeCompare(b));
+  const context = vm.createContext({
+    VOTING_CONTRACT: '0xvote',
+    VOTING_ID_BY_HASH: new Map([[hashA, 'ambire'], [hashB, 'rotki']]),
+    votingBallots: new Map([['2', {
+      tokenId: '2', voter: address, epoch: '1', integrationIds: [hashB], votes: [1]
+    }]]),
+    ownedVotingNames: [
+      { tokenId: '1', epoch: '1', allocations: {} },
+      { tokenId: '2', epoch: '1', allocations: { rotki: 1 } }
+    ],
+    votingConfirmed: { rotki: 1 },
+    votingDraft: { ambire: 1, rotki: 1 },
+    applyVotingBallotLog(ballots, log) {
+      ballots[String(log.ballot.tokenId)] = { ...log.ballot };
+      return String(log.ballot.tokenId);
+    },
+    votingAllocationsEqual(left, right) {
+      return JSON.stringify(normalizedEntries(left)) === JSON.stringify(normalizedEntries(right));
+    },
+    aggregateVotingAllocations(names) {
+      const result = {};
+      for (const name of names) {
+        for (const [id, amount] of Object.entries(name.allocations)) {
+          result[id] = (result[id] || 0) + amount;
+        }
+      }
+      return result;
+    },
+    recomputeVotingTallies() { counters.recompute++; },
+    settleIntegrationOrder() { counters.settle++; },
+    saveIntegrationOrder() { counters.saveOrder++; },
+    saveVotingDraft() { counters.saveDraft++; }
+  });
+  vm.runInContext(
+    html.slice(allocationStart, allocationEnd) + '\n' +
+      html.slice(receiptStart, receiptEnd) + `
+      globalThis.minedVotingReceiptApi = {
+        applyMinedVotingReceipt,
+        getState: () => ({ votingBallots, ownedVotingNames, votingConfirmed, votingDraft })
+      };`,
+    context
+  );
+  return { api: context.minedVotingReceiptApi, address, hashA, counters };
+}
+
+test('a mined vote is settled entirely from its verified receipt before background RPC work', () => {
+  const { api, address, hashA, counters } = minedVotingReceiptHarness();
+  const expectedBallots = [{ tokenId: 1n, integrationIds: [hashA], votes: [1] }];
+  const expectedDraft = { ambire: 1, rotki: 1 };
+
+  assert.throws(
+    () => api.applyMinedVotingReceipt({ logs: [] }, expectedBallots, expectedDraft, address),
+    /Could not verify mined ballot/,
+    'a successful status alone cannot synthesize a missing event'
+  );
+  assert.deepEqual(counters, { recompute: 0, settle: 0, saveOrder: 0, saveDraft: 0 });
+
+  api.applyMinedVotingReceipt({
+    logs: [{
+      address: '0xVote',
+      ballot: {
+        tokenId: '1', voter: address, epoch: '1', integrationIds: [hashA], votes: [1]
+      }
+    }]
+  }, expectedBallots, expectedDraft, address);
+
+  const state = api.getState();
+  assert.deepEqual({ ...state.votingConfirmed }, expectedDraft);
+  assert.deepEqual({ ...state.votingDraft }, expectedDraft);
+  assert.deepEqual({ ...state.ownedVotingNames[0].allocations }, { ambire: 1 });
+  assert.deepEqual(counters, { recompute: 1, settle: 1, saveOrder: 1, saveDraft: 1 });
+});
+
 test('a pooled draft is packed across names while preserving signed placements', () => {
   const { packVotingDraft, buildChangedVotingBallots } = votingHarness();
   const names = [
@@ -738,6 +1044,7 @@ function votingPowerUiHarness({ names = [], totalPower = 0, loading = false } = 
     ownedVotingNames: names,
     votingTotalPower: totalPower,
     $: id => elements[id],
+    renderVotingLookupMode() {},
     formatVoteCount: value => Number(value).toLocaleString('en-US'),
     integrationElement: (_tag, className, textContent) => makeElement(className, textContent)
   });
