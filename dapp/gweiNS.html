@@ -667,10 +667,6 @@ body.modal-open { overflow: hidden; }
 .int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-size: 11px; }
 .int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
-.int-vote-disclosure { padding: 8px 12px; border-top: 1px solid var(--border-muted); color: var(--fg-muted); }
-.int-vote-lookup { margin-top: 2px; font-size: 10px; }
-.int-vote-lookup button { margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-transform: none; letter-spacing: 0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.int-vote-lookup button:disabled { opacity: 0.45; cursor: default; }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
@@ -1130,10 +1126,6 @@ body.vote-dock-open { padding-bottom: 104px; }
         <div class="int-power-section" id="integrationVotePowerSection">
           <div class="int-power-heading">your names</div>
           <div class="int-power-list" id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"></div>
-        </div>
-        <div class="int-vote-disclosure">
-          <div>votes are public onchain · network gas applies</div>
-          <div class="int-vote-lookup"><span id="integrationVoteLookupText"></span> · <button type="button" id="integrationVoteLookupToggle" onclick="toggleVotingLookupMode()"></button></div>
         </div>
       </div>
     </details>
@@ -2809,7 +2801,6 @@ const VOTING_INDEXER_MAX_PAGES = 20;
 const VOTING_INDEXER_MAX_TOKENS = 2000;
 const VOTING_BALLOT_CACHE_VERSION = 4;
 const VOTING_OWNED_CACHE_VERSION = 3;
-const VOTING_LOOKUP_MODE_KEY = `gwei_voting_lookup_${CHAIN_ID}`;
 
 let votingBallots = new Map();
 let votingRecords = new Map();
@@ -2827,8 +2818,6 @@ let votingReady = false;
 let votingLoading = false;
 let votingSubmitting = false;
 let pendingVoteIntent = null;
-let votingUseIndexer = true;
-try { votingUseIndexer = localStorage.getItem(VOTING_LOOKUP_MODE_KEY) !== 'rpc'; } catch (e) {}
 
 async function votingGetLogs(address, topics, fromBlock, toBlock) {
   if (fromBlock > toBlock) return [];
@@ -3142,7 +3131,7 @@ async function proveOwnedVotingTokenIds(address, candidateIds, blockNumber) {
 }
 
 async function tryLoadIndexedOwnedVotingTokenIds(address, blockNumberPromise) {
-  if (!VOTING_INDEXER || !votingUseIndexer) return null;
+  if (!VOTING_INDEXER) return null;
   try {
     const url = new URL(`/api/v2/tokens/${CONTRACT}/instances`, VOTING_INDEXER);
     url.searchParams.set('holder_address_hash', address);
@@ -3377,35 +3366,7 @@ function restoreVotingDraft() {
   return false;
 }
 
-function renderVotingLookupMode() {
-  const text = $('integrationVoteLookupText');
-  const toggle = $('integrationVoteLookupToggle');
-  if (!text || !toggle) return;
-  if (votingUseIndexer && VOTING_INDEXER) {
-    text.textContent = 'names via Blockscout (address + IP)';
-    toggle.textContent = 'use RPC only';
-    toggle.setAttribute('aria-label', 'Use public RPCs instead of Blockscout for name lookup');
-  } else {
-    text.textContent = 'names via public RPCs (address)';
-    toggle.textContent = VOTING_INDEXER ? 'use Blockscout' : 'RPC only';
-    toggle.setAttribute('aria-label', 'Use Blockscout for faster name lookup');
-  }
-  toggle.disabled = !VOTING_INDEXER || votingLoading || votingSubmitting;
-  toggle.setAttribute('aria-pressed', String(!votingUseIndexer));
-}
-
-function toggleVotingLookupMode() {
-  if (!VOTING_INDEXER || votingLoading || votingSubmitting) return;
-  votingUseIndexer = !votingUseIndexer;
-  try {
-    localStorage.setItem(VOTING_LOOKUP_MODE_KEY, votingUseIndexer ? 'indexer' : 'rpc');
-  } catch (e) {}
-  renderVotingLookupMode();
-  if (connectedAddress) initializeVotingWallet({ preserveDraft: true });
-}
-
 function renderVotingPower() {
-  renderVotingLookupMode();
   const details = $('integrationVoteDetails');
   const power = $('integrationVotePower');
   const summary = $('integrationVotePowerSummary');
