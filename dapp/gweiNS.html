@@ -647,8 +647,7 @@ body.modal-open { overflow: hidden; }
 .sites-guide:hover { color: var(--fg); }
 .integrations { margin: 56px 0 8px; }
 .int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 8px; }
-.int-vote-caption { display: none; font-size: 11px; color: var(--fg-muted); line-height: 1.5; text-align: center; margin: 0 auto 14px; }
-.int-vote-caption.show { display: block; }
+.int-vote-caption { font-size: 11px; color: var(--fg-muted); line-height: 1.5; text-align: center; margin: 0 auto 14px; }
 .int-vote-caption details { display: block; }
 .int-vote-caption summary { display: inline-block; cursor: pointer; color: var(--fg); list-style: none; white-space: nowrap; }
 .int-vote-caption summary::-webkit-details-marker { display: none; }
@@ -682,8 +681,7 @@ body.modal-open { overflow: hidden; }
 .int-links { display: flex; min-width: 0; gap: 2px 14px; flex-wrap: wrap; }
 .int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
 .int-links a:hover { text-decoration: underline; }
-.int-vote { display: none; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
-.int-vote.show { display: flex; }
+.int-vote { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
 .int-vote.draft .int-vote-total::after { content: ' · draft'; color: var(--fg-dim); }
 .int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .int-vote button { width: 34px; height: 34px; min-width: 34px; margin: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1; letter-spacing: 0; touch-action: manipulation; user-select: none; }
@@ -1582,7 +1580,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="#" target="_blank" rel="noopener" style="display:none;">Voting</a><span id="votingExplorerSeparator" style="display:none;"> · </span><a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
 <script>
@@ -1643,13 +1641,11 @@ function integrationOrdersEqual(a, b) {
 }
 
 function integrationOrderCacheKey() {
-  if (!VOTING_ENABLED) return null;
   return `gwei_voting_order_${CHAIN_ID}_${VOTING_CONTRACT.toLowerCase()}`;
 }
 
 function restoreIntegrationOrder() {
   const key = integrationOrderCacheKey();
-  if (!key) return;
   try {
     const stored = JSON.parse(localStorage.getItem(key));
     if (stored?.version !== INTEGRATION_ORDER_CACHE_VERSION ||
@@ -1660,7 +1656,6 @@ function restoreIntegrationOrder() {
 
 function saveIntegrationOrder() {
   const key = integrationOrderCacheKey();
-  if (!key) return;
   try {
     localStorage.setItem(key, JSON.stringify({
       version: INTEGRATION_ORDER_CACHE_VERSION,
@@ -1679,7 +1674,7 @@ function rankedIntegrationOrderIds() {
 }
 
 function settleIntegrationOrder() {
-  if (!VOTING_ENABLED || !votingTalliesReady || votingDraftDirty()) return false;
+  if (!votingTalliesReady || votingDraftDirty()) return false;
   const nextOrder = rankedIntegrationOrderIds();
   const changed = !integrationOrdersEqual(integrationDisplayOrder, nextOrder);
   integrationDisplayOrder = nextOrder;
@@ -1765,10 +1760,10 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
   }
 
   let order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
-  if (sort && VOTING_ENABLED && votingDraftDirty() && list.children.length) {
+  if (sort && votingDraftDirty() && list.children.length) {
     const currentIds = Array.from(list.children, card => card.dataset.integrationId);
     order = currentIds.map(id => INTEGRATION_BY_ID.get(id)).filter(Boolean);
-  } else if (sort && VOTING_ENABLED && votingTalliesReady) {
+  } else if (sort && votingTalliesReady) {
     settleIntegrationOrder();
     order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
   }
@@ -1779,7 +1774,6 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
       return integrationCards.get(integration.id);
     })();
     const state = integrationVotingCardState(integration.id);
-    refs.vote.classList.toggle('show', VOTING_ENABLED);
     refs.vote.classList.toggle('has-own', state.own > 0);
     refs.vote.classList.toggle('draft', state.draft);
     refs.total.textContent = state.loading ? '…' : `${formatVoteCount(state.total)} votes`;
@@ -1808,8 +1802,8 @@ function renderIntegrations({ sort = true, animate = false } = {}) {
   }
 }
 
-// ── networks: supports mainnet + sepolia. Integration voting is enabled only
-//    for the verified ownerless ballot-emitter deployments below. ──
+// ── networks: supports mainnet + sepolia. Both ownerless voting deployments
+//    below are verified. ──
 const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
@@ -1874,7 +1868,6 @@ const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id
 const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
 const VOTING_CONTRACT = NET.voting;
 const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
-const VOTING_ENABLED = Boolean(VOTING_CONTRACT && VOTING_DEPLOY_BLOCK);
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
@@ -1903,7 +1896,7 @@ if (NET.chainId !== 1) {
 { const _en = document.getElementById('nftExplorerLink'); if (_en) _en.href = EXPLORER + '/address/' + CONTRACT; }
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
 { const _eh = document.getElementById('humanExplorerLink'); if (_eh) { if (zkEnabled()) { _eh.href = EXPLORER + '/address/' + HUMAN_REGISTRAR; _eh.style.display = ''; } else { _eh.style.display = 'none'; } } }
-{ const _ev = document.getElementById('votingExplorerLink'); const _evs = document.getElementById('votingExplorerSeparator'); if (_ev && _evs && VOTING_ENABLED) { _ev.href = EXPLORER + '/address/' + VOTING_CONTRACT; _ev.style.display = ''; _evs.style.display = ''; } }
+{ const _ev = document.getElementById('votingExplorerLink'); if (_ev) _ev.href = EXPLORER + '/address/' + VOTING_CONTRACT; }
 
 // ── Network stats: scan NameRegistered + ContenthashChanged logs (chunked + cached) ──
 // Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
@@ -3042,7 +3035,6 @@ function recomputeVotingTallies() {
 }
 
 async function loadIntegrationVoting() {
-  if (!VOTING_ENABLED) return;
   votingBallots = await loadVotingBallots();
   votingRecords = await loadVotingRecords([...votingBallots.keys()], true);
   const latestBlock = await (await getRpc()).getBlock('latest');
@@ -3056,7 +3048,6 @@ async function loadIntegrationVoting() {
 }
 
 function ensureIntegrationVotingLoaded({ force = false } = {}) {
-  if (!VOTING_ENABLED) return Promise.resolve();
   if (!force && votingTalliesReady) return Promise.resolve();
   if (!votingLoadPromise) {
     votingLoadPromise = loadIntegrationVoting()
@@ -3130,12 +3121,12 @@ function integrationVotingCardState(id) {
     own,
     remaining: votingRemaining(),
     draft: votingReady && own !== confirmed,
-    loading: VOTING_ENABLED && !votingTalliesReady
+    loading: !votingTalliesReady
   };
 }
 
 function votingDraftStorageKey() {
-  if (!connectedAddress || !VOTING_CONTRACT) return null;
+  if (!connectedAddress) return null;
   return `gwei_voting_draft_${CHAIN_ID}_${VOTING_CONTRACT.toLowerCase()}_${connectedAddress.toLowerCase()}`;
 }
 
@@ -3194,7 +3185,7 @@ function renderVotingPower() {
   const section = $('integrationVotePowerSection');
   const list = $('integrationVotePowerList');
   if (!details || !power || !summary || !section || !list) return;
-  const show = VOTING_ENABLED && Boolean(connectedAddress) && (votingReady || votingLoading);
+  const show = Boolean(connectedAddress) && (votingReady || votingLoading);
   power.classList.toggle('show', show);
   section.classList.toggle('show', show);
   if (!show) return;
@@ -3232,15 +3223,13 @@ function renderVotingPower() {
 }
 
 function updateVotingUi({ animate = false, success = false } = {}) {
-  const caption = $('integrationVoteCaption');
-  if (caption) caption.classList.toggle('show', VOTING_ENABLED);
   renderVotingPower();
 
   const dock = $('voteDock');
   const count = $('voteDockCount');
   const reset = $('voteReset');
   const sign = $('voteSign');
-  const showDock = VOTING_ENABLED && votingReady && ownedVotingNames.length > 0 && votingDraftDirty();
+  const showDock = votingReady && ownedVotingNames.length > 0 && votingDraftDirty();
   if (dock) {
     dock.classList.toggle('show', showDock);
     dock.classList.toggle('success', success);
@@ -3279,7 +3268,7 @@ async function initializeVotingWallet({
   preserveDraft = false,
   silent = false
 } = {}) {
-  if (!VOTING_ENABLED || !connectedAddress) {
+  if (!connectedAddress) {
     clearVotingWalletState();
     return { ok: true, baselineChanged: false, draftPreserved: true };
   }
@@ -3374,7 +3363,6 @@ async function initializeVotingWallet({
 }
 
 function refreshIntegrationVoting({ refreshWallet = true, preserveDraft = true } = {}) {
-  if (!VOTING_ENABLED) return Promise.resolve({ ok: true });
   if (!votingRefreshPromise) {
     votingRefreshPromise = (async () => {
       await ensureIntegrationVotingLoaded({ force: true });
@@ -3388,7 +3376,7 @@ function refreshIntegrationVoting({ refreshWallet = true, preserveDraft = true }
 }
 
 function refreshIntegrationVotingInBackground() {
-  if (!VOTING_ENABLED || document.hidden || votingSubmitting || votingLoading) return;
+  if (document.hidden || votingSubmitting || votingLoading) return;
   refreshIntegrationVoting()
     .then(result => {
       if (!result?.ok) throw result?.error || new Error('Could not refresh voting state');
@@ -3415,7 +3403,7 @@ function setIntegrationVote(id, amount) {
 }
 
 function changeIntegrationVote(id, delta) {
-  if (!VOTING_ENABLED || !VOTING_HASH_BY_ID.has(id)) return;
+  if (!VOTING_HASH_BY_ID.has(id)) return;
   if (!connectedAddress) {
     pendingVoteIntent = { id, delta };
     showWalletModal();
@@ -3517,7 +3505,7 @@ function resetVotingDraft() {
 }
 
 async function submitVotingDraft() {
-  if (!VOTING_ENABLED || !signer || !votingReady || votingSubmitting || !votingDraftDirty()) return;
+  if (!signer || !votingReady || votingSubmitting || !votingDraftDirty()) return;
   votingSubmitting = true;
   let succeeded = false;
   let minedTxHash = null;
@@ -6873,14 +6861,14 @@ async function doVerifyNow() {
 }
 
 // Render the page-native voting surface immediately; live tallies arrive without
-// blocking the rest of the dapp. The controls remain absent until a deployment is configured.
+// blocking the rest of the dapp.
 restoreIntegrationOrder();
 updateVotingUi();
 ensureIntegrationVotingLoaded().catch(error => {
   const caption = $('integrationVoteCaption');
   if (caption) caption.title = 'Voting data could not be loaded. Refresh to retry.';
 });
-if (VOTING_ENABLED) setInterval(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS);
+setInterval(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS);
 
 // Check for pending commit on page load (before wallet connects)
 initPending();

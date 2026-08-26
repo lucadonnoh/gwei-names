@@ -36,7 +36,7 @@ test('integration cards use valid embedded structured data', () => {
   }
 });
 
-test('integration voting is enabled for both verified deployments', () => {
+test('integration voting uses both verified deployments without an availability flag', () => {
   const start = html.indexOf('const NETWORKS = {');
   const end = html.indexOf('const NET_STORAGE_KEY', start);
   assert.notEqual(start, -1, 'network configuration must exist');
@@ -66,10 +66,8 @@ test('integration voting is enabled for both verified deployments', () => {
   assert.deepEqual(Array.from(context.networks.sepolia.logsRpcs), [
     'https://sepolia.gateway.tenderly.co/public'
   ]);
-  assert.match(
-    html,
-    /const VOTING_ENABLED = Boolean\(VOTING_CONTRACT && VOTING_DEPLOY_BLOCK\);/
-  );
+  assert.doesNotMatch(html, /\bVOTING_ENABLED\b/);
+  assert.doesNotMatch(html, /!VOTING_CONTRACT/);
 });
 
 test('ens normalization imports only verified published package bytes', () => {
@@ -173,7 +171,6 @@ function integrationOrderHarness(storedOrder) {
     INTEGRATION_BY_ID: new Map(integrations.map(integration => [integration.id, integration])),
     INTEGRATION_INDEX: new Map(integrations.map((integration, index) => [integration.id, index])),
     VOTING_CONTRACT: '0xVote',
-    VOTING_ENABLED: true,
     integrationVotingCardState(id) { return { total: tallies[id] || 0 }; },
     localStorage: {
       getItem(storageKey) { return storage.get(storageKey) ?? null; },
@@ -278,7 +275,8 @@ test('voting refreshes in the background and rebases immediately before signing'
 });
 
 test('voting is disclosed and discoverable with mobile WalletConnect recovery', () => {
-  assert.match(html, /id="votingExplorerLink"/);
+  assert.match(html, /id="votingExplorerLink" href="https:\/\/etherscan\.io\/address\/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005"/);
+  assert.doesNotMatch(html, /votingExplorerSeparator|id="votingExplorerLink"[^>]*display:none/);
   assert.match(html, /EXPLORER \+ '\/address\/' \+ VOTING_CONTRACT/);
   assert.match(html, /votes are public onchain · network gas applies/);
   assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: RPC_ENDPOINTS\[0\] \}/);
@@ -734,7 +732,6 @@ function votingPowerUiHarness({ names = [], totalPower = 0, loading = false } = 
     integrationVotePowerList: makeElement('int-power-list')
   };
   const context = vm.createContext({
-    VOTING_ENABLED: true,
     connectedAddress: '0x1234',
     votingReady: !loading,
     votingLoading: loading,
@@ -842,7 +839,7 @@ test('voting detail rows share one rhythm and the names list stays bounded', () 
 test('the signing dock appears only after the voter changes an allocation', () => {
   assert.match(
     html,
-    /const showDock = VOTING_ENABLED && votingReady && ownedVotingNames\.length > 0 && votingDraftDirty\(\);/
+    /const showDock = votingReady && ownedVotingNames\.length > 0 && votingDraftDirty\(\);/
   );
   assert.match(html, /dock\.classList\.toggle\('show', showDock\);/);
   assert.match(html, /dock\.setAttribute\('aria-hidden', String\(!showDock\)\);/);
