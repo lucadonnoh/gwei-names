@@ -223,7 +223,7 @@ Renewal costs the same length-based fee as registration. No premium is charged o
 
 ---
 
-## Integration Voting (Sepolia Test Deployment)
+## Integration Voting
 
 The website can order its curated integration cards by `.gwei` voting power. Voting changes only the order; adding or removing an integration remains a curated decision.
 
