@@ -12,19 +12,18 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js" integrity="sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM" crossorigin="anonymous"></script>
-<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm" integrity="sha384-wZEz5bl83QiQdUg5m/tIOQtZl9ncAoDleaNxEJNoNRmYLBpEprsT4si9P2xOvSbx" crossorigin="anonymous">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs" integrity="sha384-wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13" crossorigin="anonymous">
 <script>
-// Load ens-normalize with integrity via modulepreload. Some networks and content
-// blockers block the primary CDN entirely (the +esm module), so fall back to the
-// plain npm dist file on two mirrors, fetched and SHA-384-verified before import
-// so the fallbacks are integrity-pinned too.
+// Preload the package's published module with SRI. If the primary CDN is blocked,
+// fetch the same published bytes from a mirror and verify them before importing.
+// Avoid the CDN-generated +esm build: its bytes can change at a pinned version.
 (async () => {
+  const PRIMARY = 'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs';
   const MIRRORS = [
-    'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs',
     'https://unpkg.com/@adraffy/ens-normalize@1.11.0/dist/index.mjs'
   ];
-  // sha384 of the npm package's dist/index.mjs (identical bytes on both mirrors)
-  const MIRROR_SHA384 = 'wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13';
+  // SHA-384 of dist/index.mjs; the published bytes are identical on both CDNs.
+  const SOURCE_SHA384 = 'wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13';
 
   async function importVerified(url) {
     const res = await fetch(url, { mode: 'cors' });
@@ -33,18 +32,19 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-384', buf));
     let bin = '';
     for (let i = 0; i < digest.length; i++) bin += String.fromCharCode(digest[i]);
-    if (btoa(bin) !== MIRROR_SHA384) throw new Error('integrity mismatch');
+    if (btoa(bin) !== SOURCE_SHA384) throw new Error('integrity mismatch');
     const blobUrl = URL.createObjectURL(new Blob([buf], { type: 'text/javascript' }));
     try { return await import(blobUrl); } finally { URL.revokeObjectURL(blobUrl); }
   }
 
   let mod = null;
   try {
-    mod = await import('https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/+esm');
+    mod = await import(PRIMARY);
   } catch (e) {
-    console.warn('Primary ens-normalize CDN failed, trying mirrors:', e);
+    console.warn('Primary ens-normalize CDN failed, trying mirror:', e);
     for (const url of MIRRORS) {
-      try { mod = await importVerified(url); break; } catch (e2) { console.warn('Mirror failed:', url, e2); }
+      try { mod = await importVerified(url); break; }
+      catch (mirrorError) { console.warn('ens-normalize mirror failed:', url, mirrorError); }
     }
   }
 
@@ -466,6 +466,10 @@ body.modal-open { overflow: hidden; }
   .send-form { padding: 14px; }
   .send-form button { width: auto; display: inline-block; }
   .manage-form button { width: auto; display: inline-block; }
+  .int-footer { align-items: flex-end; }
+  .int-vote button { width: 34px; min-width: 34px; padding: 0; }
+  .int-vote .int-vote-own { width: auto; }
+  .vote-dock button { width: auto; }
 }
 
 @media (max-width: 380px) {
@@ -642,9 +646,30 @@ body.modal-open { overflow: hidden; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
 .integrations { margin: 56px 0 8px; }
-.int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 16px; }
+.int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 8px; }
+.int-vote-caption { font-size: 11px; color: var(--fg-muted); line-height: 1.5; text-align: center; margin: 0 auto 14px; }
+.int-vote-caption details { display: block; }
+.int-vote-caption summary { display: inline-block; cursor: pointer; color: var(--fg); list-style: none; white-space: nowrap; }
+.int-vote-caption summary::-webkit-details-marker { display: none; }
+.int-vote-summary-label { text-decoration: underline; text-underline-offset: 2px; }
+.int-vote-panel { width: min(100%, 320px); margin: 10px auto 0; border: 1px solid var(--border-muted); background: var(--surface); text-align: left; }
+.int-vote-rules { padding: 10px 12px; color: var(--fg-muted); }
+.int-vote-rules p { margin: 0 0 6px; color: var(--fg); }
+.int-vote-rules div { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.int-vote-caption .int-power { display: none; color: var(--fg); }
+.int-vote-caption .int-power.show { display: inline; }
+.int-power-separator { color: var(--fg-muted); }
+.int-power-section { display: none; padding: 10px 12px; border-top: 1px solid var(--border-muted); }
+.int-power-section.show { display: block; }
+.int-power-heading { margin-bottom: 6px; color: var(--fg); }
+.int-power-list { max-height: 105px; overflow-y: auto; }
+.int-power-list:focus-visible { outline: 1px solid var(--fg-muted); outline-offset: 2px; }
+.int-power-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; font-size: 11px; }
+.int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
+.int-vote-disclosure { padding: 8px 12px; border-top: 1px solid var(--border-muted); color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
-.int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease; }
+.int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
 .int-head { display: flex; align-items: center; gap: 9px; }
 .int-logo img { width: 18px; height: 18px; display: block; border-radius: 4px; }
@@ -652,9 +677,34 @@ body.modal-open { overflow: hidden; }
 .int-tag { margin-left: auto; font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); border: 1px solid var(--border-muted); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .int-desc { font-size: 12.5px; color: var(--fg-muted); line-height: 1.6; margin: 10px 0 12px; }
 .int-desc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
-.int-links { display: flex; gap: 14px; flex-wrap: wrap; }
+.int-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; }
+.int-links { display: flex; min-width: 0; gap: 2px 14px; flex-wrap: wrap; }
 .int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
 .int-links a:hover { text-decoration: underline; }
+.int-vote { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 5px; margin-left: auto; white-space: nowrap; }
+.int-vote.draft .int-vote-total::after { content: ' · draft'; color: var(--fg-dim); }
+.int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.int-vote button { width: 34px; height: 34px; min-width: 34px; margin: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1; letter-spacing: 0; touch-action: manipulation; user-select: none; }
+.int-vote button:hover:not(:disabled) { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.int-vote button:disabled { opacity: 0.35; background: var(--bg); color: var(--fg-muted); border-color: var(--border-muted); }
+.int-vote .int-vote-own { width: auto; max-width: none; padding: 0 7px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.int-vote .int-vote-minus { display: none; }
+.int-vote.has-own .int-vote-minus { display: inline-flex; }
+.int-vote-exact { display: none; width: 58px; height: 34px; min-width: 0; padding: 0 5px; border: 1px solid var(--fg); background: var(--bg); color: var(--fg); font: inherit; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
+.int-vote.editing .int-vote-own { display: none; }
+.int-vote.editing .int-vote-exact { display: inline-block; }
+.vote-dock { position: fixed; z-index: 8000; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translate(-50%, 130%); width: min(456px, calc(100% - 24px)); display: flex; align-items: center; gap: 8px; padding: 9px; border: 1.5px solid var(--fg); background: var(--bg); color: var(--fg); box-shadow: 0 8px 30px rgba(0,0,0,0.14); opacity: 0; pointer-events: none; transition: transform 0.22s ease, opacity 0.18s ease; }
+.vote-dock.show { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.vote-dock-count { min-width: 0; flex: 1; padding-left: 3px; font-size: 11px; line-height: 1.25; color: var(--fg-muted); }
+.vote-dock-count strong { display: block; color: var(--fg); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vote-dock button { width: auto; margin: 0; padding: 10px 12px; font-size: 10px; white-space: nowrap; }
+.vote-dock .vote-reset { background: var(--bg); color: var(--fg); border-color: var(--border-muted); }
+.vote-dock .vote-sign { min-width: 92px; }
+.vote-dock.success { border-color: var(--free-accent); }
+body.vote-dock-open { padding-bottom: 104px; }
+@media (prefers-reduced-motion: reduce) {
+  .int-card, .vote-dock { transition: none; }
+}
 .stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
 @keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
@@ -1062,12 +1112,39 @@ body.modal-open { overflow: hidden; }
 <!-- Integrations -->
 <div class="integrations" id="integrations">
   <div class="int-label">integrations</div>
+  <div class="int-vote-caption" id="integrationVoteCaption">
+    <details class="int-vote-details" id="integrationVoteDetails">
+      <summary><span class="int-vote-summary-label">vote ranking</span><span class="int-power" id="integrationVotePower"><span class="int-power-separator" aria-hidden="true"> · </span><span id="integrationVotePowerSummary"></span></span></summary>
+      <div class="int-vote-panel">
+        <div class="int-vote-rules">
+          <p>shorter names carry more weight</p>
+          <div><span>1 byte</span><span>1,000 votes</span></div>
+          <div><span>2 bytes</span><span>200 votes</span></div>
+          <div><span>3 bytes</span><span>100 votes</span></div>
+          <div><span>4 bytes</span><span>20 votes</span></div>
+          <div><span>5+ bytes</span><span>1 vote</span></div>
+        </div>
+        <div class="int-power-section" id="integrationVotePowerSection">
+          <div class="int-power-heading">your names</div>
+          <div class="int-power-list" id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"></div>
+        </div>
+        <div class="int-vote-disclosure">votes are public onchain · network gas applies</div>
+      </div>
+    </details>
+  </div>
   <div class="int-list" id="integrationList"></div>
+</div>
+
+<div class="vote-dock" id="voteDock" aria-live="polite" aria-hidden="true" inert>
+  <div class="vote-dock-count" id="voteDockCount"></div>
+  <button type="button" class="vote-reset" id="voteReset" onclick="resetVotingDraft()">reset</button>
+  <button type="button" class="vote-sign" id="voteSign" onclick="submitVotingDraft()">sign votes</button>
 </div>
 
 <script type="application/json" id="integrationData">
 [
   {
+    "id": "rotki",
     "name": "rotki",
     "category": "defi",
     "description": "A privacy-first portfolio tracker and accounting app. Resolve `.gwei` names in address fields, label tracked addresses with GNS names, and decode registrations, renewals, records, and transfers.",
@@ -1084,6 +1161,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "ethereumrock",
     "name": "EthereumRock",
     "category": "defi",
     "description": "An ownerless ERC-721 wrapper and zero-fee marketplace for the abandoned EtherRock v1, with art and frontend stored on chain. Addresses render as `.gwei` names, the private-sale and transfer fields resolve them, and the site itself is served from `ethereumrock.gwei` over web3://.",
@@ -1100,6 +1178,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "cloaked",
     "name": "Cloaked",
     "category": "wallet",
     "description": "A private wallet for onchain payments and swaps. Send or swap to `.gwei` names from the app.",
@@ -1112,6 +1191,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "eth-stealth-address-resolver",
     "name": "eth-stealth-address-resolver",
     "category": "developer",
     "description": "A developer library for EIP-5564 stealth payments. Resolve stealth addresses from `.gwei` names and reverse-resolve wallet addresses through GNS.",
@@ -1128,6 +1208,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "zswap",
     "name": "zSwap",
     "category": "defi",
     "description": "An entirely onchain exchange for swaps, orders, token launches, and payments. Send ETH or tokens to `.gwei` names with shareable links and optional reversible timelocks.",
@@ -1144,6 +1225,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "kohaku-cli",
     "name": "Kohaku CLI",
     "category": "wallet",
     "description": "A terminal wallet for public and private Ethereum balances. Resolve, register, renew, transfer, and manage `.gwei` names from the command line.",
@@ -1160,6 +1242,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "micro-eth-signer",
     "name": "micro-eth-signer",
     "category": "developer",
     "description": "A minimal, privacy-focused Ethereum library for signing and RPC data. Resolve and reverse-resolve `.gwei` names, read records, and check availability, expiries, and fees.",
@@ -1176,6 +1259,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "rebloom",
     "name": "Rebloom",
     "category": "name management",
     "description": "A minimal web app for renewing Ethereum names. Renew `.gwei` names for one or more years in a single transaction.",
@@ -1192,6 +1276,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "multisig-software",
     "name": "multisig.software",
     "category": "wallet",
     "description": "A multichain multisig wallet with an embedded timelock. Use `.gwei` names for vaults, owners, and transaction recipients.",
@@ -1208,6 +1293,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "ambire",
     "name": "Ambire",
     "category": "wallet",
     "description": "A self-custodial smart wallet for Ethereum and EVM networks. Resolve `.gwei` names when sending and see GNS identities throughout the wallet.",
@@ -1228,6 +1314,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "metamask-snap",
     "name": "MetaMask Snap",
     "category": "wallet",
     "description": "Add GNS resolution to MetaMask. Send to `.gwei` names and reverse-resolve wallet addresses to forward-confirmed primary names on Ethereum mainnet and Sepolia.",
@@ -1244,6 +1331,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "gwei-site",
     "name": "gwei.site",
     "category": "web access",
     "description": "An edge gateway for decentralized websites on IPFS, IPNS, and Swarm. Open any `.gwei` site at `<name>.gwei.site`, or map it to a custom domain.",
@@ -1260,6 +1348,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "request-wallet-sign",
     "name": "request-wallet-sign",
     "category": "developer",
     "description": "A local signing bridge that lets AI agents hand transactions to your browser wallet without seeing your private key. Use a `.gwei` name as the recipient and it resolves before you sign.",
@@ -1276,6 +1365,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "defillama",
     "name": "DefiLlama",
     "category": "defi",
     "description": "An open DeFi analytics platform for TVL, fees, revenue, and more. Track `.gwei` registration and renewal fees on Ethereum.",
@@ -1292,6 +1382,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "snapshot",
     "name": "Snapshot",
     "category": "community",
     "description": "A voting platform for DAOs, DeFi protocols, and NFT communities, with flexible governance and no gas fees. Use `.gwei` names across proposals, votes, delegates, and transactions.",
@@ -1308,6 +1399,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "poidh",
     "name": "POIDH",
     "category": "community",
     "description": "A social bounty platform with collectible NFTs on Arbitrum, Base, and Degen Chain. It displays `.gwei` names across profiles, leaderboards, bounties, and shared posts.",
@@ -1324,6 +1416,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "holders-vote",
     "name": "holders.vote",
     "category": "community",
     "description": "A signal-boosting consensus finding tool for token weighted communities to share information and prioritize.  Uses `.gwei` names as moderated and contextualized namespaces as well as user identity.",
@@ -1336,6 +1429,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "ens-to-gns-migrator",
     "name": "ENS to GNS Migrator",
     "category": "name management",
     "description": "Register a `.gwei` name and migrate your ENS identity across to it, including your website, avatar, and primary name records.",
@@ -1352,6 +1446,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "ethereum-names",
     "name": "ethereum-names",
     "category": "developer",
     "description": "A developer library with one clean API to resolve Ethereum names across ENS, the Gwei Name Service, and the Wei Name Service, powered by viem. Point it at a `.gwei` name or an address and it resolves in a single call.",
@@ -1368,6 +1463,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "cleave",
     "name": "Cleave",
     "category": "defi",
     "description": "A decentralized options exchange on Ethereum. Write and trade options that can't be liquidated, with no margin calls or forced closes. It resolves addresses to their `.gwei` name, preferring it over `.eth` when both are set.",
@@ -1380,6 +1476,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "freedom",
     "name": "Freedom",
     "category": "web access",
     "description": "A minimalist desktop browser for Swarm and IPFS. Type a `.gwei` (and `.eth`) name, hash, or CID straight into the bar and connect to peers directly. No public gateway, no DNS in the middle.",
@@ -1396,6 +1493,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "kao",
     "name": "Kao",
     "category": "wallet",
     "description": "A cute, secure desktop wallet for Ethereum, built in pure Rust with no telemetry. Resolve, register, and manage `.gwei` names from its Names app, all verified by a Helios light client.",
@@ -1416,6 +1514,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "walletchan",
     "name": "WalletChan",
     "category": "wallet",
     "description": "A browser wallet extension for using your Bankr address across every dapp, like MetaMask. Send to `.gwei` (and `.eth`) names, and look them up in its built-in name browser.",
@@ -1436,6 +1535,7 @@ body.modal-open { overflow: hidden; }
     ]
   },
   {
+    "id": "dapp3",
     "name": "dapp3",
     "category": "web access",
     "description": "A browser extension for opening `.gwei` (and `.eth`) sites like any other website, verified locally. It resolves names against Ethereum with a Helios light client and serves them from your own IPFS node. No public gateway, no hijackable DNS, nothing to trust in the middle.",
@@ -1480,7 +1580,7 @@ body.modal-open { overflow: hidden; }
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
 <script>
@@ -1513,47 +1613,197 @@ function appendIntegrationDescription(element, description) {
   }
 }
 
-function renderIntegrations() {
+const INTEGRATIONS = JSON.parse(document.getElementById('integrationData').textContent);
+const INTEGRATION_BY_ID = new Map(INTEGRATIONS.map(integration => [integration.id, integration]));
+const INTEGRATION_INDEX = new Map(INTEGRATIONS.map((integration, index) => [integration.id, index]));
+const integrationCards = new Map();
+const INTEGRATION_ORDER_CACHE_VERSION = 1;
+let integrationDisplayOrder = INTEGRATIONS.map(integration => integration.id);
+
+function normalizeIntegrationOrderIds(ids) {
+  const normalized = [];
+  const seen = new Set();
+  for (const id of Array.isArray(ids) ? ids : []) {
+    if (!INTEGRATION_BY_ID.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  for (const integration of INTEGRATIONS) {
+    if (seen.has(integration.id)) continue;
+    seen.add(integration.id);
+    normalized.push(integration.id);
+  }
+  return normalized;
+}
+
+function integrationOrdersEqual(a, b) {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+function integrationOrderCacheKey() {
+  return `gwei_voting_order_${CHAIN_ID}_${VOTING_CONTRACT.toLowerCase()}`;
+}
+
+function restoreIntegrationOrder() {
+  const key = integrationOrderCacheKey();
+  try {
+    const stored = JSON.parse(localStorage.getItem(key));
+    if (stored?.version !== INTEGRATION_ORDER_CACHE_VERSION ||
+        !Array.isArray(stored.integrationIds)) return;
+    integrationDisplayOrder = normalizeIntegrationOrderIds(stored.integrationIds);
+  } catch (e) {}
+}
+
+function saveIntegrationOrder() {
+  const key = integrationOrderCacheKey();
+  try {
+    localStorage.setItem(key, JSON.stringify({
+      version: INTEGRATION_ORDER_CACHE_VERSION,
+      integrationIds: integrationDisplayOrder
+    }));
+  } catch (e) {}
+}
+
+function rankedIntegrationOrderIds() {
+  return [...INTEGRATIONS]
+    .sort((a, b) => {
+      const tallyDelta = integrationVotingCardState(b.id).total - integrationVotingCardState(a.id).total;
+      return tallyDelta || INTEGRATION_INDEX.get(a.id) - INTEGRATION_INDEX.get(b.id);
+    })
+    .map(integration => integration.id);
+}
+
+function settleIntegrationOrder() {
+  if (!votingTalliesReady || votingDraftDirty()) return false;
+  const nextOrder = rankedIntegrationOrderIds();
+  const changed = !integrationOrdersEqual(integrationDisplayOrder, nextOrder);
+  integrationDisplayOrder = nextOrder;
+  return changed;
+}
+
+function createIntegrationCard(integration) {
+  const card = integrationElement('div', 'int-card');
+  card.dataset.integrationId = integration.id;
+  const head = integrationElement('div', 'int-head');
+  const logo = integrationElement('span', 'int-logo');
+  logo.setAttribute('aria-hidden', 'true');
+  const image = integrationElement('img');
+  image.src = integration.logo;
+  image.alt = '';
+  image.width = 18;
+  image.height = 18;
+  logo.appendChild(image);
+  head.appendChild(logo);
+  head.appendChild(integrationElement('span', 'int-name', integration.name));
+  head.appendChild(integrationElement('span', 'int-tag', integration.category));
+  card.appendChild(head);
+
+  const description = integrationElement('p', 'int-desc');
+  appendIntegrationDescription(description, integration.description);
+  card.appendChild(description);
+
+  const footer = integrationElement('div', 'int-footer');
+  const links = integrationElement('div', 'int-links');
+  for (const link of integration.links) {
+    const displayLabel = link.label === 'Chrome Web Store' ? 'Chrome' : link.label;
+    const anchor = integrationElement('a', '', displayLabel + ' ↗');
+    anchor.href = link.url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener';
+    if (displayLabel !== link.label) anchor.title = link.label;
+    links.appendChild(anchor);
+  }
+  footer.appendChild(links);
+
+  const vote = integrationElement('div', 'int-vote');
+  const total = integrationElement('span', 'int-vote-total');
+  const minus = integrationElement('button', 'int-vote-minus', '−');
+  minus.type = 'button';
+  minus.setAttribute('aria-label', `Remove one vote from ${integration.name}`);
+  const own = integrationElement('button', 'int-vote-own');
+  own.type = 'button';
+  own.title = 'Set an exact amount';
+  own.setAttribute('aria-label', `Edit your votes for ${integration.name}`);
+  const exact = integrationElement('input', 'int-vote-exact');
+  exact.type = 'number';
+  exact.min = '0';
+  exact.step = '1';
+  exact.inputMode = 'numeric';
+  exact.setAttribute('aria-label', `Exact votes for ${integration.name}`);
+  const plus = integrationElement('button', 'int-vote-plus', '↑');
+  plus.type = 'button';
+  plus.setAttribute('aria-label', `Add one vote to ${integration.name}`);
+
+  bindVotingHold(minus, integration.id, -1);
+  bindVotingHold(plus, integration.id, 1);
+  own.addEventListener('click', () => beginExactVoteEdit(integration.id));
+  exact.addEventListener('blur', () => commitExactVoteEdit(integration.id));
+  exact.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); exact.blur(); }
+    if (event.key === 'Escape') { event.preventDefault(); cancelExactVoteEdit(integration.id); }
+  });
+
+  vote.append(total, minus, own, exact, plus);
+  footer.appendChild(vote);
+  card.appendChild(footer);
+  integrationCards.set(integration.id, { card, vote, total, minus, own, exact, plus });
+  return card;
+}
+
+function renderIntegrations({ sort = true, animate = false } = {}) {
   const list = document.getElementById('integrationList');
-  const data = document.getElementById('integrationData');
-  if (!list || !data) return;
+  if (!list) return;
 
-  for (const integration of JSON.parse(data.textContent)) {
-    const card = integrationElement('div', 'int-card');
-    const head = integrationElement('div', 'int-head');
-    const logo = integrationElement('span', 'int-logo');
-    logo.setAttribute('aria-hidden', 'true');
-    const image = integrationElement('img');
-    image.src = integration.logo;
-    image.alt = '';
-    image.width = 18;
-    image.height = 18;
-    logo.appendChild(image);
-    head.appendChild(logo);
-    head.appendChild(integrationElement('span', 'int-name', integration.name));
-    head.appendChild(integrationElement('span', 'int-tag', integration.category));
-    card.appendChild(head);
+  const oldRects = new Map();
+  if (animate) {
+    for (const [id, refs] of integrationCards) oldRects.set(id, refs.card.getBoundingClientRect());
+  }
 
-    const description = integrationElement('p', 'int-desc');
-    appendIntegrationDescription(description, integration.description);
-    card.appendChild(description);
+  let order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
+  if (sort && votingDraftDirty() && list.children.length) {
+    const currentIds = Array.from(list.children, card => card.dataset.integrationId);
+    order = currentIds.map(id => INTEGRATION_BY_ID.get(id)).filter(Boolean);
+  } else if (sort && votingTalliesReady) {
+    settleIntegrationOrder();
+    order = integrationDisplayOrder.map(id => INTEGRATION_BY_ID.get(id));
+  }
 
-    const links = integrationElement('div', 'int-links');
-    for (const link of integration.links) {
-      const anchor = integrationElement('a', '', link.label + ' ↗');
-      anchor.href = link.url;
-      anchor.target = '_blank';
-      anchor.rel = 'noopener';
-      links.appendChild(anchor);
-    }
-    card.appendChild(links);
-    list.appendChild(card);
+  for (const integration of order) {
+    const refs = integrationCards.get(integration.id) || (() => {
+      createIntegrationCard(integration);
+      return integrationCards.get(integration.id);
+    })();
+    const state = integrationVotingCardState(integration.id);
+    refs.vote.classList.toggle('has-own', state.own > 0);
+    refs.vote.classList.toggle('draft', state.draft);
+    refs.total.textContent = state.loading ? '…' : `${formatVoteCount(state.total)} votes`;
+    refs.own.textContent = `you ${formatVoteCount(state.own)}`;
+    refs.own.style.display = state.own > 0 ? '' : 'none';
+    refs.minus.disabled = !votingReady || state.own === 0 || votingSubmitting;
+    refs.plus.disabled = Boolean(connectedAddress) && (!votingReady || state.remaining === 0 || votingSubmitting);
+    refs.exact.max = String(votingTotalPower);
+    list.appendChild(refs.card);
+  }
+
+  if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    requestAnimationFrame(() => {
+      for (const [id, refs] of integrationCards) {
+        const before = oldRects.get(id);
+        if (!before) continue;
+        const after = refs.card.getBoundingClientRect();
+        const dy = before.top - after.top;
+        if (!dy) continue;
+        refs.card.animate(
+          [{ transform: `translateY(${dy}px)` }, { transform: 'translateY(0)' }],
+          { duration: 320, easing: 'cubic-bezier(.2,.8,.2,1)' }
+        );
+      }
+    });
   }
 }
-renderIntegrations();
 
-// ── networks: supports mainnet + sepolia. Mainnet is disabled until NameNFT is
-//    deployed there; until then the dapp runs on Sepolia so prod stays testable. ──
+// ── networks: supports mainnet + sepolia. Both ownerless voting deployments
+//    below are verified. ──
 const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
@@ -1567,13 +1817,21 @@ const NETWORKS = {
     freeRoot: 'id',
     humanRegistrar: '0xA4283D56f523d05bBd46e483f7861d6D10Cb330A', // HumanRegistrar (mainnet, domain=gwei.domains, allowDevMode=false)
     humanRegistrarBlock: 25460588, // deploy block, for counting HumanNameClaimed events
+    voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (mainnet, verified)
+    votingDeployBlock: 25838194,
     enabled: true
   },
   sepolia: {
     key: 'sepolia', label: 'Sepolia', chainId: 11155111, chainIdHex: '0xaa36a7',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
-    rpc: ['https://ethereum-sepolia-rpc.publicnode.com', 'https://1rpc.io/sepolia', 'https://sepolia.drpc.org'],
-    logsRpcs: ['https://gateway.tenderly.co/public/sepolia'],
+    rpc: [
+      'https://ethereum-sepolia-rpc.publicnode.com',
+      'https://sepolia.gateway.tenderly.co/public',
+      'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
+    ],
+    logsRpcs: [
+      'https://sepolia.gateway.tenderly.co/public'
+    ],
     deployBlock: 11142856,
     explorer: 'https://sepolia.etherscan.io',
     nft: { name: 'Etherscan', asset: 'https://sepolia.etherscan.io/nft', collection: 'https://sepolia.etherscan.io/token' },
@@ -1581,6 +1839,8 @@ const NETWORKS = {
     freeRoot: 'id',
     humanRegistrar: '0xAA6C81c54ecA32e1949b9Ff80eAC21D03261E870', // HumanRegistrar (Sepolia, domain=gwei.domains, allowDevMode)
     humanRegistrarBlock: 11193242, // deploy block, for counting HumanNameClaimed events
+    voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (Sepolia, verified)
+    votingDeployBlock: 11562708,
     enabled: true
   }
 };
@@ -1606,6 +1866,8 @@ const NFT = NET.nft;
 const REGISTRAR = NET.registrar;
 const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id.gwei
 const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
+const VOTING_CONTRACT = NET.voting;
+const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
@@ -1634,6 +1896,7 @@ if (NET.chainId !== 1) {
 { const _en = document.getElementById('nftExplorerLink'); if (_en) _en.href = EXPLORER + '/address/' + CONTRACT; }
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
 { const _eh = document.getElementById('humanExplorerLink'); if (_eh) { if (zkEnabled()) { _eh.href = EXPLORER + '/address/' + HUMAN_REGISTRAR; _eh.style.display = ''; } else { _eh.style.display = 'none'; } } }
+{ const _ev = document.getElementById('votingExplorerLink'); if (_ev) _ev.href = EXPLORER + '/address/' + VOTING_CONTRACT; }
 
 // ── Network stats: scan NameRegistered + ContenthashChanged logs (chunked + cached) ──
 // Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
@@ -2291,23 +2554,1064 @@ function syncWalletGlobals() {
 syncWalletGlobals();
 let wcDeepLink = null;
 
+// --- integration voting: pure allocation helpers -----------------------------
+// These functions deliberately operate on plain objects so the same deterministic
+// packing and tally rules can be tested without a wallet or RPC connection.
+function votingPowerForLabelLength(length) {
+  if (length <= 0 || length > 255) return 0;
+  if (length === 1) return 1000;
+  if (length === 2) return 200;
+  if (length === 3) return 100;
+  if (length === 4) return 20;
+  return 1;
+}
+
+function normalizeVotingAllocations(allocations) {
+  const normalized = {};
+  for (const [id, raw] of Object.entries(allocations || {})) {
+    const amount = Number(raw);
+    if (!id || !Number.isSafeInteger(amount) || amount <= 0) continue;
+    normalized[id] = amount;
+  }
+  return normalized;
+}
+
+function sumVotingAllocations(allocations) {
+  return Object.values(normalizeVotingAllocations(allocations)).reduce((sum, amount) => sum + amount, 0);
+}
+
+function votingAllocationsEqual(a, b) {
+  const left = normalizeVotingAllocations(a);
+  const right = normalizeVotingAllocations(b);
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) if ((left[key] || 0) !== (right[key] || 0)) return false;
+  return true;
+}
+
+function aggregateVotingAllocations(names) {
+  const aggregate = {};
+  for (const name of names || []) {
+    for (const [id, amount] of Object.entries(normalizeVotingAllocations(name.allocations))) {
+      aggregate[id] = (aggregate[id] || 0) + amount;
+    }
+  }
+  return aggregate;
+}
+
+function rebaseVotingDraft(previousDraft, nextConfirmed, nextTotalPower) {
+  if (!previousDraft) {
+    return { allocations: { ...nextConfirmed }, preserved: true };
+  }
+  const allocations = normalizeVotingAllocations(previousDraft);
+  const preserved = sumVotingAllocations(allocations) <= nextTotalPower;
+  return {
+    allocations: preserved ? allocations : { ...nextConfirmed },
+    preserved
+  };
+}
+
+function computeVotingTallies(ballots, recordsByToken, knownIdsByHash, now) {
+  const tallies = {};
+  const records = recordsByToken instanceof Map
+    ? tokenId => recordsByToken.get(String(tokenId))
+    : tokenId => recordsByToken?.[String(tokenId)];
+  const known = knownIdsByHash instanceof Map
+    ? hash => knownIdsByHash.get(String(hash).toLowerCase())
+    : hash => knownIdsByHash?.[String(hash).toLowerCase()];
+
+  for (const ballot of ballots || []) {
+    const record = records(ballot.tokenId);
+    if (!record || !record.label || String(record.parent) !== '0') continue;
+    if (Number(record.expiresAt) < Number(now)) continue;
+    if (String(record.epoch) !== String(ballot.epoch)) continue;
+    if (!record.owner || !ballot.voter || record.owner.toLowerCase() !== ballot.voter.toLowerCase()) continue;
+    const integrationIds = ballot.integrationIds || [];
+    const votes = ballot.votes || [];
+    if (integrationIds.length !== votes.length) continue;
+    const power = votingPowerForLabelLength(textEncoder.encode(record.label).length);
+    if (!power || integrationIds.length > power) continue;
+    let allocated = 0;
+    let previousIntegrationId = '';
+    let valid = true;
+    for (let i = 0; i < integrationIds.length; i++) {
+      const integrationId = String(integrationIds[i]).toLowerCase();
+      const amount = Number(votes[i]);
+      if (!integrationId.startsWith('0x') || /^0x0*$/.test(integrationId) ||
+          (i && integrationId <= previousIntegrationId) ||
+          !Number.isSafeInteger(amount) || amount <= 0) {
+        valid = false;
+        break;
+      }
+      previousIntegrationId = integrationId;
+      allocated += amount;
+      if (allocated > power) {
+        valid = false;
+        break;
+      }
+    }
+    if (!valid) continue;
+    for (let i = 0; i < integrationIds.length; i++) {
+      const id = known(integrationIds[i]);
+      const amount = Number(votes[i]);
+      if (!id) continue;
+      tallies[id] = (tallies[id] || 0) + amount;
+    }
+  }
+  return tallies;
+}
+
+// Convert a pooled draft back into complete per-name ballots. Existing placements
+// are retained wherever possible, then deficits fill deterministic tokenId order.
+function packVotingDraft(names, draft) {
+  const orderedNames = [...(names || [])].sort((a, b) => {
+    const left = BigInt(a.tokenId);
+    const right = BigInt(b.tokenId);
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+  const targets = normalizeVotingAllocations(draft);
+  const totalPower = orderedNames.reduce((sum, name) => sum + Number(name.power || 0), 0);
+  if (sumVotingAllocations(targets) > totalPower) throw new Error('Draft exceeds voting power');
+
+  const packed = orderedNames.map(name => ({
+    tokenId: String(name.tokenId),
+    power: Number(name.power || 0),
+    allocations: {}
+  }));
+  const currentAllocations = orderedNames.map(name =>
+    normalizeVotingAllocations(name.allocations)
+  );
+  const capacities = packed.map(name => name.power);
+  const remaining = { ...targets };
+  const ids = Object.keys(targets).sort();
+
+  // Keep already-signed allocations first, minimizing changed name ballots.
+  for (const id of ids) {
+    for (let i = 0; i < orderedNames.length && remaining[id] > 0; i++) {
+      const current = currentAllocations[i][id] || 0;
+      const keep = Math.min(current, remaining[id], capacities[i]);
+      if (!keep) continue;
+      packed[i].allocations[id] = keep;
+      capacities[i] -= keep;
+      remaining[id] -= keep;
+    }
+  }
+
+  // Place new or moved votes into the first name with spare capacity.
+  for (const id of ids) {
+    for (let i = 0; i < packed.length && remaining[id] > 0; i++) {
+      const amount = Math.min(remaining[id], capacities[i]);
+      if (!amount) continue;
+      packed[i].allocations[id] = (packed[i].allocations[id] || 0) + amount;
+      capacities[i] -= amount;
+      remaining[id] -= amount;
+    }
+    if (remaining[id] > 0) throw new Error('Could not pack voting draft');
+  }
+  return packed.map(({ tokenId, allocations }) => ({ tokenId, allocations }));
+}
+
+function buildChangedVotingBallots(names, packed, integrationHashes) {
+  const currentByToken = new Map((names || []).map(name => [String(name.tokenId), name]));
+  const ballots = [];
+  for (const next of packed || []) {
+    const current = currentByToken.get(String(next.tokenId));
+    if (!current || votingAllocationsEqual(current.allocations, next.allocations)) continue;
+    const pairs = Object.entries(normalizeVotingAllocations(next.allocations)).map(([id, votes]) => {
+      const integrationId = integrationHashes instanceof Map ? integrationHashes.get(id) : integrationHashes?.[id];
+      if (!integrationId) throw new Error(`Unknown integration: ${id}`);
+      return { integrationId: String(integrationId).toLowerCase(), votes };
+    }).sort((a, b) => {
+      if (a.integrationId < b.integrationId) return -1;
+      if (a.integrationId > b.integrationId) return 1;
+      return 0;
+    });
+    ballots.push({
+      tokenId: BigInt(next.tokenId),
+      integrationIds: pairs.map(pair => pair.integrationId),
+      votes: pairs.map(pair => pair.votes)
+    });
+  }
+  ballots.sort((a, b) => a.tokenId < b.tokenId ? -1 : a.tokenId > b.tokenId ? 1 : 0);
+  return ballots;
+}
+
+// --- integration voting: chain index -----------------------------------------
+const VOTING_ABI = [
+  'function cast(tuple(uint256 tokenId, bytes32[] integrationIds, uint16[] votes)[] ballots)',
+  'event BallotCast(address indexed voter, uint256 indexed tokenId, uint64 indexed epoch, bytes32[] integrationIds, uint16[] votes)',
+  'error EmptyBallots()',
+  'error BallotsNotSorted()',
+  'error NameDoesNotExist(uint256 tokenId)',
+  'error NotNameOwner(uint256 tokenId)',
+  'error InactiveName(uint256 tokenId)',
+  'error SubdomainNotEligible(uint256 tokenId)',
+  'error AllocationLengthMismatch(uint256 tokenId)',
+  'error InvalidIntegrationId(uint256 tokenId)',
+  'error ZeroVotes(uint256 tokenId, bytes32 integrationId)',
+  'error AllocationsNotSorted(uint256 tokenId)',
+  'error TooManyAllocations(uint256 tokenId, uint256 allocationCount, uint256 votingPower)',
+  'error TooManyVotes(uint256 tokenId, uint256 allocated, uint256 votingPower)',
+  'error InvalidFeeSchedule()'
+];
+const VOTING_IFACE = new ethers.Interface(VOTING_ABI);
+const VOTING_BALLOT_TOPIC = VOTING_IFACE.getEvent('BallotCast').topicHash;
+const VOTING_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const VOTING_HASH_BY_ID = new Map(INTEGRATIONS.map(integration => [integration.id, ethers.id(integration.id).toLowerCase()]));
+const VOTING_ID_BY_HASH = new Map([...VOTING_HASH_BY_ID].map(([id, hash]) => [hash, id]));
+const VOTING_FINALITY_FALLBACK_BLOCKS = 64;
+const VOTING_LOG_MAX_BLOCK_SPAN = 100000;
+const VOTING_LOG_RESULT_THRESHOLD = 1000;
+const VOTING_REFRESH_INTERVAL_MS = 60000;
+const VOTING_FOCUS_REFRESH_AGE_MS = 15000;
+const VOTING_MAX_TX_GAS = 1n << 24n;
+const VOTING_BALLOT_CACHE_VERSION = 4;
+const VOTING_OWNED_CACHE_VERSION = 3;
+
+let votingBallots = new Map();
+let votingRecords = new Map();
+let votingTallies = {};
+let votingNow = 0;
+let votingLoadPromise = null;
+let votingRefreshPromise = null;
+let votingLastLoadedAt = 0;
+let votingTalliesReady = false;
+let ownedVotingNames = [];
+let votingConfirmed = {};
+let votingDraft = {};
+let votingTotalPower = 0;
+let votingReady = false;
+let votingLoading = false;
+let votingSubmitting = false;
+let pendingVoteIntent = null;
+
+async function votingGetLogs(address, topics, fromBlock, toBlock) {
+  if (fromBlock > toBlock) return [];
+  return statsRpc('eth_getLogs', [{
+    address,
+    topics,
+    fromBlock: '0x' + fromBlock.toString(16),
+    toBlock: '0x' + toBlock.toString(16)
+  }]);
+}
+
+function votingLogMatches(log, address, topics) {
+  if (String(log?.address).toLowerCase() !== String(address).toLowerCase()) return false;
+  for (let i = 0; i < topics.length; i++) {
+    const expected = topics[i];
+    if (expected == null) continue;
+    const actual = String(log.topics?.[i] || '').toLowerCase();
+    const choices = Array.isArray(expected) ? expected : [expected];
+    if (!choices.some(choice => String(choice).toLowerCase() === actual)) return false;
+  }
+  return true;
+}
+
+async function votingGetBlockLogs(address, topics, blockNumber) {
+  const blockTag = '0x' + blockNumber.toString(16);
+  const block = await statsRpc('eth_getBlockByNumber', [blockTag, false]);
+  if (!block?.hash || !Array.isArray(block.transactions)) {
+    throw new Error(`Could not read voting block ${blockNumber}`);
+  }
+  const transactionHashes = block.transactions.map(hash => String(hash).toLowerCase());
+  const receiptsCoverBlock = receipts => Array.isArray(receipts) &&
+    receipts.length === transactionHashes.length &&
+    receipts.every((receipt, index) =>
+      String(receipt?.transactionHash).toLowerCase() === transactionHashes[index]
+    );
+
+  let receipts = null;
+  try {
+    const blockReceipts = await statsRpc('eth_getBlockReceipts', [blockTag]);
+    if (receiptsCoverBlock(blockReceipts)) receipts = blockReceipts;
+  } catch (e) {}
+
+  // Not every RPC implements eth_getBlockReceipts. Fall back to small,
+  // sequential groups of standard receipt requests without creating a burst.
+  if (!receipts) {
+    receipts = [];
+    for (let i = 0; i < transactionHashes.length; i += 10) {
+      const chunk = transactionHashes.slice(i, i + 10);
+      receipts.push(...await Promise.all(
+        chunk.map(hash => statsRpc('eth_getTransactionReceipt', [hash]))
+      ));
+    }
+  }
+
+  const blockHash = String(block.hash).toLowerCase();
+  if (!receiptsCoverBlock(receipts) ||
+      receipts.some(receipt => String(receipt.blockHash).toLowerCase() !== blockHash)) {
+    throw new Error(`Voting block ${blockNumber} changed while reading receipts`);
+  }
+  return receipts.flatMap(receipt => receipt.logs || [])
+    .filter(log => votingLogMatches(log, address, topics));
+}
+
+async function scanVotingRanges(address, topics, fromBlock, toBlock, consume) {
+  if (fromBlock > toBlock) return;
+
+  async function scanRange(from, to) {
+    let logs;
+    try {
+      logs = await votingGetLogs(address, topics, from, to);
+    } catch (error) {
+      if (from === to) {
+        for (const log of await votingGetBlockLogs(address, topics, from)) consume(log);
+        return;
+      }
+      const middle = Math.floor((from + to) / 2);
+      await scanRange(from, middle);
+      await scanRange(middle + 1, to);
+      return;
+    }
+
+    // Common public RPCs silently cap successful eth_getLogs responses at
+    // 1,000 results. Split those responses too, so an incomplete page is never
+    // accepted as a complete voting history.
+    if (logs.length >= VOTING_LOG_RESULT_THRESHOLD) {
+      if (from === to) {
+        for (const log of await votingGetBlockLogs(address, topics, from)) consume(log);
+        return;
+      }
+      const middle = Math.floor((from + to) / 2);
+      await scanRange(from, middle);
+      await scanRange(middle + 1, to);
+      return;
+    }
+
+    for (const log of logs) consume(log);
+  }
+
+  // Bound cold-start responses even when an RPC would accept the full history.
+  // Ranges and retries stay sequential to avoid rate-limit bursts.
+  for (let from = fromBlock; from <= toBlock; from += VOTING_LOG_MAX_BLOCK_SPAN) {
+    const to = Math.min(from + VOTING_LOG_MAX_BLOCK_SPAN - 1, toBlock);
+    await scanRange(from, to);
+  }
+}
+
+async function loadVotingHeads(deployBlock) {
+  const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
+  let finalized = null;
+  try {
+    const block = await statsRpc('eth_getBlockByNumber', ['finalized', false]);
+    if (block?.number != null) finalized = Number(BigInt(block.number));
+  } catch (e) {}
+  const stableHead = Math.max(
+    deployBlock - 1,
+    Math.min(latest, finalized ?? latest - VOTING_FINALITY_FALLBACK_BLOCKS)
+  );
+  return { latest, stableHead };
+}
+
+async function votingBlockHash(blockNumber, deployBlock) {
+  if (blockNumber < deployBlock) return null;
+  const block = await statsRpc('eth_getBlockByNumber', ['0x' + blockNumber.toString(16), false]);
+  if (!block?.hash) throw new Error(`Could not checkpoint voting block ${blockNumber}`);
+  return String(block.hash).toLowerCase();
+}
+
+async function votingCheckpointMatches(cache, deployBlock) {
+  if (cache.lastBlock === deployBlock - 1) return cache.lastBlockHash == null;
+  if (typeof cache.lastBlockHash !== 'string') return false;
+  try {
+    return await votingBlockHash(cache.lastBlock, deployBlock) === cache.lastBlockHash.toLowerCase();
+  } catch (e) {
+    return false;
+  }
+}
+
+function votingLogPosition(log) {
+  return {
+    blockNumber: Number(typeof log.blockNumber === 'string' ? BigInt(log.blockNumber) : log.blockNumber || 0),
+    logIndex: Number(typeof log.logIndex === 'string' ? BigInt(log.logIndex) : log.logIndex ?? log.index ?? 0)
+  };
+}
+
+function applyVotingBallotLog(ballots, log) {
+  let parsed;
+  try { parsed = VOTING_IFACE.parseLog(log); } catch (e) { return; }
+  if (!parsed || parsed.name !== 'BallotCast') return;
+  const position = votingLogPosition(log);
+  const tokenId = parsed.args.tokenId.toString();
+  const next = {
+    tokenId,
+    voter: String(parsed.args.voter),
+    epoch: parsed.args.epoch.toString(),
+    integrationIds: Array.from(parsed.args.integrationIds, value => String(value).toLowerCase()),
+    votes: Array.from(parsed.args.votes, Number),
+    ...position
+  };
+  const previous = ballots[tokenId];
+  if (!previous || next.blockNumber > previous.blockNumber ||
+      (next.blockNumber === previous.blockNumber && next.logIndex > previous.logIndex)) {
+    ballots[tokenId] = next;
+  }
+  return tokenId;
+}
+
+async function loadVotingBallots() {
+  const deployBlock = Number(VOTING_DEPLOY_BLOCK);
+  const cacheKey = `gwei_voting_ballots_${CHAIN_ID}_${String(VOTING_CONTRACT).toLowerCase()}`;
+  const { latest, stableHead } = await loadVotingHeads(deployBlock);
+  let cache = {
+    version: VOTING_BALLOT_CACHE_VERSION,
+    lastBlock: deployBlock - 1,
+    lastBlockHash: null,
+    ballots: {}
+  };
+  try {
+    const stored = JSON.parse(localStorage.getItem(cacheKey));
+    if (stored?.version === VOTING_BALLOT_CACHE_VERSION && stored.ballots &&
+        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead &&
+        await votingCheckpointMatches(stored, deployBlock)) cache = stored;
+  } catch (e) {}
+
+  if (cache.lastBlock < stableHead) {
+    await scanVotingRanges(
+      VOTING_CONTRACT,
+      [VOTING_BALLOT_TOPIC],
+      cache.lastBlock + 1,
+      stableHead,
+      log => applyVotingBallotLog(cache.ballots, log)
+    );
+    cache.lastBlock = stableHead;
+    cache.lastBlockHash = await votingBlockHash(stableHead, deployBlock);
+    try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+  }
+
+  const liveBallots = { ...cache.ballots };
+  if (stableHead < latest) {
+    await scanVotingRanges(
+      VOTING_CONTRACT,
+      [VOTING_BALLOT_TOPIC],
+      stableHead + 1,
+      latest,
+      log => applyVotingBallotLog(liveBallots, log)
+    );
+  }
+  return new Map(Object.entries(liveBallots));
+}
+
+async function votingMulticall(calls, chunkSize = 120) {
+  const output = [];
+  for (let i = 0; i < calls.length; i += chunkSize) {
+    output.push(...await multicall(calls.slice(i, i + chunkSize)));
+  }
+  return output;
+}
+
+async function loadVotingRecords(tokenIds, includeOwner = false) {
+  const ids = [...new Set((tokenIds || []).map(String))];
+  const calls = [];
+  for (const tokenId of ids) {
+    calls.push({ fn: 'records', args: [BigInt(tokenId)], allowFailure: true });
+    if (includeOwner) calls.push({ fn: 'ownerOf', args: [BigInt(tokenId)], allowFailure: true });
+  }
+  const results = await votingMulticall(calls);
+  const records = new Map();
+  let cursor = 0;
+  for (const tokenId of ids) {
+    const value = results[cursor++];
+    const owner = includeOwner ? results[cursor++]?.[0] : null;
+    if (!value) continue;
+    records.set(tokenId, {
+      label: String(value[0]),
+      parent: value[1].toString(),
+      expiresAt: Number(value[2]),
+      epoch: value[3].toString(),
+      owner: owner ? String(owner) : null
+    });
+  }
+  return records;
+}
+
+function recomputeVotingTallies() {
+  votingTallies = computeVotingTallies(
+    [...votingBallots.values()],
+    votingRecords,
+    VOTING_ID_BY_HASH,
+    votingNow
+  );
+}
+
+async function loadIntegrationVoting() {
+  votingBallots = await loadVotingBallots();
+  votingRecords = await loadVotingRecords([...votingBallots.keys()], true);
+  const latestBlock = await (await getRpc()).getBlock('latest');
+  votingNow = Number(latestBlock.timestamp);
+  recomputeVotingTallies();
+  votingTalliesReady = true;
+  votingLastLoadedAt = Date.now();
+  const orderChanged = settleIntegrationOrder();
+  saveIntegrationOrder();
+  updateVotingUi({ animate: orderChanged });
+}
+
+function ensureIntegrationVotingLoaded({ force = false } = {}) {
+  if (!force && votingTalliesReady) return Promise.resolve();
+  if (!votingLoadPromise) {
+    votingLoadPromise = loadIntegrationVoting()
+      .catch(error => {
+        console.warn('Could not load integration voting:', error);
+        throw error;
+      })
+      .finally(() => { votingLoadPromise = null; });
+  }
+  return votingLoadPromise;
+}
+
+async function loadOwnedVotingTokenIds(address) {
+  const deployBlock = Number(NET.deployBlock);
+  const cacheKey = `gwei_voting_owned_${CHAIN_ID}_${address.toLowerCase()}`;
+  const { latest, stableHead } = await loadVotingHeads(deployBlock);
+  let cache = {
+    version: VOTING_OWNED_CACHE_VERSION,
+    lastBlock: deployBlock - 1,
+    lastBlockHash: null,
+    tokenIds: []
+  };
+  try {
+    const stored = JSON.parse(localStorage.getItem(cacheKey));
+    if (stored?.version === VOTING_OWNED_CACHE_VERSION && Array.isArray(stored.tokenIds) &&
+        stored.lastBlock >= deployBlock - 1 && stored.lastBlock <= stableHead &&
+        await votingCheckpointMatches(stored, deployBlock)) cache = stored;
+  } catch (e) {}
+
+  const stableIds = new Set(cache.tokenIds.map(String));
+  const toTopic = ethers.zeroPadValue(address, 32).toLowerCase();
+  const consume = log => {
+    if (log.topics?.[3]) stableIds.add(BigInt(log.topics[3]).toString());
+  };
+  if (cache.lastBlock < stableHead) {
+    await scanVotingRanges(CONTRACT, [VOTING_TRANSFER_TOPIC, null, toTopic], cache.lastBlock + 1, stableHead, consume);
+    cache.lastBlock = stableHead;
+    cache.lastBlockHash = await votingBlockHash(stableHead, deployBlock);
+    cache.tokenIds = [...stableIds];
+    try { localStorage.setItem(cacheKey, JSON.stringify(cache)); } catch (e) {}
+  }
+
+  const liveIds = new Set(stableIds);
+  if (stableHead < latest) {
+    await scanVotingRanges(CONTRACT, [VOTING_TRANSFER_TOPIC, null, toTopic], stableHead + 1, latest, log => {
+      if (log.topics?.[3]) liveIds.add(BigInt(log.topics[3]).toString());
+    });
+  }
+  return [...liveIds];
+}
+
+// --- integration voting: wallet and interaction ------------------------------
+function formatVoteCount(value) {
+  return Math.max(0, Number(value) || 0).toLocaleString('en-US');
+}
+
+function votingDraftDirty() {
+  return votingReady && !votingAllocationsEqual(votingConfirmed, votingDraft);
+}
+
+function votingRemaining() {
+  return Math.max(0, votingTotalPower - sumVotingAllocations(votingDraft));
+}
+
+function integrationVotingCardState(id) {
+  const confirmed = votingReady ? (votingConfirmed[id] || 0) : 0;
+  const own = votingReady ? (votingDraft[id] || 0) : 0;
+  const chainTotal = votingTallies[id] || 0;
+  return {
+    total: votingReady ? Math.max(0, chainTotal - confirmed + own) : chainTotal,
+    own,
+    remaining: votingRemaining(),
+    draft: votingReady && own !== confirmed,
+    loading: !votingTalliesReady
+  };
+}
+
+function votingDraftStorageKey() {
+  if (!connectedAddress) return null;
+  return `gwei_voting_draft_${CHAIN_ID}_${VOTING_CONTRACT.toLowerCase()}_${connectedAddress.toLowerCase()}`;
+}
+
+function votingBaselineFingerprint() {
+  return JSON.stringify([...ownedVotingNames].sort((a, b) => {
+    const left = BigInt(a.tokenId);
+    const right = BigInt(b.tokenId);
+    return left < right ? -1 : left > right ? 1 : 0;
+  }).map(name => [
+    String(name.tokenId),
+    String(name.epoch),
+    Number(name.power),
+    Object.entries(normalizeVotingAllocations(name.allocations)).sort(([a], [b]) => a.localeCompare(b))
+  ]));
+}
+
+function saveVotingDraft() {
+  const key = votingDraftStorageKey();
+  if (!key) return;
+  try {
+    if (!votingDraftDirty()) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify({
+      version: 1,
+      baseline: votingBaselineFingerprint(),
+      allocations: normalizeVotingAllocations(votingDraft)
+    }));
+  } catch (e) {}
+}
+
+function restoreVotingDraft() {
+  const key = votingDraftStorageKey();
+  if (!key) return false;
+  try {
+    const stored = JSON.parse(localStorage.getItem(key));
+    const allocations = normalizeVotingAllocations(stored?.allocations);
+    const validIds = Object.keys(allocations).every(id => VOTING_HASH_BY_ID.has(id));
+    if (stored?.version === 1 && stored.baseline === votingBaselineFingerprint() &&
+        validIds && sumVotingAllocations(allocations) <= votingTotalPower) {
+      votingDraft = allocations;
+      return true;
+    }
+    localStorage.removeItem(key);
+  } catch (e) {
+    try { localStorage.removeItem(key); } catch (_) {}
+  }
+  return false;
+}
+
+function renderVotingPower() {
+  const details = $('integrationVoteDetails');
+  const power = $('integrationVotePower');
+  const summary = $('integrationVotePowerSummary');
+  const section = $('integrationVotePowerSection');
+  const list = $('integrationVotePowerList');
+  if (!details || !power || !summary || !section || !list) return;
+  const show = Boolean(connectedAddress) && (votingReady || votingLoading);
+  power.classList.toggle('show', show);
+  section.classList.toggle('show', show);
+  if (!show) return;
+
+  if (votingLoading) {
+    summary.textContent = 'finding names…';
+    list.tabIndex = -1;
+    list.replaceChildren();
+    details.open = false;
+    return;
+  }
+
+  if (!ownedVotingNames.length) {
+    summary.textContent = 'no active names';
+    list.tabIndex = -1;
+    list.replaceChildren(integrationElement('div', 'int-power-row', 'register a name to vote'));
+    return;
+  }
+  const voteWord = votingTotalPower === 1 ? 'vote' : 'votes';
+  const nameWord = ownedVotingNames.length === 1 ? 'name' : 'names';
+  summary.textContent = `${ownedVotingNames.length} ${nameWord} · ${formatVoteCount(votingTotalPower)} ${voteWord}`;
+  list.tabIndex = ownedVotingNames.length > 5 ? 0 : -1;
+  const rows = [...ownedVotingNames].sort((a, b) => a.label.localeCompare(b.label)).map(name => {
+    const row = integrationElement('div', 'int-power-row');
+    const label = `${name.label}.gwei`;
+    const labelElement = integrationElement('span', '', label);
+    labelElement.title = label;
+    row.append(
+      labelElement,
+      integrationElement('span', '', formatVoteCount(name.power))
+    );
+    return row;
+  });
+  list.replaceChildren(...rows);
+}
+
+function updateVotingUi({ animate = false, success = false } = {}) {
+  renderVotingPower();
+
+  const dock = $('voteDock');
+  const count = $('voteDockCount');
+  const reset = $('voteReset');
+  const sign = $('voteSign');
+  const showDock = votingReady && ownedVotingNames.length > 0 && votingDraftDirty();
+  if (dock) {
+    dock.classList.toggle('show', showDock);
+    dock.classList.toggle('success', success);
+    dock.setAttribute('aria-hidden', String(!showDock));
+    dock.inert = !showDock;
+  }
+  document.body.classList.toggle('vote-dock-open', showDock);
+  if (showDock && count) {
+    count.replaceChildren();
+    const strong = integrationElement('strong', '', `${formatVoteCount(votingRemaining())} of ${formatVoteCount(votingTotalPower)} remaining`);
+    const detail = integrationElement('span', '', `${ownedVotingNames.length} ${ownedVotingNames.length === 1 ? 'name' : 'names'} · one transaction`);
+    count.append(strong, detail);
+  }
+  if (reset) reset.disabled = !votingDraftDirty() || votingSubmitting;
+  if (sign) {
+    sign.disabled = !votingDraftDirty() || votingSubmitting;
+    sign.textContent = votingSubmitting ? 'signing…' : 'sign votes';
+  }
+  renderIntegrations({ sort: true, animate });
+}
+
+function clearVotingWalletState() {
+  ownedVotingNames = [];
+  votingConfirmed = {};
+  votingDraft = {};
+  votingTotalPower = 0;
+  votingReady = false;
+  votingLoading = false;
+  votingSubmitting = false;
+  pendingVoteIntent = null;
+  updateVotingUi();
+}
+
+async function initializeVotingWallet({
+  refreshVoting = false,
+  preserveDraft = false,
+  silent = false
+} = {}) {
+  if (!connectedAddress) {
+    clearVotingWalletState();
+    return { ok: true, baselineChanged: false, draftPreserved: true };
+  }
+  const address = connectedAddress;
+  const previousBaseline = votingReady ? votingBaselineFingerprint() : null;
+  const previousDraft = preserveDraft && votingDraftDirty()
+    ? normalizeVotingAllocations(votingDraft)
+    : null;
+  if (!silent) {
+    votingReady = false;
+    votingLoading = true;
+    updateVotingUi();
+  }
+  try {
+    await ensureIntegrationVotingLoaded({ force: refreshVoting });
+    const tokenIds = await loadOwnedVotingTokenIds(address);
+    const records = await loadVotingRecords(tokenIds, true);
+    const latestBlock = await (await getRpc()).getBlock('latest');
+    const now = Number(latestBlock.timestamp);
+    if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
+      return { ok: false, cancelled: true };
+    }
+
+    const names = [];
+    for (const tokenId of tokenIds) {
+      const record = records.get(String(tokenId));
+      if (!record || !record.label || String(record.parent) !== '0') continue;
+      if (record.expiresAt < now || record.owner?.toLowerCase() !== address.toLowerCase()) continue;
+      const allocations = {};
+      const ballot = votingBallots.get(String(tokenId));
+      if (ballot && String(ballot.epoch) === String(record.epoch) &&
+          ballot.voter?.toLowerCase() === address.toLowerCase()) {
+        for (let i = 0; i < ballot.integrationIds.length; i++) {
+          const id = VOTING_ID_BY_HASH.get(ballot.integrationIds[i].toLowerCase());
+          const amount = Number(ballot.votes[i]);
+          if (id && Number.isSafeInteger(amount) && amount > 0) allocations[id] = amount;
+        }
+      }
+      const power = votingPowerForLabelLength(textEncoder.encode(record.label).length);
+      names.push({
+        tokenId: String(tokenId),
+        label: record.label,
+        epoch: String(record.epoch),
+        power,
+        allocations
+      });
+      votingRecords.set(String(tokenId), record);
+    }
+
+    const nextTotalPower = names.reduce((sum, name) => sum + name.power, 0);
+    const nextConfirmed = aggregateVotingAllocations(names);
+    const rebasedDraft = rebaseVotingDraft(previousDraft, nextConfirmed, nextTotalPower);
+    ownedVotingNames = names;
+    votingTotalPower = nextTotalPower;
+    votingConfirmed = nextConfirmed;
+    votingDraft = rebasedDraft.allocations;
+    votingNow = now;
+    recomputeVotingTallies();
+    votingReady = true;
+    votingLoading = false;
+    if (!preserveDraft) restoreVotingDraft();
+    else saveVotingDraft();
+    updateVotingUi();
+
+    const baselineChanged = previousBaseline != null &&
+      previousBaseline !== votingBaselineFingerprint();
+    if (previousDraft && baselineChanged) {
+      showStatus(
+        rebasedDraft.preserved
+          ? 'Voting changed onchain. Your draft was kept and updated.'
+          : 'Your voting power changed. Review your votes before signing.',
+        rebasedDraft.preserved ? '' : 'error'
+      );
+    }
+
+    if (pendingVoteIntent) {
+      const intent = pendingVoteIntent;
+      pendingVoteIntent = null;
+      changeIntegrationVote(intent.id, intent.delta);
+    }
+    return { ok: true, baselineChanged, draftPreserved: rebasedDraft.preserved };
+  } catch (error) {
+    console.warn('Could not load owned voting power:', error);
+    if (!silent) {
+      votingReady = false;
+      votingLoading = false;
+      updateVotingUi();
+      showStatus('Could not load your voting power. Try again.', 'error');
+    }
+    return { ok: false, error };
+  }
+}
+
+function refreshIntegrationVoting({ refreshWallet = true, preserveDraft = true } = {}) {
+  if (!votingRefreshPromise) {
+    votingRefreshPromise = (async () => {
+      await ensureIntegrationVotingLoaded({ force: true });
+      if (refreshWallet && connectedAddress) {
+        return initializeVotingWallet({ preserveDraft, silent: true });
+      }
+      return { ok: true };
+    })().finally(() => { votingRefreshPromise = null; });
+  }
+  return votingRefreshPromise;
+}
+
+function refreshIntegrationVotingInBackground() {
+  if (document.hidden || votingSubmitting || votingLoading) return;
+  refreshIntegrationVoting()
+    .then(result => {
+      if (!result?.ok) throw result?.error || new Error('Could not refresh voting state');
+      const caption = $('integrationVoteCaption');
+      if (caption) caption.title = '';
+    })
+    .catch(error => {
+      console.warn('Could not refresh integration voting:', error);
+      const caption = $('integrationVoteCaption');
+      if (caption) caption.title = 'Voting data may be stale. It will retry automatically.';
+    });
+}
+
+function setIntegrationVote(id, amount) {
+  if (!VOTING_HASH_BY_ID.has(id) || !votingReady) return;
+  const current = votingDraft[id] || 0;
+  const maximum = current + votingRemaining();
+  const next = Math.max(0, Math.min(maximum, Math.floor(Number(amount) || 0)));
+  if (next === current) return;
+  if (next) votingDraft[id] = next;
+  else delete votingDraft[id];
+  saveVotingDraft();
+  updateVotingUi();
+}
+
+function changeIntegrationVote(id, delta) {
+  if (!VOTING_HASH_BY_ID.has(id)) return;
+  if (!connectedAddress) {
+    pendingVoteIntent = { id, delta };
+    showWalletModal();
+    return;
+  }
+  if (!votingReady) {
+    showStatus('Loading your .gwei voting power…', '');
+    return;
+  }
+  if (!ownedVotingNames.length) {
+    showStatus('You need an active top-level .gwei name to vote.', 'error');
+    return;
+  }
+  setIntegrationVote(id, (votingDraft[id] || 0) + delta);
+}
+
+function bindVotingHold(button, id, delta) {
+  let holdTimer = null;
+  let repeatTimer = null;
+  let held = false;
+  let suppressClick = false;
+  let interval = 150;
+  let repeats = 0;
+
+  const stop = () => {
+    clearTimeout(holdTimer);
+    clearTimeout(repeatTimer);
+    holdTimer = null;
+    repeatTimer = null;
+  };
+  const repeat = () => {
+    held = true;
+    suppressClick = true;
+    repeats++;
+    const step = repeats > 30 ? 10 : repeats > 12 ? 5 : 1;
+    changeIntegrationVote(id, delta * step);
+    interval = Math.max(40, Math.floor(interval * 0.84));
+    repeatTimer = setTimeout(repeat, interval);
+  };
+  button.addEventListener('pointerdown', event => {
+    if (button.disabled || (event.button !== undefined && event.button !== 0)) return;
+    held = false;
+    suppressClick = false;
+    interval = 150;
+    repeats = 0;
+    button.setPointerCapture?.(event.pointerId);
+    holdTimer = setTimeout(repeat, 360);
+  });
+  button.addEventListener('pointerup', stop);
+  button.addEventListener('pointercancel', stop);
+  button.addEventListener('lostpointercapture', stop);
+  button.addEventListener('click', event => {
+    if (suppressClick || held) {
+      event.preventDefault();
+      suppressClick = false;
+      held = false;
+      return;
+    }
+    changeIntegrationVote(id, delta);
+  });
+}
+
+function beginExactVoteEdit(id) {
+  const refs = integrationCards.get(id);
+  if (!refs || !votingReady) return;
+  refs.vote.classList.add('editing');
+  refs.exact.value = String(votingDraft[id] || 0);
+  refs.exact.dataset.cancel = '';
+  refs.exact.focus();
+  refs.exact.select();
+}
+
+function cancelExactVoteEdit(id) {
+  const refs = integrationCards.get(id);
+  if (!refs) return;
+  refs.exact.dataset.cancel = 'true';
+  refs.vote.classList.remove('editing');
+  refs.exact.blur();
+}
+
+function commitExactVoteEdit(id) {
+  const refs = integrationCards.get(id);
+  if (!refs) return;
+  refs.vote.classList.remove('editing');
+  if (refs.exact.dataset.cancel === 'true') {
+    refs.exact.dataset.cancel = '';
+    return;
+  }
+  const value = Number(refs.exact.value);
+  if (!Number.isFinite(value)) return;
+  setIntegrationVote(id, value);
+}
+
+function resetVotingDraft() {
+  if (!votingReady || votingSubmitting) return;
+  votingDraft = { ...votingConfirmed };
+  saveVotingDraft();
+  updateVotingUi();
+}
+
+async function submitVotingDraft() {
+  if (!signer || !votingReady || votingSubmitting || !votingDraftDirty()) return;
+  votingSubmitting = true;
+  let succeeded = false;
+  let minedTxHash = null;
+  updateVotingUi();
+  try {
+    const requestedDraft = normalizeVotingAllocations(votingDraft);
+    const refreshed = await refreshIntegrationVoting({ preserveDraft: true });
+    if (!refreshed?.ok) throw refreshed?.error || new Error('Could not refresh voting state');
+    if (!refreshed.draftPreserved || !votingAllocationsEqual(requestedDraft, votingDraft)) {
+      throw new Error('Your voting power changed. Review your votes and sign again.');
+    }
+    if (!votingDraftDirty()) {
+      saveVotingDraft();
+      showStatus('Votes are already up to date.', 'success');
+      succeeded = true;
+      return;
+    }
+
+    const packed = packVotingDraft(ownedVotingNames, votingDraft);
+    const ballots = buildChangedVotingBallots(ownedVotingNames, packed, VOTING_HASH_BY_ID);
+    if (!ballots.length) throw new Error('Could not prepare votes');
+
+    const voting = new ethers.Contract(VOTING_CONTRACT, VOTING_ABI, signer);
+    const estimatedGas = await voting.cast.estimateGas(ballots);
+    if (estimatedGas >= VOTING_MAX_TX_GAS) {
+      throw new Error('This vote is too large for one Ethereum transaction.');
+    }
+    const tx = await wcTransaction(voting.cast(ballots), 'Approve all integration votes');
+    const receipt = await waitForTx(tx);
+    minedTxHash = tx.hash;
+
+    // Re-read the public index after mining, then merge the canonical receipt
+    // logs in case the public RPC is a block behind the wallet's RPC.
+    try {
+      await ensureIntegrationVotingLoaded({ force: true });
+    } catch (error) {
+      console.warn('Could not immediately refresh mined votes:', error);
+    }
+    const mutableBallots = Object.fromEntries(votingBallots);
+    for (const log of receipt.logs || []) {
+      if (String(log.address).toLowerCase() === VOTING_CONTRACT.toLowerCase()) {
+        applyVotingBallotLog(mutableBallots, log);
+      }
+    }
+    votingBallots = new Map(Object.entries(mutableBallots));
+    const walletRefresh = await initializeVotingWallet({ preserveDraft: false, silent: true });
+    if (!walletRefresh?.ok) throw walletRefresh?.error || new Error('Could not refresh mined votes');
+    settleIntegrationOrder();
+    saveIntegrationOrder();
+    showStatus('Votes counted.', 'success', tx.hash);
+    succeeded = true;
+  } catch (error) {
+    if (minedTxHash) {
+      console.warn('Vote mined but the refreshed state could not be shown:', error);
+      showStatus('Votes mined. Live totals will refresh automatically.', 'success', minedTxHash);
+      succeeded = true;
+    } else {
+      handleError(error);
+    }
+  } finally {
+    votingSubmitting = false;
+    updateVotingUi({ animate: succeeded, success: succeeded });
+    if (succeeded) {
+      setTimeout(() => $('voteDock')?.classList.remove('success'), 1600);
+      refreshIntegrationVotingInBackground();
+    }
+  }
+}
+
 const eip6963Providers = new Map();
 
-// WalletConnect transaction helper - shows notification and handles deep links
+function safeWalletDeepLink(value) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const url = new URL(value);
+    if (['javascript:', 'data:', 'file:', 'vbscript:'].includes(url.protocol.toLowerCase())) return null;
+    return url.href;
+  } catch (e) {
+    return null;
+  }
+}
+
+// WalletConnect transaction helper - shows notification and returns mobile users to their wallet.
 async function wcTransaction(txPromise, message = 'Confirm in your wallet app') {
   if (!isWalletConnect) return txPromise;
+  const deepLink = safeWalletDeepLink(wcDeepLink);
 
   // Show persistent notification
   const notif = document.createElement('div');
   notif.id = 'wcNotif';
   notif.innerHTML = `
-    <div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:16px;text-align:center;z-index:10000;font-size:14px;">
-      <div style="margin-bottom:8px;">📱 ${message}</div>
-      <div style="font-size:12px;opacity:0.7;">Open your wallet app to approve the transaction</div>
-      ${wcDeepLink ? `<a href="${wcDeepLink}" style="display:inline-block;margin-top:8px;padding:8px 16px;background:#fff;color:#000;border-radius:4px;text-decoration:none;">Open Wallet</a>` : ''}
+      <div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#fff;padding:16px;text-align:center;z-index:10000;font-size:14px;">
+        <div style="margin-bottom:8px;">📱 ${message}</div>
+        <div style="font-size:12px;opacity:0.7;">Open your wallet app to approve the transaction</div>
+      ${deepLink ? `<a href="${escapeHtml(deepLink)}" style="display:inline-block;margin-top:8px;padding:8px 16px;background:#fff;color:#000;border-radius:4px;text-decoration:none;">Open Wallet</a>` : ''}
     </div>
   `;
   document.body.appendChild(notif);
+
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  const insideWalletBrowser = Boolean(window.ethereum);
+  if (deepLink && isMobile && !insideWalletBrowser) {
+    setTimeout(() => {
+      if (!document.hidden) window.location.href = deepLink;
+    }, 2000);
+  }
 
   try {
     const result = await txPromise;
@@ -2487,7 +3791,7 @@ async function connectWithWallet(walletKey) {
         projectId: '1e8390ef1c1d8a185e035912a1409749',
         chains: [CHAIN_ID],
         showQrModal: true,
-        rpcMap: { [CHAIN_ID]: 'https://ethereum-rpc.publicnode.com' },
+        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
         metadata: {
           name: 'Gwei Name Service',
           description: 'Register .gwei names',
@@ -2627,6 +3931,7 @@ async function connectWithWallet(walletKey) {
     doCheckName();
     updateZkClaimEnabled();
     if (NET.chainId === 1) loadSlowTransfers();
+    await initializeVotingWallet();
 
   } catch (error) {
     handleError(error);
@@ -2711,6 +4016,7 @@ function disconnectWallet() {
   updateZkClaimEnabled();
   slowTransfersVersion++;
   setSlowActionableCount(0);
+  clearVotingWalletState();
   const slowList = $('slowTransfers');
   if (slowList) {
     slowList.className = 'slow-transfer-empty';
@@ -2752,7 +4058,20 @@ const CONTRACT_ERROR_HELP = {
   TimelockExpired: 'The reversal window has closed.',
   ClawbackNotReady: 'This SLOW transfer is not ready for clawback yet.',
   TransferToNonERC1155ReceiverImplementer: 'This recipient is a smart account that cannot receive the SLOW transfer receipt. Use an address with ERC-1155 support.',
-  TransferToNonERC721ReceiverImplementer: 'Your connected account cannot receive NFTs: it is a smart account (or has an EIP-7702 delegation) without NFT support. Remove the delegation in your wallet (revoke smart account / switch back to EOA) or use another address.'
+  TransferToNonERC721ReceiverImplementer: 'Your connected account cannot receive NFTs: it is a smart account (or has an EIP-7702 delegation) without NFT support. Remove the delegation in your wallet (revoke smart account / switch back to EOA) or use another address.',
+  EmptyBallots: 'There are no changed votes to sign.',
+  BallotsNotSorted: 'Could not prepare the vote batch. Refresh and try again.',
+  NameDoesNotExist: 'One of these .gwei names no longer exists. Refresh your voting power.',
+  NotNameOwner: 'This wallet no longer owns one of the .gwei names in the vote. Refresh your voting power.',
+  InactiveName: 'One of the .gwei names in the vote has expired. Refresh your voting power.',
+  SubdomainNotEligible: 'Only top-level .gwei names can vote.',
+  AllocationLengthMismatch: 'Could not prepare the vote allocations. Refresh and try again.',
+  InvalidIntegrationId: 'Could not identify one of the integrations. Refresh and try again.',
+  ZeroVotes: 'A zero-vote allocation was included. Refresh and try again.',
+  AllocationsNotSorted: 'Could not prepare the vote allocations. Refresh and try again.',
+  TooManyAllocations: 'A name was split across more integrations than its voting power allows.',
+  TooManyVotes: 'The vote uses more voting power than the selected .gwei names provide.',
+  InvalidFeeSchedule: 'Integration voting is unavailable because the name fee schedule is invalid.'
 };
 // 4-byte selectors of the same errors, for raw provider errors ethers cannot decode
 const CONTRACT_ERROR_SELECTORS = {
@@ -2777,7 +4096,20 @@ const CONTRACT_ERROR_SELECTORS = {
   '0x7a6fcaa6': 'TimelockExpired',
   '0xc9252135': 'ClawbackNotReady',
   '0x9c05499b': 'TransferToNonERC1155ReceiverImplementer',
-  '0xd1a57ed6': 'TransferToNonERC721ReceiverImplementer'
+  '0xd1a57ed6': 'TransferToNonERC721ReceiverImplementer',
+  '0x7486647e': 'EmptyBallots',
+  '0x3ad89842': 'BallotsNotSorted',
+  '0x9ca95309': 'NameDoesNotExist',
+  '0x6babcc29': 'NotNameOwner',
+  '0x12d4e92d': 'InactiveName',
+  '0x26a9e253': 'SubdomainNotEligible',
+  '0xa2963a77': 'AllocationLengthMismatch',
+  '0xa33b5911': 'InvalidIntegrationId',
+  '0xe24bb8c0': 'ZeroVotes',
+  '0xa3672e63': 'AllocationsNotSorted',
+  '0x8daf13c1': 'TooManyAllocations',
+  '0xe29c3a1a': 'TooManyVotes',
+  '0xf75a271a': 'InvalidFeeSchedule'
 };
 
 function decodeContractError(e) {
@@ -3489,6 +4821,9 @@ document.addEventListener('visibilitychange', () => {
     // Resume timer if there's a pending commitment
     const pending = loadPending();
     if (pending) updateTimer(pendingTimerId);
+    if (Date.now() - votingLastLoadedAt >= VOTING_FOCUS_REFRESH_AGE_MS) {
+      refreshIntegrationVotingInBackground();
+    }
   }
 });
 
@@ -5525,6 +6860,16 @@ async function doVerifyNow() {
   }
 }
 
+// Render the page-native voting surface immediately; live tallies arrive without
+// blocking the rest of the dapp.
+restoreIntegrationOrder();
+updateVotingUi();
+ensureIntegrationVotingLoaded().catch(error => {
+  const caption = $('integrationVoteCaption');
+  if (caption) caption.title = 'Voting data could not be loaded. Refresh to retry.';
+});
+setInterval(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS);
+
 // Check for pending commit on page load (before wallet connects)
 initPending();
 
@@ -5752,7 +7097,6 @@ window.zkpReady = true;
 window.dispatchEvent(new Event("zkp-ready"));
 </script>
 
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>

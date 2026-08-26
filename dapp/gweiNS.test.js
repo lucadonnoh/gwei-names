@@ -13,9 +13,14 @@ test('integration cards use valid embedded structured data', () => {
   const categories = new Set(['community', 'defi', 'developer', 'name management', 'wallet', 'web access']);
   const linkLabels = new Set(['Chrome Web Store', 'Download', 'GitHub', 'npm', 'Website']);
   const names = new Set();
+  const ids = new Set();
 
   assert.ok(integrations.length > 0);
   for (const integration of integrations) {
+    assert.equal(typeof integration.id, 'string');
+    assert.match(integration.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.equal(ids.has(integration.id), false, `duplicate integration id: ${integration.id}`);
+    ids.add(integration.id);
     assert.equal(typeof integration.name, 'string');
     assert.ok(integration.name);
     assert.equal(names.has(integration.name), false, `duplicate integration: ${integration.name}`);
@@ -29,6 +34,855 @@ test('integration cards use valid embedded structured data', () => {
       assert.equal(new URL(link.url).protocol, 'https:');
     }
   }
+});
+
+test('integration voting uses both verified deployments without an availability flag', () => {
+  const start = html.indexOf('const NETWORKS = {');
+  const end = html.indexOf('const NET_STORAGE_KEY', start);
+  assert.notEqual(start, -1, 'network configuration must exist');
+  assert.notEqual(end, -1, 'network configuration must be bounded');
+
+  const context = vm.createContext({});
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.networks = NETWORKS;',
+    context
+  );
+
+  assert.equal(
+    context.networks.ethereum.voting,
+    '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'
+  );
+  assert.equal(context.networks.ethereum.votingDeployBlock, 25838194);
+  assert.equal(
+    context.networks.sepolia.voting,
+    '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005'
+  );
+  assert.equal(context.networks.sepolia.votingDeployBlock, 11562708);
+  assert.deepEqual(Array.from(context.networks.sepolia.rpc), [
+    'https://ethereum-sepolia-rpc.publicnode.com',
+    'https://sepolia.gateway.tenderly.co/public',
+    'https://ethereum-sepolia-rpc.blockreq.com/v1/rpc/public'
+  ]);
+  assert.deepEqual(Array.from(context.networks.sepolia.logsRpcs), [
+    'https://sepolia.gateway.tenderly.co/public'
+  ]);
+  assert.doesNotMatch(html, /\bVOTING_ENABLED\b/);
+  assert.doesNotMatch(html, /!VOTING_CONTRACT/);
+});
+
+test('ens normalization imports only verified published package bytes', () => {
+  assert.doesNotMatch(html, /@adraffy\/ens-normalize@1\.11\.0\/\+esm/);
+  assert.match(
+    html,
+    /rel="modulepreload" href="https:\/\/cdn\.jsdelivr\.net\/npm\/@adraffy\/ens-normalize@1\.11\.0\/dist\/index\.mjs" integrity="sha384-wslUpfrOpXCfaW\/3TssDzpULPqQK2igO\/CDwvXIes3zxHdwdj\+kzqbP7dWuA4G13"/
+  );
+  assert.match(
+    html,
+    /const SOURCE_SHA384 = 'wslUpfrOpXCfaW\/3TssDzpULPqQK2igO\/CDwvXIes3zxHdwdj\+kzqbP7dWuA4G13';/
+  );
+});
+
+function votingHarness() {
+  const start = html.indexOf('function votingPowerForLabelLength(length)');
+  const end = html.indexOf('// --- integration voting: chain index', start);
+  assert.notEqual(start, -1, 'voting allocation helpers must exist');
+  assert.notEqual(end, -1, 'voting allocation helpers must be bounded');
+  const context = vm.createContext({ console, textEncoder: new TextEncoder() });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.votingApi = {
+        votingPowerForLabelLength,
+        normalizeVotingAllocations,
+        sumVotingAllocations,
+        votingAllocationsEqual,
+        aggregateVotingAllocations,
+        rebaseVotingDraft,
+        computeVotingTallies,
+        packVotingDraft,
+        buildChangedVotingBallots
+      };`,
+    context
+  );
+  return context.votingApi;
+}
+
+test('integration voting mirrors the byte-priced name schedule', () => {
+  const { votingPowerForLabelLength } = votingHarness();
+  assert.equal(votingPowerForLabelLength(0), 0);
+  assert.equal(votingPowerForLabelLength(1), 1000);
+  assert.equal(votingPowerForLabelLength(2), 200);
+  assert.equal(votingPowerForLabelLength(3), 100);
+  assert.equal(votingPowerForLabelLength(4), 20);
+  assert.equal(votingPowerForLabelLength(5), 1);
+  assert.equal(votingPowerForLabelLength(255), 1);
+  assert.equal(votingPowerForLabelLength(256), 0);
+  assert.equal(votingPowerForLabelLength(Number.MAX_SAFE_INTEGER), 0);
+  assert.equal(votingPowerForLabelLength(new TextEncoder().encode('🦄').length), 20);
+});
+
+test('a fresh canonical baseline rebases a pooled draft without changing its intent', () => {
+  const { rebaseVotingDraft, packVotingDraft, buildChangedVotingBallots } = votingHarness();
+
+  const externalChange = rebaseVotingDraft(
+    { ambire: 1, snapshot: 1 },
+    { rotki: 2 },
+    2
+  );
+  assert.equal(externalChange.preserved, true);
+  assert.equal(JSON.stringify(externalChange.allocations), JSON.stringify({ ambire: 1, snapshot: 1 }));
+
+  const lostPower = rebaseVotingDraft(
+    { ambire: 2 },
+    { rotki: 1 },
+    1
+  );
+  assert.equal(lostPower.preserved, false);
+  assert.equal(JSON.stringify(lostPower.allocations), JSON.stringify({ rotki: 1 }));
+
+  const freshNames = [
+    { tokenId: '1', power: 1, allocations: { external: 1 } },
+    { tokenId: '2', power: 1, allocations: { ambire: 1 } }
+  ];
+  const packed = packVotingDraft(freshNames, externalChange.allocations);
+  const ballots = buildChangedVotingBallots(freshNames, packed, {
+    ambire: '0x' + '11'.repeat(32),
+    snapshot: '0x' + '22'.repeat(32)
+  });
+  assert.equal(ballots.length, 1, 'only the externally changed name needs replacement');
+  assert.equal(ballots[0].tokenId, 1n);
+  assert.deepEqual(Array.from(ballots[0].votes), [1]);
+});
+
+function integrationOrderHarness(storedOrder) {
+  const integrations = [{ id: 'alpha' }, { id: 'bravo' }, { id: 'charlie' }];
+  const storage = new Map();
+  const key = 'gwei_voting_order_11155111_0xvote';
+  if (storedOrder !== undefined) storage.set(key, JSON.stringify(storedOrder));
+  const tallies = { alpha: 0, bravo: 0, charlie: 0 };
+  let dirty = false;
+  const start = html.indexOf('const INTEGRATION_ORDER_CACHE_VERSION = 1;');
+  const end = html.indexOf('function createIntegrationCard(integration)', start);
+  assert.notEqual(start, -1, 'integration order cache helpers must exist');
+  assert.notEqual(end, -1, 'integration order cache helpers must be bounded');
+
+  const context = vm.createContext({
+    CHAIN_ID: 11155111,
+    INTEGRATIONS: integrations,
+    INTEGRATION_BY_ID: new Map(integrations.map(integration => [integration.id, integration])),
+    INTEGRATION_INDEX: new Map(integrations.map((integration, index) => [integration.id, index])),
+    VOTING_CONTRACT: '0xVote',
+    integrationVotingCardState(id) { return { total: tallies[id] || 0 }; },
+    localStorage: {
+      getItem(storageKey) { return storage.get(storageKey) ?? null; },
+      setItem(storageKey, value) { storage.set(storageKey, value); }
+    },
+    votingDraftDirty() { return dirty; },
+    votingTalliesReady: true
+  });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.integrationOrderApi = {
+        integrationOrderCacheKey,
+        integrationOrdersEqual,
+        normalizeIntegrationOrderIds,
+        rankedIntegrationOrderIds,
+        restoreIntegrationOrder,
+        saveIntegrationOrder,
+        settleIntegrationOrder,
+        getOrder: () => integrationDisplayOrder
+      };`,
+    context
+  );
+  return {
+    api: context.integrationOrderApi,
+    key,
+    storage,
+    tallies,
+    setDirty(value) { dirty = value; }
+  };
+}
+
+test('cached integration order is sanitized against the current catalog', () => {
+  const harness = integrationOrderHarness({
+    version: 1,
+    integrationIds: ['bravo', 'removed', 'bravo', 'alpha']
+  });
+
+  harness.api.restoreIntegrationOrder();
+
+  assert.equal(harness.api.integrationOrderCacheKey(), harness.key);
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+  harness.api.saveIntegrationOrder();
+  const saved = JSON.parse(harness.storage.get(harness.key));
+  assert.deepEqual(saved, {
+    version: 1,
+    integrationIds: ['bravo', 'alpha', 'charlie']
+  });
+  assert.deepEqual(Object.keys(saved).sort(), ['integrationIds', 'version']);
+});
+
+test('background voting refresh changes cached order only when settled ranking changes', () => {
+  const harness = integrationOrderHarness({
+    version: 1,
+    integrationIds: ['bravo', 'alpha', 'charlie']
+  });
+  harness.api.restoreIntegrationOrder();
+  harness.tallies.bravo = 2;
+  harness.tallies.alpha = 1;
+
+  assert.equal(harness.api.settleIntegrationOrder(), false, 'the same ranking stays still');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+
+  harness.tallies.alpha = 3;
+  harness.setDirty(true);
+  assert.equal(harness.api.settleIntegrationOrder(), false, 'an unsaved draft cannot replace global order');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['bravo', 'alpha', 'charlie']);
+
+  harness.setDirty(false);
+  assert.equal(harness.api.settleIntegrationOrder(), true, 'a real ranking change is detected');
+  assert.deepEqual(Array.from(harness.api.getOrder()), ['alpha', 'bravo', 'charlie']);
+});
+
+test('cached order is restored before first render and refreshed after on-chain loading', () => {
+  const bootStart = html.indexOf('// Render the page-native voting surface immediately');
+  const bootEnd = html.indexOf('// Check for pending commit on page load', bootStart);
+  const boot = html.slice(bootStart, bootEnd);
+  assert.ok(boot.indexOf('restoreIntegrationOrder();') < boot.indexOf('updateVotingUi();'));
+
+  const loadStart = html.indexOf('async function loadIntegrationVoting()');
+  const loadEnd = html.indexOf('function ensureIntegrationVotingLoaded()', loadStart);
+  const load = html.slice(loadStart, loadEnd);
+  assert.match(load, /const orderChanged = settleIntegrationOrder\(\);/);
+  assert.match(load, /saveIntegrationOrder\(\);/);
+  assert.match(load, /updateVotingUi\(\{ animate: orderChanged \}\);/);
+});
+
+test('voting refreshes in the background and rebases immediately before signing', () => {
+  assert.match(html, /const VOTING_REFRESH_INTERVAL_MS = 60000;/);
+  assert.match(html, /setInterval\(refreshIntegrationVotingInBackground, VOTING_REFRESH_INTERVAL_MS\)/);
+  assert.match(html, /Date\.now\(\) - votingLastLoadedAt >= VOTING_FOCUS_REFRESH_AGE_MS/);
+
+  const submitStart = html.indexOf('async function submitVotingDraft()');
+  const submitEnd = html.indexOf('const eip6963Providers', submitStart);
+  const submit = html.slice(submitStart, submitEnd);
+  const refresh = submit.indexOf('await refreshIntegrationVoting({ preserveDraft: true })');
+  const pack = submit.indexOf('packVotingDraft(ownedVotingNames, votingDraft)');
+  const estimate = submit.indexOf('voting.cast.estimateGas(ballots)');
+  const minedRefresh = submit.indexOf('await ensureIntegrationVotingLoaded({ force: true })');
+  assert.ok(refresh >= 0 && refresh < pack && pack < estimate, 'fresh state must be packed before estimation');
+  assert.ok(minedRefresh > submit.indexOf('await waitForTx(tx)'), 'mined votes must be re-read');
+  assert.doesNotMatch(submit, /Number\.MAX_SAFE_INTEGER/, 'the UI must not synthesize missing events');
+});
+
+test('voting is disclosed and discoverable with mobile WalletConnect recovery', () => {
+  assert.match(html, /id="votingExplorerLink" href="https:\/\/etherscan\.io\/address\/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005"/);
+  assert.doesNotMatch(html, /votingExplorerSeparator|id="votingExplorerLink"[^>]*display:none/);
+  assert.match(html, /EXPLORER \+ '\/address\/' \+ VOTING_CONTRACT/);
+  assert.match(html, /votes are public onchain · network gas applies/);
+  assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: RPC_ENDPOINTS\[0\] \}/);
+  assert.match(html, /if \(deepLink && isMobile && !insideWalletBrowser\)/);
+  assert.match(html, /window\.location\.href = deepLink/);
+  assert.match(html, /}, 2000\);/);
+  assert.equal((html.match(/static\.cloudflareinsights\.com\/beacon\.min\.js/g) || []).length, 1);
+});
+
+test('integration tallies require the active top-level current owner and epoch', () => {
+  const { computeVotingTallies } = votingHarness();
+  const ballots = [
+    { tokenId: '1', voter: '0xalice', epoch: '2', integrationIds: ['0xaaa', '0xbbb'], votes: [4, 2] },
+    { tokenId: '2', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '3', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '4', voter: '0xalice', epoch: '1', integrationIds: ['0xaaa'], votes: [100] },
+    { tokenId: '5', voter: '0xalice', epoch: '1', integrationIds: ['0xunknown'], votes: [100] },
+    { tokenId: '6', voter: '0xprevious-owner', epoch: '1', integrationIds: ['0xaaa'], votes: [100] }
+  ];
+  const records = {
+    1: { label: 'ok', parent: '0', expiresAt: 1000, epoch: '2', owner: '0xalice' },
+    2: { label: 'old', parent: '0', expiresAt: 499, epoch: '1', owner: '0xalice' },
+    3: { label: 'sub', parent: '9', expiresAt: 1000, epoch: '1', owner: '0xalice' },
+    4: { label: 'new epoch', parent: '0', expiresAt: 1000, epoch: '2', owner: '0xalice' },
+    5: { label: 'unknown', parent: '0', expiresAt: 1000, epoch: '1', owner: '0xalice' },
+    6: { label: 'transferred', parent: '0', expiresAt: 1000, epoch: '1', owner: '0xnew-owner' }
+  };
+  const result = computeVotingTallies(ballots, records, { '0xaaa': 'ambire', '0xbbb': 'snapshot' }, 500);
+  assert.equal(result.ambire, 4);
+  assert.equal(result.snapshot, 2);
+  assert.deepEqual(Object.keys(result).sort(), ['ambire', 'snapshot']);
+});
+
+test('integration ballots stop and resume with ownership, expiry, and registration epoch', () => {
+  const { computeVotingTallies } = votingHarness();
+  const ballot = {
+    tokenId: '1',
+    voter: '0xalice',
+    epoch: '7',
+    integrationIds: ['0xaaa'],
+    votes: [1]
+  };
+  const known = { '0xaaa': 'ambire' };
+  const tally = (record, now = 1000) =>
+    computeVotingTallies([ballot], { 1: record }, known, now).ambire || 0;
+  const active = { label: 'alice', parent: '0', expiresAt: 1000, epoch: '7', owner: '0xalice' };
+
+  assert.equal(tally(active), 1, 'the exact expiry timestamp is still active');
+  assert.equal(tally({ ...active, owner: '0xbob' }), 0, 'transfer-away stops the old ballot');
+  assert.equal(tally(active), 1, 'transfer-back in the same epoch revives it');
+  assert.equal(tally({ ...active, expiresAt: 999 }), 0, 'expiry stops it');
+  assert.equal(tally({ ...active, expiresAt: 2000 }), 1, 'renewal in the same epoch revives it');
+  assert.equal(tally({ ...active, epoch: '8' }), 0, 're-registration cannot revive an old ballot');
+
+  const intermediateClear = { ...ballot, voter: '0xbob', integrationIds: [], votes: [] };
+  assert.equal(
+    computeVotingTallies([intermediateClear], { 1: active }, known, 1000).ambire || 0,
+    0,
+    'an intermediate owner replacement remains the latest ballot after transfer-back'
+  );
+});
+
+function votingLogHarness() {
+  const start = html.indexOf('function votingLogPosition(log)');
+  const end = html.indexOf('async function loadVotingBallots()', start);
+  assert.notEqual(start, -1, 'voting event helpers must exist');
+  assert.notEqual(end, -1, 'voting event helpers must be bounded');
+  const context = vm.createContext({
+    VOTING_IFACE: {
+      parseLog(log) {
+        if (log.invalid) throw new Error('invalid log');
+        return log.parsed;
+      }
+    }
+  });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.votingLogApi = { votingLogPosition, applyVotingBallotLog };',
+    context
+  );
+  return context.votingLogApi;
+}
+
+function votingRangeHarness(votingGetLogs, votingGetBlockLogs = async () => {
+  throw new Error('unexpected single-block fallback');
+}) {
+  const start = html.indexOf('async function scanVotingRanges(');
+  const end = html.indexOf('function votingLogPosition(log)', start);
+  assert.notEqual(start, -1, 'voting range scanner must exist');
+  assert.notEqual(end, -1, 'voting range scanner must be bounded');
+  const context = vm.createContext({
+    votingGetLogs,
+    votingGetBlockLogs,
+    VOTING_LOG_MAX_BLOCK_SPAN: 100000,
+    VOTING_LOG_RESULT_THRESHOLD: 1000
+  });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.scanVotingRanges = scanVotingRanges;',
+    context
+  );
+  return context.scanVotingRanges;
+}
+
+function votingReceiptHarness(statsRpc) {
+  const start = html.indexOf('function votingLogMatches(');
+  const end = html.indexOf('async function scanVotingRanges(', start);
+  assert.notEqual(start, -1, 'voting receipt fallback must exist');
+  assert.notEqual(end, -1, 'voting receipt fallback must be bounded');
+  const context = vm.createContext({ statsRpc });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.votingReceiptApi = { votingLogMatches, votingGetBlockLogs };',
+    context
+  );
+  return context.votingReceiptApi;
+}
+
+function votingCheckpointHarness(statsRpc) {
+  const start = html.indexOf('async function loadVotingHeads(');
+  const end = html.indexOf('function votingLogPosition(log)', start);
+  assert.notEqual(start, -1, 'voting checkpoint helpers must exist');
+  assert.notEqual(end, -1, 'voting checkpoint helpers must be bounded');
+  const context = vm.createContext({
+    statsRpc,
+    VOTING_FINALITY_FALLBACK_BLOCKS: 64
+  });
+  vm.runInContext(
+    html.slice(start, end) + `
+      globalThis.votingCheckpointApi = {
+        loadVotingHeads,
+        votingBlockHash,
+        votingCheckpointMatches
+      };`,
+    context
+  );
+  return context.votingCheckpointApi;
+}
+
+test('voting ownership discovery uses one filtered historical request when supported', async () => {
+  const calls = [];
+  const scanVotingRanges = votingRangeHarness(async (address, topics, fromBlock, toBlock) => {
+    calls.push({ address, topics, fromBlock, toBlock });
+    return [{ token: '1' }, { token: '2' }];
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 10, 25000, log => consumed.push(log.token));
+
+  assert.deepEqual(calls, [{
+    address: '0xnames',
+    topics: ['0xtransfer'],
+    fromBlock: 10,
+    toBlock: 25000
+  }]);
+  assert.deepEqual(consumed, ['1', '2']);
+});
+
+test('voting ownership discovery recursively retries capped ranges sequentially', async () => {
+  const calls = [];
+  let active = 0;
+  let maxActive = 0;
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (calls.length === 1) throw new Error('range capped');
+      return [{ fromBlock, toBlock }];
+    } finally {
+      active--;
+    }
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 0, 20000, log => consumed.push(log));
+
+  assert.deepEqual(calls, [
+    [0, 20000],
+    [0, 10000],
+    [10001, 20000]
+  ]);
+  assert.equal(maxActive, 1, 'fallback requests must not create an RPC burst');
+  assert.deepEqual(consumed, [
+    { fromBlock: 0, toBlock: 10000 },
+    { fromBlock: 10001, toBlock: 20000 }
+  ]);
+});
+
+test('voting ownership discovery keeps bisecting when small ranges are capped', async () => {
+  const calls = [];
+  let active = 0;
+  let maxActive = 0;
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (toBlock - fromBlock >= 1000) throw new Error('range capped');
+      return [{ fromBlock, toBlock }];
+    } finally {
+      active--;
+    }
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xnames', ['0xtransfer'], 0, 5000, log => consumed.push(log));
+
+  assert.ok(calls.some(([from, to]) => to - from < 9000), 'fallback must go below the old fixed chunk');
+  assert.equal(maxActive, 1, 'recursive requests must remain sequential');
+  assert.equal(consumed[0].fromBlock, 0);
+  assert.equal(consumed.at(-1).toBlock, 5000);
+  for (let i = 1; i < consumed.length; i++) {
+    assert.equal(consumed[i].fromBlock, consumed[i - 1].toBlock + 1);
+  }
+});
+
+test('voting log discovery splits suspicious successful result caps', async () => {
+  const calls = [];
+  const scanVotingRanges = votingRangeHarness(async (_address, _topics, fromBlock, toBlock) => {
+    calls.push([fromBlock, toBlock]);
+    if (fromBlock !== toBlock) return Array.from({ length: 1000 }, () => ({}));
+    return [{ blockNumber: fromBlock }];
+  });
+  const consumed = [];
+
+  await scanVotingRanges('0xvoting', ['0xballot'], 20, 23, log => consumed.push(log));
+
+  assert.deepEqual(consumed, [
+    { blockNumber: 20 },
+    { blockNumber: 21 },
+    { blockNumber: 22 },
+    { blockNumber: 23 }
+  ]);
+  assert.ok(calls.length > consumed.length);
+});
+
+test('voting log discovery recovers a dense single block from complete receipts', async () => {
+  const completeLogs = Array.from({ length: 1200 }, (_, index) => ({ blockNumber: 42, index }));
+  const scanVotingRanges = votingRangeHarness(
+    async () => Array.from({ length: 1000 }, () => ({})),
+    async (_address, _topics, blockNumber) => {
+      assert.equal(blockNumber, 42);
+      return completeLogs;
+    }
+  );
+  const consumed = [];
+
+  await scanVotingRanges('0xvoting', ['0xballot'], 42, 42, log => consumed.push(log));
+
+  assert.equal(consumed.length, 1200);
+  assert.equal(consumed[0].index, 0);
+  assert.equal(consumed.at(-1).index, 1199);
+});
+
+test('voting log discovery also uses receipts when a single-block query errors', async () => {
+  const scanVotingRanges = votingRangeHarness(
+    async () => { throw new Error('response too large'); },
+    async () => [{ blockNumber: 42, recovered: true }]
+  );
+  const consumed = [];
+  await scanVotingRanges('0xvoting', ['0xballot'], 42, 42, log => consumed.push(log));
+  assert.deepEqual(consumed, [{ blockNumber: 42, recovered: true }]);
+});
+
+test('single-block recovery filters complete standard transaction receipts', async () => {
+  const calls = [];
+  const blockHash = '0xblock';
+  const receipts = {
+    '0xtx1': {
+      blockHash,
+      transactionHash: '0xtx1',
+      logs: [
+        { address: '0xVoting', topics: ['0xBallot'], token: 'keep' },
+        { address: '0xOther', topics: ['0xBallot'], token: 'wrong address' }
+      ]
+    },
+    '0xtx2': {
+      blockHash,
+      transactionHash: '0xtx2',
+      logs: [
+        { address: '0xVoting', topics: ['0xOther'], token: 'wrong topic' },
+        { address: '0xVoting', topics: ['0xBallot'], token: 'also keep' }
+      ]
+    }
+  };
+  const { votingGetBlockLogs } = votingReceiptHarness(async (method, params) => {
+    calls.push([method, ...Array.from(params)]);
+    if (method === 'eth_getBlockByNumber') {
+      return { hash: blockHash, transactions: ['0xtx1', '0xtx2'] };
+    }
+    if (method === 'eth_getBlockReceipts') throw new Error('unsupported');
+    if (method === 'eth_getTransactionReceipt') return receipts[params[0]];
+    throw new Error(`unexpected method ${method}`);
+  });
+
+  const logs = await votingGetBlockLogs('0xVoting', ['0xBallot'], 42);
+
+  assert.deepEqual(Array.from(logs, log => log.token), ['keep', 'also keep']);
+  assert.equal(calls.filter(([method]) => method === 'eth_getTransactionReceipt').length, 2);
+});
+
+test('voting caches accept only a matching canonical block checkpoint', async () => {
+  let canonicalHash = '0xaaa';
+  const api = votingCheckpointHarness(async (method, params) => {
+    assert.equal(method, 'eth_getBlockByNumber');
+    assert.deepEqual(Array.from(params), ['0x2a', false]);
+    return { number: '0x2a', hash: canonicalHash };
+  });
+  const cache = { lastBlock: 42, lastBlockHash: '0xaaa' };
+
+  assert.equal(await api.votingCheckpointMatches(cache, 10), true);
+  canonicalHash = '0xbbb';
+  assert.equal(await api.votingCheckpointMatches(cache, 10), false);
+  assert.equal(await api.votingCheckpointMatches({ lastBlock: 9, lastBlockHash: null }, 10), true);
+});
+
+test('voting caches invalidate incomplete historical RPC results', () => {
+  assert.match(html, /const VOTING_BALLOT_CACHE_VERSION = 4;/);
+  assert.match(html, /const VOTING_OWNED_CACHE_VERSION = 3;/);
+  assert.match(html, /stored\?\.version === VOTING_BALLOT_CACHE_VERSION/);
+  assert.match(html, /stored\?\.version === VOTING_OWNED_CACHE_VERSION/);
+  assert.match(html, /await votingCheckpointMatches\(stored, deployBlock\)/);
+  assert.match(html, /cache\.lastBlockHash = await votingBlockHash\(stableHead, deployBlock\)/);
+});
+
+test('voting event indexing keeps the latest replacement and accepts an empty clear', () => {
+  const { applyVotingBallotLog } = votingLogHarness();
+  const ballots = {};
+  const log = (blockNumber, logIndex, integrationIds, votes) => ({
+    blockNumber,
+    logIndex,
+    parsed: {
+      name: 'BallotCast',
+      args: { tokenId: 7n, voter: '0xAlice', epoch: 4n, integrationIds, votes }
+    }
+  });
+
+  assert.equal(applyVotingBallotLog(ballots, log('0xa', '0x1', ['0xAAA'], [2])), '7');
+  assert.equal(ballots['7'].votes[0], 2);
+  assert.equal(ballots['7'].integrationIds[0], '0xaaa');
+
+  applyVotingBallotLog(ballots, log('0x9', '0x8', ['0xBBB'], [9]));
+  assert.equal(ballots['7'].votes[0], 2, 'an older log cannot replace the ballot');
+
+  applyVotingBallotLog(ballots, log('0xa', '0x2', ['0xBBB'], [5]));
+  assert.equal(ballots['7'].votes[0], 5, 'the later log in one block wins');
+  assert.equal(ballots['7'].integrationIds[0], '0xbbb');
+
+  applyVotingBallotLog(ballots, log('0xb', '0x0', [], []));
+  assert.deepEqual(Array.from(ballots['7'].integrationIds), []);
+  assert.deepEqual(Array.from(ballots['7'].votes), []);
+
+  assert.equal(applyVotingBallotLog(ballots, { invalid: true }), undefined);
+});
+
+test('a pooled draft is packed across names while preserving signed placements', () => {
+  const { packVotingDraft, buildChangedVotingBallots } = votingHarness();
+  const names = [
+    { tokenId: '20', power: 1, allocations: { ambire: 1 } },
+    { tokenId: '10', power: 3, allocations: { ambire: 1, snapshot: 2 } }
+  ];
+  const packed = packVotingDraft(names, { ambire: 2, snapshot: 1, zswap: 1 });
+  const byToken = Object.fromEntries(Array.from(packed, name => [name.tokenId, { ...name.allocations }]));
+  assert.deepEqual(byToken['10'], { ambire: 1, snapshot: 1, zswap: 1 });
+  assert.deepEqual(byToken['20'], { ambire: 1 });
+
+  const ballots = buildChangedVotingBallots(names, packed, {
+    ambire: '0x' + '33'.repeat(32),
+    snapshot: '0x' + '11'.repeat(32),
+    zswap: '0x' + '22'.repeat(32)
+  });
+  assert.equal(ballots.length, 1, 'the unchanged name is not rewritten');
+  assert.equal(ballots[0].tokenId, 10n);
+  assert.deepEqual(Array.from(ballots[0].integrationIds), [
+    '0x' + '11'.repeat(32),
+    '0x' + '22'.repeat(32),
+    '0x' + '33'.repeat(32)
+  ]);
+  assert.deepEqual(Array.from(ballots[0].votes), [1, 1, 1]);
+});
+
+test('pooled votes split at name capacity and clearing emits an empty replacement ballot', () => {
+  const { packVotingDraft, buildChangedVotingBallots } = votingHarness();
+  const names = [
+    { tokenId: '1', power: 2, allocations: {} },
+    { tokenId: '2', power: 1, allocations: {} }
+  ];
+  const split = packVotingDraft(names, { ambire: 3 });
+  assert.equal(split[0].allocations.ambire, 2);
+  assert.equal(split[1].allocations.ambire, 1);
+
+  const clearingNames = [{ tokenId: '3', power: 1, allocations: { ambire: 1 } }];
+  const cleared = packVotingDraft(clearingNames, {});
+  const ballots = buildChangedVotingBallots(clearingNames, cleared, { ambire: '0x' + '44'.repeat(32) });
+  assert.equal(ballots.length, 1);
+  assert.deepEqual(Array.from(ballots[0].integrationIds), []);
+  assert.deepEqual(Array.from(ballots[0].votes), []);
+});
+
+test('integration voting stays page-native and submits every changed name in one cast', () => {
+  assert.match(html, /class="vote-dock" id="voteDock" aria-live="polite" aria-hidden="true" inert/);
+  assert.match(html, /id="voteDockCount"/);
+  assert.match(html, /onclick="submitVotingDraft\(\)"/);
+  assert.match(html, /bindVotingHold\(plus, integration\.id, 1\)/);
+  assert.match(html, /localStorage\.setItem\(key, JSON\.stringify/);
+  assert.match(html, /voting\.cast\(ballots\)/);
+  assert.equal((html.match(/voting\.cast\(ballots\)/g) || []).length, 1);
+  assert.doesNotMatch(html, /vote-review-modal|voting dashboard|select names to vote/i);
+});
+
+test('integration links share one compact footer with voting controls', () => {
+  assert.doesNotMatch(html, /many-links/);
+  assert.match(html, /\.int-links \{[^}]*min-width: 0;[^}]*gap: 2px 14px;[^}]*flex-wrap: wrap;/);
+  assert.match(html, /\.int-vote \{[^}]*flex: 0 0 auto;/);
+  assert.match(html, /const displayLabel = link\.label === 'Chrome Web Store' \? 'Chrome' : link\.label;/);
+  assert.match(html, /if \(displayLabel !== link\.label\) anchor\.title = link\.label;/);
+});
+
+function votingPowerUiHarness({ names = [], totalPower = 0, loading = false } = {}) {
+  const start = html.indexOf('function renderVotingPower()');
+  const end = html.indexOf('function updateVotingUi(', start);
+  assert.notEqual(start, -1, 'the voting-power renderer must exist');
+  assert.notEqual(end, -1, 'the voting-power renderer must be bounded');
+
+  function makeElement(className = '', textContent = '') {
+    const classes = new Set(className ? className.split(' ') : []);
+    return {
+      className,
+      textContent,
+      title: '',
+      tabIndex: -1,
+      open: true,
+      children: [],
+      classList: {
+        toggle(name, force) {
+          const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+          if (enabled) classes.add(name);
+          else classes.delete(name);
+          return enabled;
+        },
+        contains(name) { return classes.has(name); }
+      },
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; }
+    };
+  }
+
+  const elements = {
+    integrationVoteDetails: makeElement(),
+    integrationVotePower: makeElement('int-power'),
+    integrationVotePowerSummary: makeElement(),
+    integrationVotePowerSection: makeElement('int-power-section'),
+    integrationVotePowerList: makeElement('int-power-list')
+  };
+  const context = vm.createContext({
+    connectedAddress: '0x1234',
+    votingReady: !loading,
+    votingLoading: loading,
+    ownedVotingNames: names,
+    votingTotalPower: totalPower,
+    $: id => elements[id],
+    formatVoteCount: value => Number(value).toLocaleString('en-US'),
+    integrationElement: (_tag, className, textContent) => makeElement(className, textContent)
+  });
+  vm.runInContext(
+    html.slice(start, end) + '\nglobalThis.renderVotingPower = renderVotingPower;',
+    context
+  );
+  context.renderVotingPower();
+  return elements;
+}
+
+test('integration heading uses one disclosure so Chrome keeps voting context on one line', () => {
+  const start = html.indexOf('<div class="int-vote-caption" id="integrationVoteCaption">');
+  const end = html.indexOf('<div class="int-list" id="integrationList">', start);
+  assert.notEqual(start, -1, 'the integration voting caption must exist');
+  assert.notEqual(end, -1, 'the integration voting caption must be bounded');
+  const caption = html.slice(start, end);
+
+  assert.equal((caption.match(/<details\b/g) || []).length, 1);
+  assert.match(caption, /<details class="int-vote-details" id="integrationVoteDetails">/);
+  assert.match(caption, /<summary><span class="int-vote-summary-label">vote ranking<\/span><span class="int-power" id="integrationVotePower">/);
+  assert.doesNotMatch(caption, /<summary>shorter names carry more weight<\/summary>/);
+  assert.match(caption, /class="int-power-separator" aria-hidden="true"> · <\/span>/);
+  assert.match(html, /\.int-vote-caption summary \{[^}]*display: inline-block;[^}]*white-space: nowrap;/);
+  assert.match(html, /\.int-vote-caption \.int-power \{ display: none;/);
+  assert.match(html, /\.int-vote-caption \.int-power\.show \{ display: inline; \}/);
+  assert.match(html, /power\.classList\.toggle\('show', show\);/);
+  assert.match(html, /details\.open = false;/);
+  assert.match(
+    html,
+    /summary\.textContent = `\$\{ownedVotingNames\.length\} \$\{nameWord\} · \$\{formatVoteCount\(votingTotalPower\)\} \$\{voteWord\}`;/
+  );
+});
+
+test('expanded voting details share one compact panel', () => {
+  const panelStart = html.indexOf('<div class="int-vote-panel">');
+  const rulesStart = html.indexOf('<div class="int-vote-rules">', panelStart);
+  const namesStart = html.indexOf('<div class="int-power-section" id="integrationVotePowerSection">', rulesStart);
+  assert.notEqual(panelStart, -1, 'the combined voting panel must exist');
+  assert.ok(panelStart < rulesStart && rulesStart < namesStart, 'rules and names must share one ordered panel');
+  assert.match(html, /<div class="int-power-heading">your names<\/div>/);
+  assert.match(html, /\.int-vote-panel \{[^}]*width: min\(100%, 320px\);[^}]*border: 1px solid var\(--border-muted\);/);
+  assert.match(html, /\.int-power-section \{[^}]*display: none;[^}]*border-top: 1px solid var\(--border-muted\);/);
+  assert.match(html, /\.int-power-section\.show \{ display: block; \}/);
+  assert.match(html, /section\.classList\.toggle\('show', show\);/);
+});
+
+test('voting-power details handle empty, ordinary, and 100-name wallets', () => {
+  const empty = votingPowerUiHarness();
+  assert.equal(empty.integrationVotePowerSummary.textContent, 'no active names');
+  assert.equal(empty.integrationVotePowerList.children.length, 1);
+  assert.equal(empty.integrationVotePowerList.children[0].textContent, 'register a name to vote');
+
+  const singular = votingPowerUiHarness({ names: [{ label: 'solo', power: 1 }], totalPower: 1 });
+  assert.equal(singular.integrationVotePowerSummary.textContent, '1 name · 1 vote');
+  assert.equal(singular.integrationVotePowerList.tabIndex, -1);
+
+  const ordinary = votingPowerUiHarness({
+    names: [
+      { label: 'charlie', power: 1 },
+      { label: 'alpha', power: 1 },
+      { label: 'bravo', power: 1 }
+    ],
+    totalPower: 3
+  });
+  assert.equal(ordinary.integrationVotePowerSummary.textContent, '3 names · 3 votes');
+  assert.deepEqual(
+    ordinary.integrationVotePowerList.children.map(row => row.children[0].textContent),
+    ['alpha.gwei', 'bravo.gwei', 'charlie.gwei']
+  );
+  assert.equal(ordinary.integrationVotePowerList.children[0].children[0].title, 'alpha.gwei');
+  assert.equal(ordinary.integrationVotePowerList.tabIndex, -1);
+
+  const hundredNames = Array.from({ length: 100 }, (_, index) => ({
+    label: `name${String(index).padStart(3, '0')}`,
+    power: 100
+  }));
+  const large = votingPowerUiHarness({ names: hundredNames, totalPower: 10_000 });
+  assert.equal(large.integrationVotePowerSummary.textContent, '100 names · 10,000 votes');
+  assert.equal(large.integrationVotePowerList.children.length, 100);
+  assert.equal(large.integrationVotePowerList.tabIndex, 0);
+
+  const loading = votingPowerUiHarness({ loading: true });
+  assert.equal(loading.integrationVotePowerSummary.textContent, 'finding names…');
+  assert.equal(loading.integrationVoteDetails.open, false);
+});
+
+test('voting detail rows share one rhythm and the names list stays bounded', () => {
+  assert.match(html, /\.int-vote-rules div \{[^}]*padding: 2px 0;[^}]*font-size: 11px;/);
+  assert.match(html, /\.int-power-section \{[^}]*padding: 10px 12px;/);
+  assert.match(html, /\.int-power-heading \{ margin-bottom: 6px;/);
+  assert.match(html, /\.int-power-list \{[^}]*max-height: 105px;[^}]*overflow-y: auto;/);
+  assert.match(html, /\.int-power-list:focus-visible \{[^}]*outline: 1px solid var\(--fg-muted\);/);
+  assert.match(html, /\.int-power-row \{[^}]*padding: 2px 0;[^}]*font-size: 11px;/);
+  assert.match(html, /\.int-power-row span:first-child \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(html, /id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"/);
+});
+
+test('the signing dock appears only after the voter changes an allocation', () => {
+  assert.match(
+    html,
+    /const showDock = votingReady && ownedVotingNames\.length > 0 && votingDraftDirty\(\);/
+  );
+  assert.match(html, /dock\.classList\.toggle\('show', showDock\);/);
+  assert.match(html, /dock\.setAttribute\('aria-hidden', String\(!showDock\)\);/);
+  assert.match(html, /dock\.inert = !showDock;/);
+});
+
+test('vote characters are centered without inherited button letter spacing', () => {
+  assert.match(
+    html,
+    /\.int-vote button \{[^}]*display: inline-flex;[^}]*align-items: center;[^}]*justify-content: center;[^}]*letter-spacing: 0;/
+  );
+  assert.match(html, /\.int-vote\.has-own \.int-vote-minus \{ display: inline-flex; \}/);
+});
+
+test('integration voting estimates the complete batch before opening the wallet', () => {
+  const start = html.indexOf('async function submitVotingDraft()');
+  const end = html.indexOf('const eip6963Providers', start);
+  const source = html.slice(start, end);
+  const estimate = source.indexOf('voting.cast.estimateGas(ballots)');
+  const cast = source.indexOf('voting.cast(ballots)');
+
+  assert.notEqual(estimate, -1);
+  assert.notEqual(cast, -1);
+  assert.ok(estimate < cast, 'gas estimation must happen before the signing request');
+  assert.match(source, /estimatedGas >= VOTING_MAX_TX_GAS/);
+  assert.match(html, /const VOTING_MAX_TX_GAS = 1n << 24n;/);
+  assert.match(source, /too large for one Ethereum transaction/i);
+});
+
+test('integration voting translates contract reverts into useful messages', () => {
+  const abiStart = html.indexOf('const VOTING_ABI = [');
+  const abiEnd = html.indexOf('const VOTING_IFACE', abiStart);
+  const abiSource = html.slice(abiStart, abiEnd);
+  const helpStart = html.indexOf('const CONTRACT_ERROR_HELP = {');
+  const helpEnd = html.indexOf('function decodeContractError', helpStart);
+  const helpSource = html.slice(helpStart, helpEnd);
+
+  for (const error of ['NotNameOwner', 'InactiveName', 'TooManyAllocations', 'TooManyVotes']) {
+    assert.match(abiSource, new RegExp(`error ${error}\\(`));
+    assert.match(helpSource, new RegExp(`${error}:`));
+  }
+  assert.match(helpSource, /0x6babcc29': 'NotNameOwner'/);
+  assert.match(helpSource, /0x12d4e92d': 'InactiveName'/);
 });
 
 function pendingHarness(pending, committedAt) {

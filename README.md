@@ -223,6 +223,37 @@ Renewal costs the same length-based fee as registration. No premium is charged o
 
 ---
 
+## Integration Voting
+
+The website can order its curated integration cards by `.gwei` voting power. Voting changes only the order; adding or removing an integration remains a curated decision.
+
+Voting power is proportional to the fixed annual registration price, with a 5+ byte name as one vote:
+
+| Label length (UTF-8 bytes) | Votes |
+|---|---:|
+| 1 | 1,000 |
+| 2 | 200 |
+| 3 | 100 |
+| 4 | 20 |
+| 5 or more | 1 |
+
+Only currently active, top-level names are eligible. Expired names and subdomains contribute zero. Premiums and transaction gas do not affect voting power.
+
+The website combines every eligible name owned by the connected address into one pool. The user allocates that pool directly on the integration cards, sees the remaining amount in a small fixed dock, and signs once. The dapp deterministically packs the pooled allocation into complete per-name ballots and calls `cast(...)` once. The practical name limit depends on the allocation shape, so the complete batch is gas-estimated before the wallet opens.
+
+[`GnsIntegrationVoting.sol`](src/GnsIntegrationVoting.sol) is an ownerless, non-upgradeable, stateless event emitter:
+
+- It reads ownership, activity, epoch, top-level status, and the immutable fee schedule directly from `NameNFT`.
+- It has no admin, allowlist, treasury, fees, or mutable storage.
+- Each `BallotCast` event is the complete replacement ballot for one `(tokenId, epoch)`; an empty allocation clears it.
+- Integration IDs are `keccak256` hashes of stable website slugs. The current tally is reconstructed from the latest event per token and checked against current `NameNFT` records, so expiry, transfer, and re-registration are reflected without a governance transaction. A ballot stops counting while its signer does not own the name or the name is expired. It can resume after a transfer back or renewal in the same registration epoch; re-registration increments the epoch and permanently invalidates the old ballot.
+- `NameNFT` renewal is permissionless: anyone may pay to keep a name and its already-signed ballot active. Expiry is therefore not revocation; the owner revokes with an empty replacement ballot.
+- A ballot cannot contain more nonzero allocations than its name has voting power, so oversized arrays fail before the contract walks them. The website estimates the complete batch before opening the wallet and refuses a batch at Ethereum's per-transaction gas cap. Tests cover 100-name batches with both one allocation per name and all 24 current integrations per name.
+
+The contract is deployed and verified at the same address, [`0xaA2c…5005`](https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005), on Ethereum mainnet from block `25,838,194` and on [Sepolia](https://sepolia.etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005) from block `11,562,708`. The deployment script is [`DeployGnsIntegrationVoting.s.sol`](script/DeployGnsIntegrationVoting.s.sol).
+
+---
+
 ## Subdomains
 
 ### Registration
@@ -759,7 +790,7 @@ AI-assisted audits performed on the upstream codebase:
 
 - **Dapp:** [gwei.domains](https://gwei.domains) (source: `dapp/gweiNS.html`)
 - **JS SDK:** [`gns-utils`](sdk/)
-- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A)
+- **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A) · [Integration Voting](https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005)
 - **Upstream (wei-names):** https://github.com/z0r0z/wei-names
 - **ENSIP-15:** https://docs.ens.domains/ensip/15/
 - **ens-normalize:** https://github.com/adraffy/ens-normalize.js
