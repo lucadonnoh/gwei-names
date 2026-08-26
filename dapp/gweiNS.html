@@ -668,6 +668,9 @@ body.modal-open { overflow: hidden; }
 .int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .int-vote-disclosure { padding: 8px 12px; border-top: 1px solid var(--border-muted); color: var(--fg-muted); }
+.int-vote-lookup { margin-top: 2px; font-size: 10px; }
+.int-vote-lookup button { margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-transform: none; letter-spacing: 0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.int-vote-lookup button:disabled { opacity: 0.45; cursor: default; }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
@@ -1128,7 +1131,10 @@ body.vote-dock-open { padding-bottom: 104px; }
           <div class="int-power-heading">your names</div>
           <div class="int-power-list" id="integrationVotePowerList" aria-label="your names and voting power" tabindex="-1"></div>
         </div>
-        <div class="int-vote-disclosure">votes are public onchain · network gas applies</div>
+        <div class="int-vote-disclosure">
+          <div>votes are public onchain · network gas applies</div>
+          <div class="int-vote-lookup"><span id="integrationVoteLookupText"></span> · <button type="button" id="integrationVoteLookupToggle" onclick="toggleVotingLookupMode()"></button></div>
+        </div>
       </div>
     </details>
   </div>
@@ -1819,6 +1825,7 @@ const NETWORKS = {
     humanRegistrarBlock: 25460588, // deploy block, for counting HumanNameClaimed events
     voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (mainnet, verified)
     votingDeployBlock: 25838194,
+    votingIndexer: 'https://eth.blockscout.com',
     enabled: true
   },
   sepolia: {
@@ -1841,6 +1848,7 @@ const NETWORKS = {
     humanRegistrarBlock: 11193242, // deploy block, for counting HumanNameClaimed events
     voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (Sepolia, verified)
     votingDeployBlock: 11562708,
+    votingIndexer: 'https://eth-sepolia.blockscout.com',
     enabled: true
   }
 };
@@ -1868,6 +1876,7 @@ const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id
 const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
 const VOTING_CONTRACT = NET.voting;
 const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
+const VOTING_INDEXER = NET.votingIndexer || null;
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
@@ -1908,15 +1917,22 @@ const STATS_CC_KEY = '0x58d1a44eb778f49875f62ace52dcda3a77ed4f1b085b6668edba23e2
 const STATS_RPCS = NET.logsRpcs || [];
 const STATS_DEPLOY = NET.deployBlock || 0;
 const STATS_KEY = 'gwei_stats_' + CHAIN_ID;
+const STATS_RPC_TIMEOUT_MS = 8000;
 async function statsRpc(method, params) {
   for (const url of STATS_RPCS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STATS_RPC_TIMEOUT_MS);
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: controller.signal });
       if (!r.ok) continue;
       const j = await r.json();
       if (j.result !== undefined) return j.result;
-    } catch (e) {}
+    } catch (e) {
+      // Try the next configured endpoint.
+    } finally {
+      clearTimeout(timeout);
+    }
   }
   throw new Error('stats rpc ' + method);
 }
@@ -2356,6 +2372,7 @@ const ABI = [
   'function getPremium(uint256 tokenId) view returns (uint256)',
   'function computeId(string fullName) pure returns (uint256)',
   // Read functions
+  'function balanceOf(address owner) view returns (uint256)',
   'function ownerOf(uint256 tokenId) view returns (address)',
   'function resolve(uint256 tokenId) view returns (address)',
   'function text(uint256 tokenId, string key) view returns (string)',
@@ -2432,13 +2449,16 @@ async function getRpc() {
 getRpc().catch(() => {});
 
 // Wallet-agnostic tx.wait() - handles wallets that return bad data or hang
+const TX_RECEIPT_POLL_MS = 1000;
 async function waitForTx(tx, timeoutMs = 90000) {
   const txHash = tx.hash;
+  let stopPolling = false;
 
   // Helper to poll receipt directly via public RPC (more reliable than wallet provider)
-  async function pollReceipt(maxAttempts = 45) {
+  async function pollReceipt(maxAttempts = Math.ceil(timeoutMs / TX_RECEIPT_POLL_MS)) {
     const p = await getRpc();
     for (let i = 0; i < maxAttempts; i++) {
+      if (stopPolling) return null;
       try {
         const receipt = await p.getTransactionReceipt(txHash);
         if (receipt) {
@@ -2448,27 +2468,42 @@ async function waitForTx(tx, timeoutMs = 90000) {
       } catch (rpcErr) {
         if (i === maxAttempts - 1) throw rpcErr;
       }
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, TX_RECEIPT_POLL_MS));
     }
     return null;
   }
 
+  // Wallet UIs and RPC providers do not always observe a mined transaction at
+  // the same moment. Race both sources and use the first canonical receipt.
+  let pollError = null;
+  const publicPoll = pollReceipt().catch(error => {
+    pollError = error;
+    return null;
+  });
+
   // For WalletConnect, always use polling (tx.wait() is unreliable)
   if (isWalletConnect) {
     console.log('WalletConnect: using receipt polling for', txHash);
-    const receipt = await pollReceipt();
+    const receipt = await publicPoll;
     if (receipt) return receipt;
-    throw new Error('Transaction confirmation timeout');
+    throw pollError || new Error('Transaction confirmation timeout');
   }
 
   // Race tx.wait() against timeout
   let receipt = null;
   let waitError = null;
+  let confirmationTimer = null;
 
   try {
+    const usablePublicPoll = publicPoll.then(receipt =>
+      receipt || new Promise(() => {})
+    );
     receipt = await Promise.race([
       tx.wait(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+      usablePublicPoll,
+      new Promise((_, reject) => {
+        confirmationTimer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      })
     ]);
   } catch (e) {
     waitError = e;
@@ -2482,12 +2517,15 @@ async function waitForTx(tx, timeoutMs = 90000) {
 
     if (shouldPoll && txHash) {
       console.log('tx.wait() failed, falling back to receipt polling:', e.message);
-      receipt = await pollReceipt();
+      receipt = await publicPoll;
     }
+  } finally {
+    if (confirmationTimer !== null) clearTimeout(confirmationTimer);
   }
 
+  stopPolling = true;
   if (receipt) return receipt;
-  throw waitError || new Error('Transaction confirmation timeout');
+  throw waitError || pollError || new Error('Transaction confirmation timeout');
 }
 
 // Multicall3 for batching RPC calls
@@ -2495,6 +2533,7 @@ const MULTICALL3_ABI = [
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[])',
   'function aggregate3Value(tuple(address target, bool allowFailure, uint256 value, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])'
 ];
+const MULTICALL3_IFACE = new ethers.Interface(MULTICALL3_ABI);
 const iface = new ethers.Interface(ABI);
 
 // Local tokenId computation (matches contract's computeId for top-level names)
@@ -2764,8 +2803,13 @@ const VOTING_LOG_RESULT_THRESHOLD = 1000;
 const VOTING_REFRESH_INTERVAL_MS = 60000;
 const VOTING_FOCUS_REFRESH_AGE_MS = 15000;
 const VOTING_MAX_TX_GAS = 1n << 24n;
+const VOTING_INDEXER_TIMEOUT_MS = 3000;
+const VOTING_INDEXER_TOTAL_TIMEOUT_MS = 5000;
+const VOTING_INDEXER_MAX_PAGES = 20;
+const VOTING_INDEXER_MAX_TOKENS = 2000;
 const VOTING_BALLOT_CACHE_VERSION = 4;
 const VOTING_OWNED_CACHE_VERSION = 3;
+const VOTING_LOOKUP_MODE_KEY = `gwei_voting_lookup_${CHAIN_ID}`;
 
 let votingBallots = new Map();
 let votingRecords = new Map();
@@ -2783,6 +2827,8 @@ let votingReady = false;
 let votingLoading = false;
 let votingSubmitting = false;
 let pendingVoteIntent = null;
+let votingUseIndexer = true;
+try { votingUseIndexer = localStorage.getItem(VOTING_LOOKUP_MODE_KEY) !== 'rpc'; } catch (e) {}
 
 async function votingGetLogs(address, topics, fromBlock, toBlock) {
   if (fromBlock > toBlock) return [];
@@ -2889,13 +2935,13 @@ async function scanVotingRanges(address, topics, fromBlock, toBlock, consume) {
   }
 }
 
-async function loadVotingHeads(deployBlock) {
-  const latest = Number(BigInt(await statsRpc('eth_blockNumber', [])));
-  let finalized = null;
-  try {
-    const block = await statsRpc('eth_getBlockByNumber', ['finalized', false]);
-    if (block?.number != null) finalized = Number(BigInt(block.number));
-  } catch (e) {}
+async function loadVotingHeads(deployBlock, knownLatest = null) {
+  const [latestValue, finalizedBlock] = await Promise.all([
+    knownLatest == null ? statsRpc('eth_blockNumber', []) : Promise.resolve(knownLatest),
+    statsRpc('eth_getBlockByNumber', ['finalized', false]).catch(() => null)
+  ]);
+  const latest = Number(BigInt(latestValue));
+  const finalized = finalizedBlock?.number == null ? null : Number(BigInt(finalizedBlock.number));
   const stableHead = Math.max(
     deployBlock - 1,
     Math.min(latest, finalized ?? latest - VOTING_FINALITY_FALLBACK_BLOCKS)
@@ -2949,6 +2995,18 @@ function applyVotingBallotLog(ballots, log) {
   return tokenId;
 }
 
+function votingAllocationsForName(ballot, address, epoch) {
+  const allocations = {};
+  if (!ballot || String(ballot.epoch) !== String(epoch) ||
+      ballot.voter?.toLowerCase() !== address.toLowerCase()) return allocations;
+  for (let i = 0; i < ballot.integrationIds.length; i++) {
+    const id = VOTING_ID_BY_HASH.get(ballot.integrationIds[i].toLowerCase());
+    const amount = Number(ballot.votes[i]);
+    if (id && Number.isSafeInteger(amount) && amount > 0) allocations[id] = amount;
+  }
+  return allocations;
+}
+
 async function loadVotingBallots() {
   const deployBlock = Number(VOTING_DEPLOY_BLOCK);
   const cacheKey = `gwei_voting_ballots_${CHAIN_ID}_${String(VOTING_CONTRACT).toLowerCase()}`;
@@ -3000,6 +3058,34 @@ async function votingMulticall(calls, chunkSize = 120) {
   return output;
 }
 
+// Read a batch at one exact block through the same RPC used for log discovery.
+// This lets callers prove that a possibly capped log response still contains
+// every token the address owned at that block.
+async function votingMulticallAt(calls, blockNumber, chunkSize = 120) {
+  const output = [];
+  const blockTag = '0x' + blockNumber.toString(16);
+  for (let i = 0; i < calls.length; i += chunkSize) {
+    const chunk = calls.slice(i, i + chunkSize);
+    const aggregateCalls = chunk.map(call => ({
+      target: CONTRACT,
+      allowFailure: Boolean(call.allowFailure),
+      callData: iface.encodeFunctionData(call.fn, call.args)
+    }));
+    const data = MULTICALL3_IFACE.encodeFunctionData('aggregate3', [aggregateCalls]);
+    const raw = await statsRpc('eth_call', [{ to: MULTICALL3, data }, blockTag]);
+    const results = MULTICALL3_IFACE.decodeFunctionResult('aggregate3', raw)[0];
+    output.push(...results.map((result, index) => {
+      if (!result.success) return null;
+      try {
+        return iface.decodeFunctionResult(chunk[index].fn, result.returnData);
+      } catch (e) {
+        return null;
+      }
+    }));
+  }
+  return output;
+}
+
 async function loadVotingRecords(tokenIds, includeOwner = false) {
   const ids = [...new Set((tokenIds || []).map(String))];
   const calls = [];
@@ -3034,10 +3120,99 @@ function recomputeVotingTallies() {
   );
 }
 
+async function proveOwnedVotingTokenIds(address, candidateIds, blockNumber) {
+  const ids = [...new Set(candidateIds.map(String))];
+  const results = await votingMulticallAt([
+    { fn: 'balanceOf', args: [address] },
+    ...ids.map(tokenId => ({
+      fn: 'ownerOf',
+      args: [BigInt(tokenId)],
+      allowFailure: true
+    }))
+  ], blockNumber);
+  const balance = results[0]?.[0];
+  if (balance == null || balance > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const ownedIds = ids.filter((tokenId, index) =>
+    String(results[index + 1]?.[0] || '').toLowerCase() === address.toLowerCase()
+  );
+
+  // Equality with ERC-721 balanceOf proves that the candidate source included
+  // every token owned at this exact block. Extra or stale candidates are fine.
+  return ownedIds.length === Number(balance) ? ownedIds : null;
+}
+
+async function tryLoadIndexedOwnedVotingTokenIds(address, blockNumberPromise) {
+  if (!VOTING_INDEXER || !votingUseIndexer) return null;
+  try {
+    const url = new URL(`/api/v2/tokens/${CONTRACT}/instances`, VOTING_INDEXER);
+    url.searchParams.set('holder_address_hash', address);
+    const candidateIds = new Set();
+    const deadline = Date.now() + VOTING_INDEXER_TOTAL_TIMEOUT_MS;
+    for (let page = 0; page < VOTING_INDEXER_MAX_PAGES; page++) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return null;
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        Math.min(VOTING_INDEXER_TIMEOUT_MS, remainingMs)
+      );
+      let response;
+      let body;
+      try {
+        response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) return null;
+        body = await response.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!Array.isArray(body.items)) return null;
+      for (const item of body.items) {
+        const tokenId = String(item?.id || '');
+        if (/^\d+$/.test(tokenId)) candidateIds.add(BigInt(tokenId).toString());
+      }
+      if (candidateIds.size > VOTING_INDEXER_MAX_TOKENS) return null;
+      if (!body.next_page_params) {
+        return proveOwnedVotingTokenIds(address, [...candidateIds], await blockNumberPromise);
+      }
+      for (const [key, value] of Object.entries(body.next_page_params)) {
+        if (value != null) url.searchParams.set(key, String(value));
+      }
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function tryLoadLoggedOwnedVotingTokenIds(address, fromBlock, toBlock) {
+  if (fromBlock > toBlock) return [];
+  try {
+    const toTopic = ethers.zeroPadValue(address, 32).toLowerCase();
+    const logs = await votingGetLogs(
+      CONTRACT,
+      [VOTING_TRANSFER_TOPIC, null, toTopic],
+      fromBlock,
+      toBlock
+    );
+    const candidateIds = logs.flatMap(log =>
+      log.topics?.[3] ? [BigInt(log.topics[3]).toString()] : []
+    );
+
+    // Even if the RPC silently returned only its first page of logs, the
+    // current-state proof rejects it unless every owned token was present.
+    return proveOwnedVotingTokenIds(address, candidateIds, toBlock);
+  } catch (error) {
+    return null;
+  }
+}
+
 async function loadIntegrationVoting() {
   votingBallots = await loadVotingBallots();
-  votingRecords = await loadVotingRecords([...votingBallots.keys()], true);
-  const latestBlock = await (await getRpc()).getBlock('latest');
+  const [records, latestBlock] = await Promise.all([
+    loadVotingRecords([...votingBallots.keys()], true),
+    getRpc().then(rpc => rpc.getBlock('latest'))
+  ]);
+  votingRecords = records;
   votingNow = Number(latestBlock.timestamp);
   recomputeVotingTallies();
   votingTalliesReady = true;
@@ -3063,7 +3238,14 @@ function ensureIntegrationVotingLoaded({ force = false } = {}) {
 async function loadOwnedVotingTokenIds(address) {
   const deployBlock = Number(NET.deployBlock);
   const cacheKey = `gwei_voting_owned_${CHAIN_ID}_${address.toLowerCase()}`;
-  const { latest, stableHead } = await loadVotingHeads(deployBlock);
+  // Blockscout maintains current ERC-721 ownership and usually answers in one
+  // small request. Fetch it alongside the exact proof block; finalized-history
+  // work is deferred unless the onchain balance proof rejects the response.
+  const latestPromise = statsRpc('eth_blockNumber', []).then(value => Number(BigInt(value)));
+  const indexedIds = await tryLoadIndexedOwnedVotingTokenIds(address, latestPromise);
+  if (indexedIds !== null) return indexedIds;
+  const latest = await latestPromise;
+  const { stableHead } = await loadVotingHeads(deployBlock, latest);
   let cache = {
     version: VOTING_OWNED_CACHE_VERSION,
     lastBlock: deployBlock - 1,
@@ -3077,13 +3259,30 @@ async function loadOwnedVotingTokenIds(address) {
         await votingCheckpointMatches(stored, deployBlock)) cache = stored;
   } catch (e) {}
 
-  const stableIds = new Set(cache.tokenIds.map(String));
+  let stableIds = new Set(cache.tokenIds.map(String));
   const toTopic = ethers.zeroPadValue(address, 32).toLowerCase();
   const consume = log => {
     if (log.topics?.[3]) stableIds.add(BigInt(log.topics[3]).toString());
   };
   if (cache.lastBlock < stableHead) {
-    await scanVotingRanges(CONTRACT, [VOTING_TRANSFER_TOPIC, null, toTopic], cache.lastBlock + 1, stableHead, consume);
+    // A cold wallet normally needs one historical log request plus one
+    // current-state multicall. If a provider truncates away a currently owned
+    // token, the balance proof fails and the complete recursive scanner remains
+    // the correctness fallback.
+    const fastIds = cache.lastBlock === deployBlock - 1
+      ? await tryLoadLoggedOwnedVotingTokenIds(address, deployBlock, stableHead)
+      : null;
+    if (fastIds !== null) {
+      stableIds = new Set(fastIds);
+    } else {
+      await scanVotingRanges(
+        CONTRACT,
+        [VOTING_TRANSFER_TOPIC, null, toTopic],
+        cache.lastBlock + 1,
+        stableHead,
+        consume
+      );
+    }
     cache.lastBlock = stableHead;
     cache.lastBlockHash = await votingBlockHash(stableHead, deployBlock);
     cache.tokenIds = [...stableIds];
@@ -3178,7 +3377,35 @@ function restoreVotingDraft() {
   return false;
 }
 
+function renderVotingLookupMode() {
+  const text = $('integrationVoteLookupText');
+  const toggle = $('integrationVoteLookupToggle');
+  if (!text || !toggle) return;
+  if (votingUseIndexer && VOTING_INDEXER) {
+    text.textContent = 'names via Blockscout (address + IP)';
+    toggle.textContent = 'use RPC only';
+    toggle.setAttribute('aria-label', 'Use public RPCs instead of Blockscout for name lookup');
+  } else {
+    text.textContent = 'names via public RPCs (address)';
+    toggle.textContent = VOTING_INDEXER ? 'use Blockscout' : 'RPC only';
+    toggle.setAttribute('aria-label', 'Use Blockscout for faster name lookup');
+  }
+  toggle.disabled = !VOTING_INDEXER || votingLoading || votingSubmitting;
+  toggle.setAttribute('aria-pressed', String(!votingUseIndexer));
+}
+
+function toggleVotingLookupMode() {
+  if (!VOTING_INDEXER || votingLoading || votingSubmitting) return;
+  votingUseIndexer = !votingUseIndexer;
+  try {
+    localStorage.setItem(VOTING_LOOKUP_MODE_KEY, votingUseIndexer ? 'indexer' : 'rpc');
+  } catch (e) {}
+  renderVotingLookupMode();
+  if (connectedAddress) initializeVotingWallet({ preserveDraft: true });
+}
+
 function renderVotingPower() {
+  renderVotingLookupMode();
   const details = $('integrationVoteDetails');
   const power = $('integrationVotePower');
   const summary = $('integrationVotePowerSummary');
@@ -3283,10 +3510,14 @@ async function initializeVotingWallet({
     updateVotingUi();
   }
   try {
-    await ensureIntegrationVotingLoaded({ force: refreshVoting });
-    const tokenIds = await loadOwnedVotingTokenIds(address);
-    const records = await loadVotingRecords(tokenIds, true);
-    const latestBlock = await (await getRpc()).getBlock('latest');
+    const [, tokenIds] = await Promise.all([
+      ensureIntegrationVotingLoaded({ force: refreshVoting }),
+      loadOwnedVotingTokenIds(address)
+    ]);
+    const [records, latestBlock] = await Promise.all([
+      loadVotingRecords(tokenIds, true),
+      getRpc().then(rpc => rpc.getBlock('latest'))
+    ]);
     const now = Number(latestBlock.timestamp);
     if (!connectedAddress || connectedAddress.toLowerCase() !== address.toLowerCase()) {
       return { ok: false, cancelled: true };
@@ -3297,16 +3528,8 @@ async function initializeVotingWallet({
       const record = records.get(String(tokenId));
       if (!record || !record.label || String(record.parent) !== '0') continue;
       if (record.expiresAt < now || record.owner?.toLowerCase() !== address.toLowerCase()) continue;
-      const allocations = {};
       const ballot = votingBallots.get(String(tokenId));
-      if (ballot && String(ballot.epoch) === String(record.epoch) &&
-          ballot.voter?.toLowerCase() === address.toLowerCase()) {
-        for (let i = 0; i < ballot.integrationIds.length; i++) {
-          const id = VOTING_ID_BY_HASH.get(ballot.integrationIds[i].toLowerCase());
-          const amount = Number(ballot.votes[i]);
-          if (id && Number.isSafeInteger(amount) && amount > 0) allocations[id] = amount;
-        }
-      }
+      const allocations = votingAllocationsForName(ballot, address, record.epoch);
       const power = votingPowerForLabelLength(textEncoder.encode(record.label).length);
       names.push({
         tokenId: String(tokenId),
@@ -3360,6 +3583,54 @@ async function initializeVotingWallet({
     }
     return { ok: false, error };
   }
+}
+
+function applyMinedVotingReceipt(receipt, expectedBallots, expectedDraft, address) {
+  const mutableBallots = Object.fromEntries(votingBallots);
+  const receiptTokenIds = new Set();
+  for (const log of receipt.logs || []) {
+    if (String(log.address).toLowerCase() !== VOTING_CONTRACT.toLowerCase()) continue;
+    const tokenId = applyVotingBallotLog(mutableBallots, log);
+    if (!tokenId) continue;
+    if (receiptTokenIds.has(tokenId)) throw new Error(`Duplicate mined ballot for ${tokenId}`);
+    receiptTokenIds.add(tokenId);
+  }
+
+  const namesByToken = new Map(ownedVotingNames.map(name => [String(name.tokenId), name]));
+  for (const expected of expectedBallots) {
+    const tokenId = String(expected.tokenId);
+    const actual = mutableBallots[tokenId];
+    const name = namesByToken.get(tokenId);
+    const expectedIds = Array.from(expected.integrationIds, value => String(value).toLowerCase());
+    const expectedVotes = Array.from(expected.votes, Number);
+    if (!receiptTokenIds.has(tokenId) || !actual || !name ||
+        actual.voter?.toLowerCase() !== address.toLowerCase() ||
+        String(actual.epoch) !== String(name.epoch) ||
+        !votingAllocationsEqual(
+          Object.fromEntries(actual.integrationIds.map((id, index) => [id, actual.votes[index]])),
+          Object.fromEntries(expectedIds.map((id, index) => [id, expectedVotes[index]]))
+        )) {
+      throw new Error(`Could not verify mined ballot for ${tokenId}`);
+    }
+  }
+
+  const nextNames = ownedVotingNames.map(name => ({
+    ...name,
+    allocations: votingAllocationsForName(mutableBallots[String(name.tokenId)], address, name.epoch)
+  }));
+  const nextConfirmed = aggregateVotingAllocations(nextNames);
+  if (!votingAllocationsEqual(nextConfirmed, expectedDraft)) {
+    throw new Error('Mined ballots did not match the signed vote');
+  }
+
+  votingBallots = new Map(Object.entries(mutableBallots));
+  ownedVotingNames = nextNames;
+  votingConfirmed = nextConfirmed;
+  votingDraft = { ...nextConfirmed };
+  recomputeVotingTallies();
+  settleIntegrationOrder();
+  saveIntegrationOrder();
+  saveVotingDraft();
 }
 
 function refreshIntegrationVoting({ refreshWallet = true, preserveDraft = true } = {}) {
@@ -3537,24 +3808,10 @@ async function submitVotingDraft() {
     const receipt = await waitForTx(tx);
     minedTxHash = tx.hash;
 
-    // Re-read the public index after mining, then merge the canonical receipt
-    // logs in case the public RPC is a block behind the wallet's RPC.
-    try {
-      await ensureIntegrationVotingLoaded({ force: true });
-    } catch (error) {
-      console.warn('Could not immediately refresh mined votes:', error);
-    }
-    const mutableBallots = Object.fromEntries(votingBallots);
-    for (const log of receipt.logs || []) {
-      if (String(log.address).toLowerCase() === VOTING_CONTRACT.toLowerCase()) {
-        applyVotingBallotLog(mutableBallots, log);
-      }
-    }
-    votingBallots = new Map(Object.entries(mutableBallots));
-    const walletRefresh = await initializeVotingWallet({ preserveDraft: false, silent: true });
-    if (!walletRefresh?.ok) throw walletRefresh?.error || new Error('Could not refresh mined votes');
-    settleIntegrationOrder();
-    saveIntegrationOrder();
+    // The successful canonical receipt already contains every replacement
+    // ballot. Apply it immediately; the full public index reconciles in the
+    // background after the success state is visible.
+    applyMinedVotingReceipt(receipt, ballots, requestedDraft, connectedAddress);
     showStatus('Votes counted.', 'success', tx.hash);
     succeeded = true;
   } catch (error) {
