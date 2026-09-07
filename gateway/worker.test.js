@@ -984,3 +984,33 @@ test('a full RPC broker queue sheds load as a retryable 503', async () => {
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(await cache.match(new Request('https://gwei-cache.internal/resolve/busy.gwei')), undefined);
 });
+
+test('configured IPFS gateway applies to every name and overrides transport CSP at the site origin', async () => {
+  const env={IPFS_GATEWAYS:'["https://node.example","https://backup.example"]'};
+  for (const name of ['alpha','beta']) {
+    const fetchMock=makeFetch({rpc:rpcReturning(CH_IPFS),ipfs:()=>new Response('<h1>shared policy</h1>',{headers:{'content-security-policy':"sandbox; default-src 'none'",'content-type':'text/html'}})});
+    const res=await invoke(`https://${name}.gwei.domains/`,{cache:makeCache(),fetchMock,env:{...env}});
+    assert.equal(res.status,200);
+    assert.ok(fetchMock.calls.ipfsUrls[0].startsWith('https://node.example/ipfs/'));
+    assert.equal(res.headers.get('content-security-policy'),"frame-ancestors 'self';");
+    assert.equal(res.headers.get('x-gwei-name'),`${name}.gwei`);
+  }
+});
+
+test('immutable IPFS cache survives upstream outages while name changes select a new CID',async()=>{
+ const cache=makeCache();let failing=false,changed=false;
+ const replacement=CH_IPFS.replace(DONNOH_CH.slice(-8),DONNOH_CH.slice(-8)==='00000000'?'00000001':'00000000');
+ const fetchMock=makeFetch({rpc:(...args)=>rpcReturning(changed?replacement:CH_IPFS)(...args),ipfs:()=>new Response(failing?'offline':'immutable content',{status:failing?503:200})});
+ const env={IPFS_GATEWAYS:'["https://cache-test.example"]'};
+ const first=await invoke('https://cached.gwei.domains/',{cache,fetchMock,env:{...env}});
+ assert.equal(first.headers.get('cache-control'),'public, max-age=300');
+ const entry=[...cache._store.entries()].find(([key])=>key.includes('/content/'))[1];
+ assert.equal(entry.headers['cache-control'],'public, max-age=86400, immutable');
+ cache.advance(3600);failing=true;
+ const cached=await invoke('https://cached.gwei.domains/',{cache,fetchMock,env:{...env}});
+ assert.equal(await cached.text(),'immutable content');assert.equal(fetchMock.calls.ipfs,1);
+ assert.equal(cached.headers.get('cache-control'),'public, max-age=300');
+ cache.advance(301);changed=true;
+ const updated=await invoke('https://cached.gwei.domains/',{cache,fetchMock,env:{...env}});
+ assert.equal(updated.status,504,'must not serve old CID after the name record changes');
+});

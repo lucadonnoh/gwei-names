@@ -62,7 +62,42 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   `resolveMode` is cached for 24h since it's `pure` in practice.
 - Bodies are served as raw bytes. ERC-5219 types the body as `string`, but contracts put images and
   fonts in it, so it never round-trips through a UTF-8 decode.
-- IPFS and IPNS content is fetched from `ipfs.io` (with `dweb.link` fallback). IPNS Peer IDs are
+- IPFS and IPNS content uses the shared `IPFS_GATEWAYS` configuration. Production first tries the existing Kubo node through the HTTPS transport, with public gateways as opportunistic fallbacks. IPNS Peer IDs are
   validated and converted to canonical CIDv1 base36 names before they reach an upstream. Swarm content is fetched from
   `download.gateway.ethswarm.org`; its forced attachment header is removed so websites render
   inline. Responses are cached for 5 min, so an IPNS update may take up to 5 min to become visible.
+
+
+## Shared content retrieval
+
+`content-gateways.js` starts the preferred gateway immediately and another after
+300 ms if needed. HTTP failures advance immediately. Each attempt has an 8-second
+header deadline; losing requests are cancelled. Network errors, 429 and 5xx
+responses temporarily cool down an upstream for 30 seconds. A 404 only misses
+that content, and does not mark the gateway unhealthy. When every gateway is
+cooling down, one is probed so recovery can be detected. Response bodies stream.
+Immutable IPFS content is retained in the edge cache for up to one day, subject
+to cache eviction. Browser caching remains five minutes, and name records are
+still refreshed normally. Repointing a name selects a new CID/cache key. IPNS
+and contract content keep their existing cache policy.
+
+`IPFS_GATEWAYS` is a JSON array of HTTPS origins, shared by every IPFS/IPNS-backed
+name. `SWARM_GATEWAYS` can override the Swarm origins separately. No name or CID
+appears in the selection policy. The production node transport reuses
+`https://test-chat.slopo.net/ipfs/<cid>/...` and `/ipns/<name>/...` through the
+existing tunnel, backed by Kubo at 192.168.10.140:8082. Despite the existing host's
+name, these routes are generic and are used for every site's content.
+
+The transport is GET/HEAD-only, rate/concurrency limited, and never proxies the
+Kubo admin API. Its CSP sandboxes direct browser visits so arbitrary IPFS HTML
+cannot access the transport host's app storage. GNS applies its existing security
+headers on the isolated per-name origin. No tunnel or Kubo restart was needed.
+
+Public fallbacks are ipfs.io and dweb.link. They share an operator and are
+opportunistic backups, not independent uptime guarantees. Storacha w3s.link was
+also tested but redirects this content to dweb.link, so it was not added as a
+falsely independent backup.
+The gateway list supports independent managed origins when configured; none was
+purchased or claimed as available in this change. If all online providers lack a
+CID and the only holder is offline, retrieval cannot succeed. See
+`ops/SHARED-IPFS-DEPLOYMENT.md` for the live deployment and test evidence.

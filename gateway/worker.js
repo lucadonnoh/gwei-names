@@ -10,14 +10,17 @@
 //
 // Deploy on a `*.gwei.domains/*` route (see gateway/README.md).
 
+import { createGatewayPool, configuredGateways } from './content-gateways.js';
+
 import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN } from './rpc-config.js';
 
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
 // Chains a `contentcontract` record may point at, keyed by chain id, with their ERC-3770 short names.
 // Names themselves always resolve on mainnet (that's where the record lives); only the web3:// contract
 // call goes to the chain named in the record. Endpoint configuration lives in rpc-config.js.
-// Tried in order; ipfs.io's path gateway serves directly (no origin-isolation redirect for us).
+// Deployed gateway origins are configured once for every name via IPFS_GATEWAYS.
 const IPFS_GATEWAYS = ['https://ipfs.io', 'https://dweb.link'];
+const retrieveContent = createGatewayPool();
 // Public Swarm (bzz) endpoint that serves the referenced content bytes. gateway.ethswarm.org is
 // a sharing-app UI (its /bzz/* routes return the same app shell), while api.gateway.ethswarm.org
 // redirects bare hashes to bzz.link moderation. The download endpoint marks responses as
@@ -40,6 +43,7 @@ const RESERVED = {
 // shows up sooner. Transient RPC/upstream failures are never cached.
 const RESOLVE_TTL = 300;     // name → content reference (seconds)
 const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
+const IPFS_CACHE_TTL = 86400; // Immutable content can remain at the edge through upstream outages.
 const CONTENT_TTL = 300;     // proxied content (seconds)
 // resolveMode() is `pure` on every contract we've seen, so its answer is effectively immutable and
 // worth caching hard: it saves an eth_call on every cold web3:// request.
@@ -687,7 +691,13 @@ export default {
     );
     if (request.method === 'GET') {
       const hit = await cache.match(contentKey);
-      if (hit) return hit;
+      if (hit) {
+        if (r.kind !== 'ipfs') return hit;
+        const headers = new Headers(hit.headers);
+        headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
+        headers.delete('age');
+        return new Response(hit.body, { status: hit.status, headers });
+      }
     }
 
     // 2a. Contract-hosted site: call it over web3:// instead of proxying a storage gateway.
@@ -708,28 +718,27 @@ export default {
     const proto = PROTOCOLS[r.kind];
 
     // 2b. Reverse-proxy the content from the matching storage gateway (IPFS, IPNS, or Swarm).
-    for (const gw of proto.gateways) {
-      try {
-        const upstream = await fetch(`${gw}${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
-          headers: { accept: request.headers.get('accept') || '*/*' },
-          redirect: 'follow',
-        });
-        if (upstream.ok || upstream.status === 304) {
-          const headers = harden(new Headers(upstream.headers));
-          if (r.kind === 'swarm') headers.delete('content-disposition');
-          headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
-          // Header values are ByteStrings; percent-encoding preserves non-ASCII names without
-          // making the response construction throw. ASCII names remain unchanged.
-          headers.set('x-gwei-name', encodeURIComponent(name));
-          headers.set(proto.header, r.ref);
-          const resp = new Response(upstream.body, { status: upstream.status, headers });
-          // Only full 200 GETs are cacheable; failures and partials are not.
-          if (request.method === 'GET' && upstream.status === 200) {
-            ctx.waitUntil(cache.put(contentKey, resp.clone()).catch(() => {}));
-          }
-          return resp;
-        }
-      } catch (_) {}
+    const gateways = configuredGateways(r.kind === 'swarm' ? env.SWARM_GATEWAYS : env.IPFS_GATEWAYS, proto.gateways);
+    const upstream = await retrieveContent(gateways, `${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
+      accept: request.headers.get('accept') || '*/*',
+    });
+    if (upstream) {
+      const headers = harden(new Headers(upstream.headers));
+      if (r.kind === 'swarm') headers.delete('content-disposition');
+      headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
+      headers.delete('age');
+      // Header values are ByteStrings; percent-encoding preserves non-ASCII names without
+      // making the response construction throw. ASCII names remain unchanged.
+      headers.set('x-gwei-name', encodeURIComponent(name));
+      headers.set(proto.header, r.ref);
+      const resp = new Response(upstream.body, { status: upstream.status, headers });
+      // Only full 200 GETs are cacheable; failures and partials are not.
+      if (request.method === 'GET' && upstream.status === 200) {
+        const stored = resp.clone();
+        if (r.kind === 'ipfs') stored.headers.set('cache-control', `public, max-age=${IPFS_CACHE_TTL}, immutable`);
+        ctx.waitUntil(cache.put(contentKey, stored).catch(() => {}));
+      }
+      return resp;
     }
     return page(name, '<p>Content is set but couldn’t be fetched right now.</p>', 504, 'no-store');
   },

@@ -17,3 +17,7 @@ class_name = "RpcBroker"
 [exports.RpcBroker]
 type = "durable-object"
 storage = "sqlite"
+
+[vars]
+# The same IPFS/IPNS retrieval path applies to every GNS name and CID.
+IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.io","https://dweb.link"]'
