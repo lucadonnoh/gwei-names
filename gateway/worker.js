@@ -160,7 +160,7 @@ const SECURITY_HEADERS = {
   'x-frame-options': 'SAMEORIGIN',
   'content-security-policy': "frame-ancestors 'self';",
   'referrer-policy': 'strict-origin-when-cross-origin',
-  'permissions-policy': 'geolocation=(), microphone=(), camera=(), payment=(), usb=(), battery=()',
+  'permissions-policy': 'geolocation=(), microphone=(), camera=(), payment=(), usb=()',
   'strict-transport-security': 'max-age=31536000',
   'cross-origin-resource-policy': 'cross-origin',
 };
