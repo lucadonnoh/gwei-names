@@ -1063,7 +1063,7 @@ const NETWORKS = {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
     rpc: ['https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
-    logsRpcs: ['https://0xrpc.io/eth', 'https://gateway.tenderly.co/public/mainnet'],
+    logsRpcs: ['https://gateway.tenderly.co/public/mainnet', 'https://rpc.mevblocker.io'],
     deployBlock: 25403689,
     explorer: 'https://etherscan.io',
     nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
@@ -1139,7 +1139,7 @@ if (NET.chainId !== 1) {
 { const _er = document.getElementById('regExplorerLink'); if (_er) { if (regEnabled()) { _er.href = EXPLORER + '/address/' + REGISTRAR; _er.style.display = ''; } else { _er.style.display = 'none'; } } }
 { const _eh = document.getElementById('humanExplorerLink'); if (_eh) { if (zkEnabled()) { _eh.href = EXPLORER + '/address/' + HUMAN_REGISTRAR; _eh.style.display = ''; } else { _eh.style.display = 'none'; } } }
 
-// ── Network stats: scan NameRegistered + ContenthashChanged logs (chunked + cached) ──
+// ── Network stats: scan NameRegistered + ContenthashChanged logs (cached) ──
 // Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
 // Burned = NameNFT ETH balance (no withdraw exists, so collected fees are locked = burned).
 const STATS_NAME_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28'; // NameRegistered
@@ -1151,7 +1151,8 @@ async function statsRpc(method, params) {
   for (const url of STATS_RPCS) {
     try {
       const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined }); // a hung RPC must not stall the scan
       if (!r.ok) continue;
       const j = await r.json();
       if (j.result !== undefined) return j.result;
@@ -1163,6 +1164,23 @@ function statsHexUtf8(hex) {
   const b = new Uint8Array(hex.length / 2);
   for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
   try { return new TextDecoder().decode(b); } catch (e) { return ''; }
+}
+// eth_getLogs over [from, to]: one call usually covers it (Tenderly serves 2M+ blocks per query);
+// on an error the span is halved, so an RPC with a stricter range cap still gets there in chunks.
+async function statsGetLogs(filter, from, to, onLogs) {
+  let span = to - from + 1;
+  while (from <= to) {
+    const end = Math.min(from + span - 1, to);
+    let logs;
+    try {
+      logs = await statsRpc('eth_getLogs', [Object.assign({}, filter, { fromBlock: '0x' + from.toString(16), toBlock: '0x' + end.toString(16) })]);
+    } catch (e) {
+      if (span <= 1000) throw e;
+      span = Math.ceil(span / 2); continue;
+    }
+    onLogs(logs);
+    from = end + 1;
+  }
 }
 async function loadStats() {
   const sec = document.getElementById('statsSection');
@@ -1176,11 +1194,7 @@ async function loadStats() {
   let ok = false;
   try {
     const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
-    for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
-      const to = Math.min(from + 9000, latest);
-      const logs = await statsRpc('eth_getLogs', [{ address: CONTRACT,
-        topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC]],
-        fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }]);
+    await statsGetLogs({ address: CONTRACT, topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC]] }, cache.lastBlock + 1, latest, function (logs) {
       for (const log of logs) {
         const h = log.data.slice(2);
         if (log.topics[0] === STATS_NAME_TOPIC) {
@@ -1191,7 +1205,7 @@ async function loadStats() {
           cache.ch[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
         }
       }
-    }
+    });
     cache.lastBlock = latest; ok = true;
     try { localStorage.setItem(STATS_KEY, JSON.stringify(cache)); } catch (e) {}
   } catch (e) {}
@@ -1339,7 +1353,7 @@ function initZk() {
 }
 // Count HumanNameClaimed events and, if any, append "(N minted)" to the CTA. Scans logs the
 // same way the stats section does: raw eth_getLogs against the dedicated logs RPCs (the racing
-// read RPCs throttle getLogs), chunked and cached in localStorage so reloads only scan new blocks.
+// read RPCs throttle getLogs), cached in localStorage so reloads only scan new blocks.
 // Best-effort — if the log query fails, the label is left unchanged.
 const ZK_CLAIM_TOPIC = '0xbe83f1294333749b7a1d29ed13640d6754be3f262455473ce8776175b12f67ea'; // HumanNameClaimed
 const ZK_COUNT_KEY = 'gwei_zkcount_' + CHAIN_ID;
@@ -1351,12 +1365,8 @@ async function updateZkMintedCount() {
   try { const c = JSON.parse(localStorage.getItem(ZK_COUNT_KEY)); if (c && typeof c.count === 'number' && c.lastBlock >= NET.humanRegistrarBlock - 1) cache = c; } catch (e) {}
   try {
     const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
-    for (let from = cache.lastBlock + 1; from <= latest; from += 9001) {
-      const to = Math.min(from + 9000, latest);
-      cache.count += (await statsRpc('eth_getLogs', [{ address: HUMAN_REGISTRAR,
-        topics: [ZK_CLAIM_TOPIC],
-        fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16) }])).length;
-    }
+    await statsGetLogs({ address: HUMAN_REGISTRAR, topics: [ZK_CLAIM_TOPIC] }, cache.lastBlock + 1, latest,
+      function (logs) { cache.count += logs.length; });
     cache.lastBlock = latest;
     try { localStorage.setItem(ZK_COUNT_KEY, JSON.stringify(cache)); } catch (e) {}
     if (cache.count > 0) cta.textContent = '[new] free zkpassport names available (' + cache.count + ' minted)';
