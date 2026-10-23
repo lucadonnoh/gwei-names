@@ -489,13 +489,13 @@ test('IPFS unreachable → 504 no-store; resolution still cached', async () => {
 test('RPC failover: first endpoint down, second succeeds', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({
-    rpc: (data, url) => url.includes('0xrpc') ? 'THROW' : rpcReturning(CH_IPFS)(data),
+    rpc: (data, url) => url.includes('drpc') ? 'THROW' : rpcReturning(CH_IPFS)(data),
     ipfs: () => new Response('ok', { status: 200 }),
   });
   const res = await invoke('https://donnoh.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 200);
-  assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('0xrpc')), 'tried the down endpoint');
-  assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('tenderly')), 'failed over to the next');
+  assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('drpc')), 'tried the down endpoint');
+  assert.ok(fetchMock.calls.rpcUrls.some((u) => u.includes('blastapi')), 'failed over to the next');
 });
 
 test('reserved subdomain (diff) is proxied through, not hardened/cached', async () => {

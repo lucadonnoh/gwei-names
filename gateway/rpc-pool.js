@@ -56,6 +56,10 @@ function isRateLimited(message) {
   return /rate|limit|429|too many|capacity|quota|exceeded/i.test(message || '');
 }
 
+function hostOf(url) {
+  try { return new URL(url).host; } catch (_) { return 'invalid URL'; }
+}
+
 function shouldBenchStatus(status) {
   return status === 401 || status === 403 || status === 404 || status === 408 ||
     status === 429 || status >= 500;
@@ -184,7 +188,10 @@ export class RpcPool {
       params: [{ to, data }, 'latest'],
     });
 
+    // Hosts only: a configured RPC_URL may carry an API key in its path.
+    const failures = [];
     for (const url of this.#orderEndpoints(endpoints, preferred)) {
+      const host = hostOf(url);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -197,6 +204,7 @@ export class RpcPool {
         if (!response.ok) {
           try { await response.body?.cancel(); } catch (_) {}
           if (shouldBenchStatus(response.status)) this.#bench(url);
+          failures.push(`${host}: HTTP ${response.status}`);
           continue;
         }
 
@@ -209,19 +217,23 @@ export class RpcPool {
           const message = json.error?.message || 'rpc error';
           if (/revert/i.test(message)) return { reverted: true };
           if (isRateLimited(message)) this.#bench(url);
+          failures.push(`${host}: ${String(message).slice(0, 100)}`);
           continue;
         }
 
         // A 2xx response that is not JSON-RPC is an endpoint failure, not a definitive answer.
         this.#bench(url);
-      } catch (_) {
+        failures.push(`${host}: not a JSON-RPC response`);
+      } catch (error) {
         // Transport errors, body timeouts, malformed JSON, and over-sized responses all implicate
         // this endpoint. Try the rest of the pool and deprioritize it for the next call.
         this.#bench(url);
+        failures.push(`${host}: ${controller.signal.aborted ? 'timeout' : String(error?.message || error).slice(0, 100)}`);
       } finally {
         clearTimeout(timer);
       }
     }
+    console.error(JSON.stringify({ event: 'rpc_failed', failures }));
     return { failed: true };
   }
 }

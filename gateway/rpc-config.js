@@ -3,10 +3,17 @@
 // A dedicated mainnet endpoint remains the preferred endpoint when RPC_URL is set. Public
 // endpoints are rotated behind it and take over while it is cooling down. Sepolia currently uses
 // only the public pool because RPC_URL has historically meant the mainnet name-resolution RPC.
+//
+// Workers share egress IPs, so a public endpoint that works from a browser can still reject every
+// Worker request (0xrpc.io answered 404 and Tenderly 429 from Workers in October 2026). Probe
+// candidates from a Worker, not from a laptop, before adding them here.
 
 export const RPCS = [
-  'https://0xrpc.io/eth',
-  'https://gateway.tenderly.co/public/mainnet',
+  'https://eth.drpc.org',
+  'https://eth-mainnet.public.blastapi.io',
+  'https://eth-pokt.nodies.app',
+  'https://rpc.mevblocker.io',
+  'https://eth.rpc.blxrbdn.com',
   'https://ethereum-rpc.publicnode.com',
 ];
 
