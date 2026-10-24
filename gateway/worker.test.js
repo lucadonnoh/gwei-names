@@ -1161,18 +1161,47 @@ test('transient error pages retry themselves and are never cached', async () => 
   assert.match(await fetchFailed.text(), /location\.reload\(\)/);
 });
 
-test('the no-website page tells an unregistered name from one without a site, and links to it', async () => {
-  const resolveWord = (owner) => (data) => data.startsWith('0x4f896d4f') ? '0x' + pad32(owner) : rpcReturning(CH_NONE)(data);
-  let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: resolveWord('0') }) });
+// aggregate3 result for [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS)].
+function abiProfile({ address = '0', owner = address, expires = '0', text = {} } = {}) {
+  const str = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return pad32('20') + pad32((utf8(v).length).toString(16)) + d; };
+  const items = [[true, pad32(address)], [true, pad32(owner)], [true, pad32(expires)],
+    ...['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email'].map((k) => [true, str(text[k] || '')])];
+  const elements = items.map(([ok, data]) => pad32(ok ? '1' : '0') + pad32('40') + pad32((data.length / 2).toString(16)) + data);
+  let cursor = items.length * 32;
+  const offsets = elements.map((e) => { const o = pad32(cursor.toString(16)); cursor += e.length / 2; return o; });
+  return '0x' + pad32('20') + pad32(items.length.toString(16)) + offsets.join('') + elements.join('');
+}
+const MULTICALL = '0xca11bde05977b3631167028862be2a173976ca11';
+const rpcProfile = (profile) => (data, url, to) => (to?.toLowerCase() === MULTICALL ? abiProfile(profile) : rpcReturning(CH_NONE)(data));
+
+test('an unregistered name gets a register page; a registered one without a site gets its profile', async () => {
+  let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
   assert.equal(res.status, 404);
   let html = await res.text();
   assert.match(html, /isn't registered, or has expired/);
-  assert.match(html, /href="https:\/\/gwei\.domains\/#nobody">register it/);
+  assert.match(html, /href="https:\/\/gwei\.domains\/#nobody">Register it/);
+  assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
 
-  res = await invoke('https://xn--ls8h.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: resolveWord('deadbeef') }) });
+  const fetchMock = makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16),
+    text: { description: 'builds <things>', 'com.twitter': 'alice' } }) });
+  res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 200);
   html = await res.text();
-  assert.match(html, /has no website set/);
-  assert.match(html, /href="https:\/\/gwei\.domains\/#%F0%9F%92%A9">set one/);
+  assert.match(html, /<div class="name">alice\.gwei<\/div>/);
+  assert.match(html, /builds &lt;things&gt;/);
+  assert.match(html, /href="https:\/\/x\.com\/alice"/);
+  assert.match(html, /<meta property="og:url" content="https:\/\/alice\.gwei\.domains\/">/);
+  assert.match(res.headers.get('content-security-policy'), /script-src|default-src 'none'/);
+  assert.doesNotMatch(res.headers.get('content-security-policy'), /unsafe-eval|script-src 'unsafe-inline'/);
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.equal(fetchMock.calls.rpcUrls.length, 4, 'computeId, contenthash, contentcontract, one multicall');
+
+  res = await invoke('https://alice.gwei.domains/favicon.ico', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404, 'other paths are not the profile');
+  assert.match(await res.text(), /doesn't exist on <b>alice\.gwei<\/b>/);
+
+  res = await invoke('https://xn--ls8h.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
+  assert.match(await res.text(), /href="https:\/\/gwei\.domains\/#%F0%9F%92%A9">Register it/);
 });
 
 test('when a fresh lookup fails, the last known site is served', async () => {
@@ -1327,4 +1356,24 @@ test('health-check failures are pushed to ntfy when configured, and only then', 
     globalThis.fetch = original;
     console.error = originalError;
   }
+});
+
+test('an NFT avatar is resolved through tokenURI and its metadata', async () => {
+  const NFTC = '0xaa6612f03443517ced2bdcf27958c22353ceeab9';
+  const metadata = 'data:application/json;base64,' + Buffer.from(JSON.stringify({ name: 'x', image: 'ipfs://bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/7.png' })).toString('base64');
+  const strTail = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return '0x' + pad32('20') + pad32(utf8(v).length.toString(16)) + d; };
+  const rpc = (data, url, to) => {
+    if (to?.toLowerCase() === NFTC && data.startsWith('0xc87b56dd')) return strTail(metadata);
+    return rpcProfile({ address: 'a11ce', text: { avatar: `eip155:1/erc721:${NFTC}/8977` } })(data, url, to);
+  };
+  const res = await invoke('https://geek.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc }) });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /<img class="avatar" src="https:\/\/ipfs\.filebase\.io\/ipfs\/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644\/7\.png"/);
+
+  // A token whose tokenURI reverts just has no avatar.
+  const broken = (data, url, to) => (to?.toLowerCase() === NFTC ? null : rpc(data, url, to));
+  const plain = await invoke('https://geek.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: broken }) });
+  assert.equal(plain.status, 200);
+  assert.doesNotMatch(await plain.text(), /class="avatar"/);
 });

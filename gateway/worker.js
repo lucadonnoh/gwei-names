@@ -16,6 +16,10 @@ import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN, rpcEndpointConfig } from './
 import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
+import {
+  MULTICALL3, PROFILE_CSP, PROFILE_TEXT_KEYS, decodeAggregate3, encodeAggregate3, nftAvatarRef, profileFromResults,
+  renderLayout, renderProfile, renderUnregistered,
+} from './profile-page.js';
 
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
 // Chains a `contentcontract` record may point at, keyed by chain id, with their ERC-3770 short names.
@@ -63,6 +67,10 @@ const SEL_RESOLVEMODE = 'dd473fae'; // resolveMode()
 const SEL_REQUEST = '1374c460'; // request(string[],(string,string)[])
 const SEL_HTML = '33c34ac3'; // html(), the getter single-file site contracts expose
 const SEL_RESOLVE = '4f896d4f'; // resolve(uint256): zero unless the name is registered and active
+const SEL_OWNEROF = '6352211e'; // ownerOf(uint256)
+const SEL_EXPIRESAT = '17c95709'; // expiresAt(uint256)
+const SEL_TOKENURI = 'c87b56dd'; // tokenURI(uint256), ERC-721
+const SEL_URI = '0e89341c'; // uri(uint256), ERC-1155
 const CONTENTCONTRACT = 'contentcontract'; // ERC-6821 text record key
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
@@ -459,15 +467,14 @@ async function ethCall(chainId, to, data, route, options) {
   const r = await rpcCall(chainId, to, data, route, options);
   return r && r.result ? r.result : null;
 }
+// Gateway pages (errors, "no website", name profiles) share gwei.domains' look via profile-page.js.
 function page(title, body, status, cache = 'public, max-age=60') {
+  return htmlResponse(renderLayout({ title, body }), status, cache);
+}
+function htmlResponse(html, status, cache = 'public, max-age=60', csp = null) {
   const headers = harden(new Headers({ 'content-type': 'text/html; charset=utf-8', 'cache-control': cache }));
-  return new Response(
-    `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">` +
-    `<title>${title}</title><style>body{background:#0a0a0a;color:#e8e8e0;font-family:Helvetica,Arial,sans-serif;` +
-    `min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:14px;padding:24px;line-height:1.6}` +
-    `a{color:#e8e8e0}p{color:#b8b8b0;max-width:380px;margin:0}</style>${body}`,
-    { status, headers },
-  );
+  if (csp) headers.set('content-security-policy', csp);
+  return new Response(html, { status, headers });
 }
 
 // Transient failures (RPC, a busy broker, unreachable storage) usually clear within seconds, so these
@@ -577,12 +584,24 @@ async function lookupName(name, route) {
     const ccRes = await ethCall(1, NAMENFT, encodeTextCall(tokenIdHex, CONTENTCONTRACT), route);
     if (!ccRes) return { error: 'rpc' };
     result = parseContentContract(readText(ccRes.slice(2), word(ccRes.slice(2), 0))) || { state: 'none' };
-    // Only the "no website" page uses this, to tell an unregistered name from one without a site. If
-    // the lookup fails, the page just doesn't say which.
+    // A name without a website gets a profile page from its records, read in one Multicall3 call;
+    // resolve() also tells an unregistered (or expired) name from one without a site. If the call
+    // fails, the page just shows the plain "no website" message.
     if (result.state === 'none') {
       try {
-        const owner = await ethCall(1, NAMENFT, '0x' + SEL_RESOLVE + tokenIdHex, route);
-        if (owner) result.registered = BigInt(owner) !== 0n;
+        const calls = [SEL_RESOLVE, SEL_OWNEROF, SEL_EXPIRESAT]
+          .map((sel) => ({ target: NAMENFT, data: '0x' + sel + tokenIdHex }))
+          .concat(PROFILE_TEXT_KEYS.map((key) => ({ target: NAMENFT, data: encodeTextCall(tokenIdHex, key) })));
+        const res = await ethCall(1, MULTICALL3, encodeAggregate3(calls), route);
+        const profile = res ? profileFromResults(decodeAggregate3(res)) : null;
+        if (profile) {
+          result.registered = profile.registered;
+          if (profile.registered) {
+            const ref = nftAvatarRef(profile.text.avatar);
+            if (ref) profile.avatarImage = await nftImage(ref, route);
+            result.profile = profile;
+          }
+        }
       } catch (_) {}
     }
   } else {
@@ -600,6 +619,65 @@ async function lookupName(name, route) {
   }
 
   return result;
+}
+
+// An ENSIP-12 NFT avatar: the token's metadata (from tokenURI / uri) names its image. Every step is
+// bounded (one eth_call, a 64 KB metadata document fetched within 4 s) and any failure means no avatar.
+const NFT_METADATA_MAX_BYTES = 64 * 1024;
+async function nftImage(ref, route) {
+  try {
+    const idHex = pad32(ref.tokenId.toString(16));
+    const res = await ethCall(1, ref.contract, '0x' + (ref.standard === 'erc721' ? SEL_TOKENURI : SEL_URI) + idHex, route);
+    if (!res) return null;
+    let uri = readText(res.slice(2), word(res.slice(2), 0));
+    if (!uri) return null;
+    if (ref.standard === 'erc1155') uri = uri.replace('{id}', idHex);
+    const meta = await nftMetadata(uri.trim(), route.env);
+    const image = meta && typeof meta === 'object' ? meta.image || meta.image_url : null;
+    return typeof image === 'string' && image.length <= 200000 ? image.trim() : null;
+  } catch (_) {
+    return null;
+  }
+}
+async function nftMetadata(uri, env) {
+  const inline = /^data:application\/json(;[^,]*)?,([\s\S]*)$/i.exec(uri);
+  if (inline) {
+    const text = /;base64/i.test(inline[1] || '')
+      ? new TextDecoder().decode(Uint8Array.from(atob(inline[2]), (c) => c.charCodeAt(0)))
+      : decodeURIComponent(inline[2]);
+    return JSON.parse(text);
+  }
+  let response = null;
+  const ipfs = /^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]{46,100}(?:\/[^\s?#]*)?)$/.exec(uri);
+  if (ipfs) {
+    response = await retrieveContent(configuredGateways(env?.IPFS_GATEWAYS, IPFS_GATEWAYS), `/ipfs/${ipfs[1]}`, { accept: 'application/json' });
+  } else if (/^https:\/\//i.test(uri)) {
+    response = await fetch(uri, {
+      headers: { accept: 'application/json', 'user-agent': 'gwei.domains profile pages' },
+      signal: AbortSignal.timeout(4000),
+    });
+  }
+  if (!response?.ok || !response.body) {
+    await response?.body?.cancel().catch(() => {});
+    return null;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > NFT_METADATA_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 // Read a contract's ERC-6860 resolve mode, caching it hard. A revert, an empty return, or an
@@ -810,10 +888,15 @@ export default {
     }
     if (r.error) return rpcFailedPage('gwei gateway');
     if (r.state === 'none') {
-      const dapp = `https://gwei.domains/#${encodeURIComponent(decodedSub)}`;
-      return page(name, r.registered === false
-        ? `<p><b>${escapeHtml(name)}</b> isn't registered, or has expired.</p><p><a href="${dapp}">register it →</a></p>`
-        : `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="${dapp}">set one →</a></p>`, 404);
+      const dappHash = encodeURIComponent(decodedSub);
+      if (r.registered === false) return htmlResponse(renderUnregistered({ name, dappHash }), 404, undefined, PROFILE_CSP);
+      if (url.pathname !== '/') {
+        return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
+      }
+      if (r.profile) {
+        return htmlResponse(renderProfile({ name, dappHash, pageUrl: `https://${host}/`, profile: r.profile }), 200, undefined, PROFILE_CSP);
+      }
+      return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains/#${dappHash}">set one →</a></p>`, 404);
     }
     if (r.state === 'unsupported') {
       return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);

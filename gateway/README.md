@@ -38,9 +38,14 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **`diff.gwei.domains`** is a real service, not a gwei name, so the worker proxies it straight
   through to the Railway diff site (`RESERVED` in `worker.js`). Add more reserved subdomains there
   if you stand up other services under `gwei.domains`.
-- Names with no `contenthash` and no usable `contentcontract` record return a friendly 404. It says
-  whether the name is unregistered (or expired) or just has no website, and links to the name in the
-  dapp (`https://gwei.domains/#<name>`).
+- **Name profiles.** A registered name with no `contenthash` and no usable `contentcontract` record
+  gets a profile page at its root (`profile-page.js`, styled like gwei.domains): address, owner,
+  expiry and its `display`, `description`, `avatar`, `url`, `com.twitter`, `com.github`,
+  `org.telegram` and `email` records, read in one Multicall3 call, plus Open Graph tags for link
+  previews. ENSIP-12 NFT avatars are resolved through `tokenURI`/`uri` (64 KB metadata, 4 s). Record
+  values are escaped, links are limited to http(s)/mailto, and the page has no scripts under a strict
+  CSP. Other paths on such a name are a 404; an unregistered (or expired) name gets a page linking to
+  its registration in the dapp (`https://gwei.domains/#<name>`).
 - Name sites are HTTPS-only: plain HTTP requests get a 301 to the same URL over HTTPS.
 - Transient failures (RPC lookups, a busy broker, storage gateways that don't answer) return
   uncached error pages that reload themselves up to three times a minute.

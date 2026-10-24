@@ -1,0 +1,223 @@
+// Every registered name without a website gets a page at <name>.gwei.domains, built from its on-chain
+// records and styled like gwei.domains. The records come back in one Multicall3 call; every value a
+// name's owner controls is escaped, and links only ever become https/http/mailto URLs.
+
+import { hexToBytes } from './web3-auto.js';
+
+export const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const SEL_AGGREGATE3 = '82ad56cb'; // aggregate3((address,bool,bytes)[])
+// ENS text-record keys shown on the page, in display order after the name.
+export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email'];
+
+const pad32 = (h) => h.padStart(64, '0');
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// --- Multicall3 ------------------------------------------------------------------------------------
+// aggregate3 with allowFailure on every call, so a reverting ownerOf() doesn't sink the text reads.
+export function encodeAggregate3(calls) {
+  const elements = calls.map(({ target, data }) => {
+    const bytes = data.replace(/^0x/, '');
+    let padded = bytes;
+    while (padded.length % 64) padded += '0';
+    return pad32(target.slice(2).toLowerCase()) + pad32('1') + pad32('60') + pad32((bytes.length / 2).toString(16)) + padded;
+  });
+  let cursor = calls.length * 32;
+  const offsets = elements.map((element) => {
+    const offset = pad32(cursor.toString(16));
+    cursor += element.length / 2;
+    return offset;
+  });
+  return '0x' + SEL_AGGREGATE3 + pad32('20') + pad32(calls.length.toString(16)) + offsets.join('') + elements.join('');
+}
+
+// (bool success, bytes returnData)[] → [{ success, data }] with data as bare hex, or null if malformed.
+export function decodeAggregate3(resultHex) {
+  const hex = String(resultHex || '').replace(/^0x/, '');
+  const word = (at) => {
+    if (at < 0 || (at + 32) * 2 > hex.length) throw new Error('out of range');
+    return BigInt('0x' + hex.slice(at * 2, at * 2 + 64));
+  };
+  try {
+    const array = Number(word(0));
+    const count = Number(word(array));
+    if (count > 64) return null;
+    const base = array + 32;
+    const results = [];
+    for (let i = 0; i < count; i++) {
+      const element = base + Number(word(base + i * 32));
+      const success = word(element) !== 0n;
+      const dataAt = element + Number(word(element + 32));
+      const length = Number(word(dataAt));
+      if ((dataAt + 32 + length) * 2 > hex.length) return null;
+      results.push({ success, data: hex.slice((dataAt + 32) * 2, (dataAt + 32 + length) * 2) });
+    }
+    return results;
+  } catch (_) {
+    return null;
+  }
+}
+
+// --- record values ---------------------------------------------------------------------------------
+const decodeAddress = (r) => (r?.success && r.data.length >= 64 ? '0x' + r.data.slice(24, 64) : null);
+const decodeUint = (r) => (r?.success && r.data.length >= 64 ? BigInt('0x' + r.data.slice(0, 64)) : null);
+function decodeString(r) {
+  if (!r?.success || r.data.length < 128) return '';
+  const at = Number(BigInt('0x' + r.data.slice(0, 64)));
+  const length = Number(BigInt('0x' + r.data.slice(at * 2, at * 2 + 64)));
+  if ((at + 32 + length) * 2 > r.data.length) return '';
+  return new TextDecoder().decode(hexToBytes(r.data.slice((at + 32) * 2, (at + 32 + length) * 2))).trim();
+}
+const clip = (s, max) => (s.length > max ? s.slice(0, max - 1) + '…' : s);
+
+// Results of [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS)] → the stored profile.
+// `registered` follows resolve(): zero means unregistered, expired or otherwise inactive.
+export function profileFromResults(results) {
+  if (!Array.isArray(results) || results.length !== 3 + PROFILE_TEXT_KEYS.length || !results[0].success) return null;
+  const address = decodeAddress(results[0]);
+  if (!address) return null;
+  if (BigInt(address) === 0n) return { registered: false };
+  const text = {};
+  PROFILE_TEXT_KEYS.forEach((key, i) => {
+    const value = decodeString(results[3 + i]);
+    if (value) text[key] = clip(value, key === 'description' ? 500 : 300);
+  });
+  const expires = decodeUint(results[2]);
+  return {
+    registered: true,
+    address,
+    owner: decodeAddress(results[1]),
+    expiresAt: expires && expires > 0n && expires < 1n << 40n ? Number(expires) : null,
+    text,
+  };
+}
+
+function webLink(value) {
+  let v = value.trim();
+  if (!/^https?:\/\//i.test(v)) {
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(\/\S*)?$/i.test(v)) return null;
+    v = 'https://' + v;
+  }
+  try {
+    const url = new URL(v);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch (_) {
+    return null;
+  }
+}
+export function avatarUrl(value) {
+  const v = (value || '').trim();
+  const ipfs = /^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]{46,100})(\/[^\s?#"'<>]*)?$/.exec(v);
+  // Filebase rather than ipfs.io: ipfs.io rate-limits heavily, and a 429 would be a broken image.
+  if (ipfs) return `https://ipfs.filebase.io/ipfs/${ipfs[1]}${ipfs[2] || ''}`;
+  // Inline images (on-chain NFT art is often an SVG data URI) are fine in <img>, which never runs them.
+  if (/^data:image\/(png|jpeg|gif|webp|svg\+xml)[;,]/i.test(v) && v.length <= 200000) return v;
+  const url = /^https:\/\//i.test(v) ? webLink(v) : null;
+  return url && url.startsWith('https://') ? url : null;
+}
+
+// ENSIP-12 NFT avatar ("eip155:1/erc721:<contract>/<id>", erc1155 likewise) on mainnet.
+export function nftAvatarRef(value) {
+  const m = /^eip155:1\/(erc721|erc1155):(0x[0-9a-fA-F]{40})\/(\d{1,78})$/.exec((value || '').trim());
+  return m ? { standard: m[1], contract: m[2].toLowerCase(), tokenId: BigInt(m[3]) } : null;
+}
+const handle = (value, pattern) => {
+  const h = (value || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?(x|twitter|github)\.com\//i, '').replace(/\/$/, '');
+  return pattern.test(h) ? h : null;
+};
+
+// Label/value rows for the info panel. Values are already-escaped HTML.
+function profileRows(profile) {
+  const rows = [];
+  const etherscan = (a) => `<a href="https://etherscan.io/address/${a}">${a}</a>`;
+  rows.push(['Address', etherscan(profile.address)]);
+  if (profile.owner && profile.owner.toLowerCase() !== profile.address.toLowerCase()) rows.push(['Owner', etherscan(profile.owner)]);
+  if (profile.expiresAt) rows.push(['Expires', new Date(profile.expiresAt * 1000).toISOString().slice(0, 10)]);
+  const t = profile.text || {};
+  const site = t.url && webLink(t.url);
+  if (site) rows.push(['Website', `<a href="${escapeHtml(site)}" rel="nofollow ugc noopener">${escapeHtml(site.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a>`]);
+  const x = handle(t['com.twitter'], /^[A-Za-z0-9_]{1,15}$/);
+  if (x) rows.push(['X', `<a href="https://x.com/${x}" rel="nofollow ugc noopener">@${x}</a>`]);
+  const gh = handle(t['com.github'], /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/);
+  if (gh) rows.push(['GitHub', `<a href="https://github.com/${gh}" rel="nofollow ugc noopener">${gh}</a>`]);
+  const tg = handle(t['org.telegram'], /^[A-Za-z0-9_]{5,32}$/);
+  if (tg) rows.push(['Telegram', `<a href="https://t.me/${tg}" rel="nofollow ugc noopener">@${tg}</a>`]);
+  const email = (t.email || '').trim();
+  if (/^[^\s@<>"']{1,64}@[^\s@<>"']{1,190}\.[a-z]{2,}$/i.test(email)) rows.push(['Email', `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`]);
+  return rows;
+}
+
+// --- page template (gwei.domains look) -------------------------------------------------------------
+const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#000;--btn-fg:#fff;--btn-hover:#333}' +
+  '@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--fg:#e8e8e0;--muted:#888;--panel:#151515;--btn-bg:#e8e8e0;--btn-fg:#0a0a0a;--btn-hover:#ccc}}' +
+  '*{margin:0;padding:0;box-sizing:border-box}' +
+  'body{font-family:Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;padding:60px 20px 40px;max-width:480px;margin:0 auto;line-height:1.5}' +
+  'h1{font-size:14px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}h1 a{color:inherit;text-decoration:none}' +
+  '.subtitle{font-size:12px;color:var(--muted);margin-bottom:40px;letter-spacing:.03em}' +
+  'a{color:var(--fg);text-underline-offset:3px}a:hover{opacity:.55}' +
+  'p{font-size:14px;margin-bottom:12px;overflow-wrap:anywhere}' +
+  '.name{font-size:24px;font-weight:600;overflow-wrap:anywhere;margin-bottom:8px}' +
+  '.lead{font-size:14px;overflow-wrap:anywhere;margin-bottom:6px}.lead.muted{color:var(--muted)}' +
+  '.avatar{display:block;width:72px;height:72px;object-fit:cover;margin-bottom:16px;background:var(--panel)}' +
+  '.panel{font-size:13px;margin-top:24px;padding:12px;background:var(--panel);overflow-wrap:anywhere}' +
+  '.panel div{margin-bottom:6px}.panel div:last-child{margin-bottom:0}' +
+  '.panel span{display:inline-block;min-width:76px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:8px}' +
+  '.actions{margin-top:16px}' +
+  '.btn{display:inline-block;padding:12px 24px;font-size:12px;text-transform:uppercase;letter-spacing:.1em;background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--btn-bg);text-decoration:none;margin:8px 8px 0 0}' +
+  '.btn:hover{background:var(--btn-hover);opacity:1}.btn.secondary{background:var(--bg);color:var(--fg)}' +
+  '.note{font-size:12px;color:var(--muted);margin-top:40px;line-height:1.6}.note a{color:var(--muted)}';
+
+export function renderLayout({ title, head = '', body, subtitle = '' }) {
+  return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    `<title>${escapeHtml(title)}</title><link rel="icon" href="https://gwei.domains/favicon.ico">${head}<style>${STYLE}</style>` +
+    '<h1><a href="https://gwei.domains">Gwei Name Service</a></h1>' +
+    (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body;
+}
+
+function metaTags({ title, description, url, image }) {
+  const tag = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
+  return tag('name', 'description', description) +
+    tag('property', 'og:type', 'profile') + tag('property', 'og:site_name', 'Gwei Name Service') +
+    tag('property', 'og:title', title) + tag('property', 'og:description', description) +
+    tag('property', 'og:url', url) + tag('property', 'og:image', image) +
+    tag('name', 'twitter:card', 'summary') + tag('name', 'twitter:title', title) +
+    tag('name', 'twitter:description', description) + tag('name', 'twitter:image', image);
+}
+
+// `name` is the full name ("alice.gwei"), `dappHash` its gwei.domains link fragment, `pageUrl` this page.
+export function renderProfile({ name, dappHash, pageUrl, profile }) {
+  const t = profile.text || {};
+  const display = t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '';
+  const avatar = avatarUrl(profile.avatarImage || t.avatar);
+  const description = t.description || `${name} on the Gwei Name Service, an ownerless namespace on Ethereum.`;
+  const dapp = `https://gwei.domains/#${dappHash}`;
+  const rows = profileRows(profile).map(([label, value]) => `<div><span>${label}</span>${value}</div>`).join('');
+  const body =
+    (avatar ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">` : '') +
+    `<div class="name">${escapeHtml(name)}</div>` +
+    (display ? `<div class="lead">${escapeHtml(display)}</div>` : '') +
+    (t.description ? `<div class="lead muted">${escapeHtml(t.description)}</div>` : '') +
+    `<div class="panel">${rows}</div>` +
+    `<div class="actions"><a class="btn" href="${dapp}">View on gwei.domains</a>` +
+    `<a class="btn secondary" href="https://etherscan.io/address/${profile.address}">Etherscan</a></div>` +
+    `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can replace it with a website ` +
+    'stored on IPFS, Swarm or a contract: <a href="https://gwei.domains/guide/">host a website →</a></p>';
+  return renderLayout({
+    title: name,
+    subtitle: '.gwei name',
+    head: metaTags({ title: name, description, url: pageUrl, image: avatar?.startsWith('https://') ? avatar : 'https://gwei.domains/icon-512.png' }),
+    body,
+  });
+}
+
+export function renderUnregistered({ name, dappHash }) {
+  return renderLayout({
+    title: name,
+    subtitle: '.gwei name',
+    body: `<div class="name">${escapeHtml(name)}</div><div class="lead muted">isn't registered, or has expired.</div>` +
+      `<div class="actions"><a class="btn" href="https://gwei.domains/#${dappHash}">Register it</a></div>`,
+  });
+}
+
+// No scripts on these pages; images (avatars) over https or inline, styles inline.
+export const PROFILE_CSP = "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
