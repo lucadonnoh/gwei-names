@@ -147,6 +147,137 @@ function profileRows(profile) {
   return rows;
 }
 
+// --- generative avatar ----------------------------------------------------------------------------
+// For names without an avatar record: a symmetric 7x7 pixel mark (the site's pixel "G" look) on one of
+// the dapp's share-card backgrounds (gradient, glow, faint dots). The name's token ID is the seed, so a
+// name always gets the same one. The page embeds it as SVG; link previews get the same image as a PNG,
+// since X and others don't render SVG.
+const AVATAR_PALETTES = [ // SHARE_BGS in dapp/gweiNS.html
+  { a: '#161616', b: '#050505', glow: null },
+  { a: '#244577', b: '#0a1626', glow: [95, 155, 240, 0.32] },
+  { a: '#175640', b: '#081b11', glow: [55, 205, 125, 0.30] },
+  { a: '#402370', b: '#110a22', glow: [160, 100, 245, 0.32] },
+  { a: '#732430', b: '#18090a', glow: [245, 100, 100, 0.32] },
+];
+const AVATAR_GRID = 7, AVATAR_CELL = 16, AVATAR_SIZE = 160, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
+function avatarModel(seedHex) {
+  const bytes = hexToBytes(String(seedHex).replace(/^0x/, '').padStart(64, '0').slice(-64));
+  const palette = AVATAR_PALETTES[bytes[0] % AVATAR_PALETTES.length];
+  const cells = [];
+  for (let y = 0; y < AVATAR_GRID; y++) {
+    for (let x = 0; x < 4; x++) {
+      if (bytes[1 + y * 4 + x] < 128) continue;
+      cells.push([x, y]);
+      if (x < 3) cells.push([AVATAR_GRID - 1 - x, y]);
+    }
+  }
+  // Hash outputs are almost never this sparse, but a nearly blank avatar shouldn't happen at all.
+  if (cells.length < 10) {
+    const lit = new Set(cells.map(([x, y]) => `${x},${y}`));
+    const inverse = [];
+    for (let y = 0; y < AVATAR_GRID; y++) for (let x = 0; x < AVATAR_GRID; x++) if (!lit.has(`${x},${y}`)) inverse.push([x, y]);
+    return { palette, cells: inverse };
+  }
+  return { palette, cells };
+}
+
+export function avatarSvg(seedHex) {
+  const { palette: p, cells } = avatarModel(seedHex);
+  const glow = p.glow ? `rgb(${p.glow.slice(0, 3).join(',')})` : null;
+  return `<svg class="avatar" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${AVATAR_SIZE} ${AVATAR_SIZE}" shape-rendering="crispEdges" role="img" aria-label="generated avatar">` +
+    `<defs><linearGradient id="av-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${p.a}"/><stop offset="1" stop-color="${p.b}"/></linearGradient>` +
+    (glow ? `<radialGradient id="av-glow" cx="0.72" cy="0.35" r="0.55"><stop offset="0" stop-color="${glow}" stop-opacity="${p.glow[3]}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>` : '') +
+    '<pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
+    `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-bg)"/>` +
+    (glow ? `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-glow)"/>` : '') +
+    `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-dots)"/>` +
+    cells.map(([x, y]) => `<rect x="${AVATAR_OFFSET + x * AVATAR_CELL}" y="${AVATAR_OFFSET + y * AVATAR_CELL}" width="${AVATAR_CELL}" height="${AVATAR_CELL}" fill="#fff" fill-opacity="0.92"/>`).join('') +
+    '</svg>';
+}
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  out.set(new TextEncoder().encode(type), 4);
+  out.set(data, 8);
+  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+// The same avatar rasterized to a PNG (RGB, zlib via CompressionStream; no dependencies).
+export async function avatarPng(seedHex, size = 256) {
+  const { palette: p, cells } = avatarModel(seedHex);
+  const [a, b] = [rgb(p.a), rgb(p.b)];
+  const filled = new Set(cells.map(([x, y]) => y * AVATAR_GRID + x));
+  const scale = size / AVATAR_SIZE;
+  const stride = size * 3 + 1;
+  const raw = new Uint8Array(stride * size);
+  for (let y = 0; y < size; y++) {
+    raw[y * stride] = 0; // filter: none
+    for (let x = 0; x < size; x++) {
+      const t = (x + y) / (2 * (size - 1));
+      const c = [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t);
+      const mix = (target, alpha) => { for (let i = 0; i < 3; i++) c[i] += (target[i] - c[i]) * alpha; };
+      if (p.glow) {
+        const d = Math.hypot(x / size - 0.72, y / size - 0.35) / 0.55;
+        if (d < 1) mix(p.glow, p.glow[3] * (1 - d));
+      }
+      const ux = x / scale, uy = y / scale;
+      if (ux % 16 >= 7 && ux % 16 < 9 && uy % 16 >= 7 && uy % 16 < 9) mix([255, 255, 255], 0.06);
+      const cx = Math.floor((ux - AVATAR_OFFSET) / AVATAR_CELL), cy = Math.floor((uy - AVATAR_OFFSET) / AVATAR_CELL);
+      if (ux >= AVATAR_OFFSET && uy >= AVATAR_OFFSET && cx < AVATAR_GRID && cy < AVATAR_GRID && filled.has(cy * AVATAR_GRID + cx)) {
+        mix([255, 255, 255], 0.92);
+      }
+      raw.set(c.map((v) => Math.round(v)), y * stride + 1 + x * 3);
+    }
+  }
+  const idat = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const ihdr = new Uint8Array(13);
+  new DataView(ihdr.buffer).setUint32(0, size);
+  new DataView(ihdr.buffer).setUint32(4, size);
+  ihdr.set([8, 2, 0, 0, 0], 8); // 8-bit, RGB, deflate, no filter, no interlace
+  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', new Uint8Array(0))];
+  const png = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) { png.set(part, at); at += part.length; }
+  return png;
+}
+export const AVATAR_PNG_PATH = '/.well-known/gwei-avatar.png';
+
+// --- badges -----------------------------------------------------------------------------------------
+// The share card's name types, plus what makes a name stand out.
+function nameBadges(name, profile) {
+  const badges = [];
+  if (name.endsWith('.zkpassport.gwei')) badges.push('Proof of humanity');
+  else if (name.endsWith('.id.gwei')) badges.push('Free name');
+  if (profile.primary) badges.push('Primary name');
+  const labels = name.slice(0, -'.gwei'.length).split('.');
+  if (labels.length === 1) {
+    const label = labels[0];
+    const length = typeof Intl.Segmenter === 'function' ? [...new Intl.Segmenter().segment(label)].length : [...label].length;
+    if (/\p{Extended_Pictographic}/u.test(label)) badges.push('Emoji');
+    else if (/^\d+$/.test(label)) badges.push('Number');
+    if (length <= 3) badges.push('Short name');
+  }
+  return badges;
+}
+
 // --- page template (gwei.domains look) -------------------------------------------------------------
 const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#000;--btn-fg:#fff;--btn-hover:#333}' +
   '@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--fg:#e8e8e0;--muted:#888;--panel:#151515;--btn-bg:#e8e8e0;--btn-fg:#0a0a0a;--btn-hover:#ccc}}' +
@@ -158,7 +289,8 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   'p{font-size:14px;margin-bottom:12px;overflow-wrap:anywhere}' +
   '.name{font-size:24px;font-weight:600;overflow-wrap:anywhere;margin-bottom:8px}' +
   '.lead{font-size:14px;overflow-wrap:anywhere;margin-bottom:6px}.lead.muted{color:var(--muted)}' +
-  '.avatar{display:block;width:72px;height:72px;object-fit:cover;margin-bottom:16px;background:var(--panel)}' +
+  '.avatar{display:block;width:96px;height:96px;object-fit:cover;margin-bottom:16px;background:var(--panel)}' +
+  '.badges{margin:2px 0 10px}.badge{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);border:1px solid var(--muted);padding:2px 7px;margin:0 6px 6px 0}' +
   '.panel{font-size:13px;margin-top:24px;padding:12px;background:var(--panel);overflow-wrap:anywhere}' +
   '.panel div{margin-bottom:6px}.panel div:last-child{margin-bottom:0}' +
   '.panel span{display:inline-block;min-width:76px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:8px}' +
@@ -174,12 +306,13 @@ export function renderLayout({ title, head = '', body, subtitle = '' }) {
     (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body;
 }
 
-function metaTags({ title, description, url, image }) {
+function metaTags({ title, description, url, image, imageSize }) {
   const tag = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
   return tag('name', 'description', description) +
     tag('property', 'og:type', 'profile') + tag('property', 'og:site_name', 'Gwei Name Service') +
     tag('property', 'og:title', title) + tag('property', 'og:description', description) +
     tag('property', 'og:url', url) + tag('property', 'og:image', image) +
+    (imageSize ? tag('property', 'og:image:width', imageSize) + tag('property', 'og:image:height', imageSize) : '') +
     tag('name', 'twitter:card', 'summary') + tag('name', 'twitter:title', title) +
     tag('name', 'twitter:description', description) + tag('name', 'twitter:image', image);
 }
@@ -192,20 +325,29 @@ export function renderProfile({ name, dappHash, pageUrl, profile }) {
   const description = t.description || `${name} on the Gwei Name Service, an ownerless namespace on Ethereum.`;
   const dapp = `https://gwei.domains/#${dappHash}`;
   const rows = profileRows(profile).map(([label, value]) => `<div><span>${label}</span>${value}</div>`).join('');
+  const badges = nameBadges(name, profile);
+  const share = `https://x.com/intent/post?text=${encodeURIComponent(name)}&url=${encodeURIComponent(pageUrl)}`;
   const body =
-    (avatar ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">` : '') +
+    (avatar
+      ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">`
+      : profile.seed ? avatarSvg(profile.seed) : '') +
     `<div class="name">${escapeHtml(name)}</div>` +
+    (badges.length ? `<div class="badges">${badges.map((b) => `<span class="badge">${b}</span>`).join('')}</div>` : '') +
     (display ? `<div class="lead">${escapeHtml(display)}</div>` : '') +
     (t.description ? `<div class="lead muted">${escapeHtml(t.description)}</div>` : '') +
     `<div class="panel">${rows}</div>` +
     `<div class="actions"><a class="btn" href="${dapp}">View on gwei.domains</a>` +
-    `<a class="btn secondary" href="https://etherscan.io/address/${profile.address}">Etherscan</a></div>` +
+    `<a class="btn secondary" href="${escapeHtml(share)}" rel="noopener">Share</a></div>` +
     `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can replace it with a website ` +
     'stored on IPFS, Swarm or a contract: <a href="https://gwei.domains/guide/">host a website →</a></p>';
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
-    head: metaTags({ title: name, description, url: pageUrl, image: avatar?.startsWith('https://') ? avatar : 'https://gwei.domains/icon-512.png' }),
+    head: avatar?.startsWith('https://')
+      ? metaTags({ title: name, description, url: pageUrl, image: avatar })
+      : profile.seed
+        ? metaTags({ title: name, description, url: pageUrl, image: new URL(AVATAR_PNG_PATH, pageUrl).href, imageSize: '256' })
+        : metaTags({ title: name, description, url: pageUrl, image: 'https://gwei.domains/icon-512.png' }),
     body,
   });
 }

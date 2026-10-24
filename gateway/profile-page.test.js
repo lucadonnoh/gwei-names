@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { inflateSync } from 'node:zlib';
 import {
-  PROFILE_TEXT_KEYS, avatarUrl, decodeAggregate3, encodeAggregate3, nftAvatarRef, profileFromResults, renderProfile, renderUnregistered,
+  PROFILE_TEXT_KEYS, avatarPng, avatarSvg, avatarUrl, decodeAggregate3, encodeAggregate3, nftAvatarRef, profileFromResults,
+  renderProfile, renderUnregistered,
 } from './profile-page.js';
 
 const NFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
@@ -100,4 +102,39 @@ test('avatars: NFT references are recognized, inline images allowed, everything 
   assert.equal(avatarUrl('data:image/svg+xml;base64,PHN2Zy8+'), 'data:image/svg+xml;base64,PHN2Zy8+');
   assert.equal(avatarUrl('data:text/html,<script>x</script>'), null);
   assert.equal(avatarUrl('http://insecure.example/a.png'), null);
+});
+
+test('the generated avatar is deterministic per name, symmetric, and a valid PNG', async () => {
+  const seedA = 'ab'.repeat(32), seedB = '01'.repeat(32);
+  assert.equal(avatarSvg(seedA), avatarSvg(seedA));
+  assert.notEqual(avatarSvg(seedA), avatarSvg(seedB));
+  const cells = [...avatarSvg(seedA).matchAll(/<rect x="(\d+)" y="(\d+)" width="16"/g)].map(([, x, y]) => `${x},${y}`);
+  for (const c of cells) {
+    const [x, y] = c.split(',').map(Number);
+    assert.ok(cells.includes(`${24 + (6 - (x - 24) / 16) * 16},${y}`), `mirror of ${c}`);
+  }
+
+  const png = await avatarPng(seedA, 64);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const view = new DataView(png.buffer, png.byteOffset);
+  assert.equal(String.fromCharCode(...png.subarray(12, 16)), 'IHDR');
+  assert.equal(view.getUint32(16), 64);
+  assert.equal(view.getUint32(20), 64);
+  const idatLength = view.getUint32(33);
+  assert.equal(String.fromCharCode(...png.subarray(37, 41)), 'IDAT');
+  const pixels = inflateSync(png.subarray(41, 41 + idatLength));
+  assert.equal(pixels.length, 64 * (64 * 3 + 1), 'one filter byte and 64 RGB pixels per row');
+  assert.equal(String.fromCharCode(...png.subarray(png.length - 8, png.length - 4)), 'IEND');
+});
+
+test('badges mark proof-of-humanity and free names, short, number and emoji names, and primary names', () => {
+  const base = profileFromResults(results());
+  const badges = (name, extra = {}) => [...renderProfile({ name, dappHash: 'x', pageUrl: 'https://x.gwei.domains/', profile: { ...base, ...extra } })
+    .matchAll(/<span class="badge">([^<]+)<\/span>/g)].map((m) => m[1]);
+  assert.deepEqual(badges('alice.zkpassport.gwei'), ['Proof of humanity']);
+  assert.deepEqual(badges('bob.id.gwei'), ['Free name']);
+  assert.deepEqual(badges('abc.gwei'), ['Short name']);
+  assert.deepEqual(badges('4242.gwei'), ['Number']);
+  assert.deepEqual(badges('🦄.gwei', { primary: true }), ['Primary name', 'Emoji', 'Short name']);
+  assert.deepEqual(badges('vitalik.gwei'), []);
 });

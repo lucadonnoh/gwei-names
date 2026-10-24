@@ -17,8 +17,8 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  MULTICALL3, PROFILE_CSP, PROFILE_TEXT_KEYS, decodeAggregate3, encodeAggregate3, nftAvatarRef, profileFromResults,
-  renderLayout, renderProfile, renderUnregistered,
+  AVATAR_PNG_PATH, MULTICALL3, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, decodeAggregate3, encodeAggregate3, nftAvatarRef,
+  profileFromResults, renderLayout, renderProfile, renderUnregistered,
 } from './profile-page.js';
 
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
@@ -69,6 +69,7 @@ const SEL_HTML = '33c34ac3'; // html(), the getter single-file site contracts ex
 const SEL_RESOLVE = '4f896d4f'; // resolve(uint256): zero unless the name is registered and active
 const SEL_OWNEROF = '6352211e'; // ownerOf(uint256)
 const SEL_EXPIRESAT = '17c95709'; // expiresAt(uint256)
+const SEL_REVERSE = '9af8b7aa'; // reverseResolve(address): the address's primary name, if active
 const SEL_TOKENURI = 'c87b56dd'; // tokenURI(uint256), ERC-721
 const SEL_URI = '0e89341c'; // uri(uint256), ERC-1155
 const CONTENTCONTRACT = 'contentcontract'; // ERC-6821 text record key
@@ -597,8 +598,14 @@ async function lookupName(name, route) {
         if (profile) {
           result.registered = profile.registered;
           if (profile.registered) {
+            profile.seed = tokenIdHex; // generative avatar
             const ref = nftAvatarRef(profile.text.avatar);
-            if (ref) profile.avatarImage = await nftImage(ref, route);
+            const [image, primary] = await Promise.all([
+              ref ? nftImage(ref, route) : null,
+              ethCall(1, NAMENFT, '0x' + SEL_REVERSE + pad32(profile.address.slice(2)), route).catch(() => null),
+            ]);
+            if (image) profile.avatarImage = image;
+            if (primary) profile.primary = readText(primary.slice(2), word(primary.slice(2), 0))?.toLowerCase() === name.toLowerCase();
             result.profile = profile;
           }
         }
@@ -890,6 +897,11 @@ export default {
     if (r.state === 'none') {
       const dappHash = encodeURIComponent(decodedSub);
       if (r.registered === false) return htmlResponse(renderUnregistered({ name, dappHash }), 404, undefined, PROFILE_CSP);
+      if (url.pathname === AVATAR_PNG_PATH && r.profile?.seed) {
+        // The generated avatar never changes for a name, so it can be cached for a long time.
+        const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=604800' }));
+        return new Response(await avatarPng(r.profile.seed), { status: 200, headers });
+      }
       if (url.pathname !== '/') {
         return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
       }

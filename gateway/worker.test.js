@@ -1172,7 +1172,10 @@ function abiProfile({ address = '0', owner = address, expires = '0', text = {} }
   return '0x' + pad32('20') + pad32(items.length.toString(16)) + offsets.join('') + elements.join('');
 }
 const MULTICALL = '0xca11bde05977b3631167028862be2a173976ca11';
-const rpcProfile = (profile) => (data, url, to) => (to?.toLowerCase() === MULTICALL ? abiProfile(profile) : rpcReturning(CH_NONE)(data));
+const ABI_EMPTY_STRING = '0x' + pad32('20') + pad32('0');
+const rpcProfile = (profile) => (data, url, to) => (to?.toLowerCase() === MULTICALL ? abiProfile(profile)
+  : data.startsWith('0x9af8b7aa') ? ABI_EMPTY_STRING // reverseResolve: no primary name
+  : rpcReturning(CH_NONE)(data));
 
 test('an unregistered name gets a register page; a registered one without a site gets its profile', async () => {
   let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
@@ -1194,7 +1197,7 @@ test('an unregistered name gets a register page; a registered one without a site
   assert.match(res.headers.get('content-security-policy'), /script-src|default-src 'none'/);
   assert.doesNotMatch(res.headers.get('content-security-policy'), /unsafe-eval|script-src 'unsafe-inline'/);
   assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
-  assert.equal(fetchMock.calls.rpcUrls.length, 4, 'computeId, contenthash, contentcontract, one multicall');
+  assert.equal(fetchMock.calls.rpcUrls.length, 5, 'computeId, contenthash, contentcontract, one multicall, primary name');
 
   res = await invoke('https://alice.gwei.domains/favicon.ico', { cache: makeCache(), fetchMock });
   assert.equal(res.status, 404, 'other paths are not the profile');
@@ -1375,5 +1378,30 @@ test('an NFT avatar is resolved through tokenURI and its metadata', async () => 
   const broken = (data, url, to) => (to?.toLowerCase() === NFTC ? null : rpc(data, url, to));
   const plain = await invoke('https://geek.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: broken }) });
   assert.equal(plain.status, 200);
-  assert.doesNotMatch(await plain.text(), /class="avatar"/);
+  const plainHtml = await plain.text();
+  assert.doesNotMatch(plainHtml, /<img class="avatar"/);
+  assert.match(plainHtml, /<svg class="avatar"/, 'falls back to the generated avatar');
+});
+
+test('profiles: primary-name badge, generated avatar as the preview image, and its PNG', async () => {
+  const strTail = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return '0x' + pad32('20') + pad32(utf8(v).length.toString(16)) + d; };
+  const rpc = (data, url, to) => (data.startsWith('0x9af8b7aa') ? strTail('Alice.gwei') : rpcProfile({ address: 'a11ce' })(data, url, to));
+  const fetchMock = makeFetch({ rpc });
+  const cache = makeCache();
+  let res = await invoke('https://alice.gwei.domains/', { cache, fetchMock });
+  const html = await res.text();
+  assert.match(html, /<span class="badge">Primary name<\/span>/);
+  assert.match(html, /<svg class="avatar"/);
+  assert.match(html, /og:image" content="https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-avatar\.png"/);
+  assert.match(html, /href="https:\/\/x\.com\/intent\/post\?text=alice\.gwei&amp;url=https%3A%2F%2Falice\.gwei\.domains%2F"/);
+
+  res = await invoke('https://alice.gwei.domains/.well-known/gwei-avatar.png', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  const png = new Uint8Array(await res.arrayBuffer());
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+
+  // Not a profile (no records answer): the avatar path is just a missing page.
+  res = await invoke('https://nobody.gwei.domains/.well-known/gwei-avatar.png', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
+  assert.equal(res.status, 404);
 });
