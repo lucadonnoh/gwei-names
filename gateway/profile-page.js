@@ -148,22 +148,15 @@ function profileRows(profile) {
 }
 
 // --- generative avatar ----------------------------------------------------------------------------
-// For names without an avatar record: a symmetric 7x7 pixel mark (the site's pixel "G" look) on one of
-// the dapp's share-card background gradients with their faint dots (the cards' glow is left out: at
-// avatar size it reads as a smudge). The name's token ID is the seed, so a
+// For names without an avatar record: a symmetric 7x7 pixel mark (the site's pixel "G" look) on a flat
+// share-card background colour with the cards' faint dots. The name's token ID is the seed, so a
 // name always gets the same one. The page embeds it as SVG; link previews get the same image as a PNG,
 // since X and others don't render SVG.
-const AVATAR_PALETTES = [ // SHARE_BGS in dapp/gweiNS.html
-  { a: '#161616', b: '#050505' },
-  { a: '#244577', b: '#0a1626' },
-  { a: '#175640', b: '#081b11' },
-  { a: '#402370', b: '#110a22' },
-  { a: '#732430', b: '#18090a' },
-];
+const AVATAR_COLORS = ['#161616', '#244577', '#175640', '#402370', '#732430']; // SHARE_BGS in dapp/gweiNS.html
 const AVATAR_GRID = 7, AVATAR_CELL = 16, AVATAR_SIZE = 160, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
 function avatarModel(seedHex) {
   const bytes = hexToBytes(String(seedHex).replace(/^0x/, '').padStart(64, '0').slice(-64));
-  const palette = AVATAR_PALETTES[bytes[0] % AVATAR_PALETTES.length];
+  const color = AVATAR_COLORS[bytes[0] % AVATAR_COLORS.length];
   const cells = [];
   for (let y = 0; y < AVATAR_GRID; y++) {
     for (let x = 0; x < 4; x++) {
@@ -177,17 +170,16 @@ function avatarModel(seedHex) {
     const lit = new Set(cells.map(([x, y]) => `${x},${y}`));
     const inverse = [];
     for (let y = 0; y < AVATAR_GRID; y++) for (let x = 0; x < AVATAR_GRID; x++) if (!lit.has(`${x},${y}`)) inverse.push([x, y]);
-    return { palette, cells: inverse };
+    return { color, cells: inverse };
   }
-  return { palette, cells };
+  return { color, cells };
 }
 
 export function avatarSvg(seedHex) {
-  const { palette: p, cells } = avatarModel(seedHex);
+  const { color, cells } = avatarModel(seedHex);
   return `<svg class="avatar" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${AVATAR_SIZE} ${AVATAR_SIZE}" shape-rendering="crispEdges" role="img" aria-label="generated avatar">` +
-    `<defs><linearGradient id="av-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${p.a}"/><stop offset="1" stop-color="${p.b}"/></linearGradient>` +
-    '<pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
-    `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-bg)"/>` +
+    '<defs><pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
+    `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="${color}"/>` +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-dots)"/>` +
     cells.map(([x, y]) => `<rect x="${AVATAR_OFFSET + x * AVATAR_CELL}" y="${AVATAR_OFFSET + y * AVATAR_CELL}" width="${AVATAR_CELL}" height="${AVATAR_CELL}" fill="#fff" fill-opacity="0.92"/>`).join('') +
     '</svg>';
@@ -220,8 +212,8 @@ const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
 // The same avatar rasterized to a PNG (RGB, zlib via CompressionStream; no dependencies).
 export async function avatarPng(seedHex, size = 256) {
-  const { palette: p, cells } = avatarModel(seedHex);
-  const [a, b] = [rgb(p.a), rgb(p.b)];
+  const { color, cells } = avatarModel(seedHex);
+  const base = rgb(color);
   const filled = new Set(cells.map(([x, y]) => y * AVATAR_GRID + x));
   const scale = size / AVATAR_SIZE;
   const stride = size * 3 + 1;
@@ -229,8 +221,7 @@ export async function avatarPng(seedHex, size = 256) {
   for (let y = 0; y < size; y++) {
     raw[y * stride] = 0; // filter: none
     for (let x = 0; x < size; x++) {
-      const t = (x + y) / (2 * (size - 1));
-      const c = [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t);
+      const c = [...base];
       const mix = (target, alpha) => { for (let i = 0; i < 3; i++) c[i] += (target[i] - c[i]) * alpha; };
       const ux = x / scale, uy = y / scale;
       if (ux % 16 >= 7 && ux % 16 < 9 && uy % 16 >= 7 && uy % 16 < 9) mix([255, 255, 255], 0.06);
