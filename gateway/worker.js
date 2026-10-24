@@ -922,7 +922,33 @@ export async function checkEndpoints(env) {
   ];
   const failures = (await Promise.all(checks.map(([, , result]) => result))).filter(Boolean);
   const summary = { event: 'endpoint_health', checked: checks.length, failures };
+  if (failures.length) summary.notified = await notifyFailures(env, summary);
   if (failures.length) console.error(JSON.stringify(summary));
   else console.log(JSON.stringify(summary));
   return summary;
+}
+
+// Failures are also pushed to ntfy, so a dead endpoint reaches a phone instead of waiting in the logs.
+// NTFY_URL is the topic URL and NTFY_TOKEN a publish-only token; without both, nothing is sent.
+// Cloudflare's bot protection in front of ntfy rejects requests without a recognizable user agent.
+async function notifyFailures(env, { checked, failures }) {
+  if (typeof env?.NTFY_URL !== 'string' || typeof env?.NTFY_TOKEN !== 'string' || !failures.length) return null;
+  try {
+    const response = await fetch(env.NTFY_URL.trim(), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.NTFY_TOKEN.trim()}`,
+        title: 'gwei.domains gateway: endpoint check failed',
+        tags: 'warning',
+        'user-agent': 'gwei-gateway health check (gwei.domains)',
+      },
+      body: `${failures.length} of ${checked} endpoints failed the daily check:\n${failures.join('\n')}\n\n` +
+        'Public endpoints that stop answering Worker traffic should be replaced (gateway/rpc-config.js, IPFS_GATEWAYS).',
+      signal: AbortSignal.timeout(8000),
+    });
+    await response.body?.cancel().catch(() => {});
+    return response.status;
+  } catch (error) {
+    return `error: ${String(error?.message || error).slice(0, 100)}`;
+  }
 }

@@ -1289,3 +1289,42 @@ test('the health check authenticates to RPC_URL only', async () => {
     globalThis.fetch = original;
   }
 });
+
+test('health-check failures are pushed to ntfy when configured, and only then', async () => {
+  const original = globalThis.fetch;
+  const posts = [];
+  const originalError = console.error;
+  console.error = () => {};
+  globalThis.fetch = async (url, init = {}) => {
+    if (url.startsWith('https://ntfy.example/')) {
+      posts.push({ url, headers: init.headers, body: init.body });
+      return new Response('{}', { status: 200 });
+    }
+    if (url.includes('blastapi')) return new Response('rate limited', { status: 429 });
+    if (url.includes('/ipfs/bafkqaaa')) return new Response('');
+    return new Response('{"jsonrpc":"2.0","id":1,"result":"0x1"}');
+  };
+  try {
+    const ntfy = { NTFY_URL: 'https://ntfy.example/homelab', NTFY_TOKEN: 'tk_test', IPFS_GATEWAYS: '["https://node.example"]' };
+    const summary = await checkEndpoints(ntfy);
+    assert.equal(summary.notified, 200);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].headers.authorization, 'Bearer tk_test');
+    assert.match(posts[0].headers.title, /endpoint check failed/);
+    assert.match(posts[0].headers['user-agent'], /gwei-gateway/);
+    assert.match(posts[0].body, /eth-mainnet\.public\.blastapi\.io: HTTP 429/);
+
+    posts.length = 0;
+    await checkEndpoints({ IPFS_GATEWAYS: '["https://node.example"]' }); // not configured
+    assert.equal(posts.length, 0);
+    globalThis.fetch = async (url) => (url.startsWith('https://ntfy.example/')
+      ? (posts.push(url), new Response('{}'))
+      : url.includes('/ipfs/') ? new Response('') : new Response('{"jsonrpc":"2.0","id":1,"result":"0x1"}'));
+    const healthy = await checkEndpoints(ntfy);
+    assert.deepEqual(healthy.failures, []);
+    assert.equal(posts.length, 0, 'nothing is sent when everything answers');
+  } finally {
+    globalThis.fetch = original;
+    console.error = originalError;
+  }
+});

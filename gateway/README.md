@@ -51,7 +51,9 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **Health check.** A daily cron (`scheduled` in `worker.js`) probes every RPC endpoint and IPFS
   gateway from the Worker and logs an `endpoint_health` event, at error level when any fails.
   Workers Logs is enabled in `wrangler.toml`, so these and `rpc_failed` events can be read later in
-  the dashboard. Public endpoints tend to start rejecting Worker traffic without notice.
+  the dashboard. When `NTFY_URL` (topic URL) and `NTFY_TOKEN` (publish-only token) are set as
+  secrets, failures are also pushed to ntfy. Public endpoints tend to start rejecting Worker
+  traffic without notice.
 - The NameNFT address lives at the top of `worker.js`; chain and endpoint pools live in
   `rpc-config.js`. A dedicated mainnet endpoint can be configured with
   `npx wrangler secret put RPC_URL`, and its credential with `npx wrangler secret put RPC_TOKEN`
