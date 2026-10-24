@@ -892,7 +892,7 @@ export default {
   },
 };
 
-async function probe(url, init) {
+async function probe(url, init = {}) {
   const host = new URL(url).host;
   try {
     const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
@@ -906,13 +906,16 @@ async function probe(url, init) {
 }
 
 export async function checkEndpoints(env) {
-  const rpc = (url) => probe(url, {
+  const rpc = (url, auth) => probe(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) },
     body: '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}',
   });
   const checks = [
-    ...Object.keys(CHAINS).flatMap((id) => rpcEndpointConfig(Number(id), env).endpoints.map((url) => ['rpc', url, rpc(url)])),
+    ...Object.keys(CHAINS).flatMap((id) => {
+      const { endpoints, preferred, preferredAuth } = rpcEndpointConfig(Number(id), env);
+      return endpoints.map((url) => ['rpc', url, rpc(url, url === preferred ? preferredAuth : null)]);
+    }),
     // bafkqaaa is the empty identity CID: any gateway answers it without fetching content, so this
     // tests whether the gateway accepts our traffic, not whether a particular site is retrievable.
     ...configuredGateways(env.IPFS_GATEWAYS, IPFS_GATEWAYS).map((url) => ['ipfs', url, probe(`${url}/ipfs/bafkqaaa`)]),

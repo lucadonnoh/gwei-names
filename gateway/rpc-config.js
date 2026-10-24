@@ -1,6 +1,7 @@
 // RPC endpoint configuration shared by the request Worker and its Durable Object brokers.
 //
-// A dedicated mainnet endpoint remains the preferred endpoint when RPC_URL is set. Public
+// A dedicated mainnet endpoint remains the preferred endpoint when RPC_URL is set; RPC_TOKEN, if set,
+// is sent to it (and only to it) as a Bearer token. Public
 // endpoints are rotated behind it and take over while it is cooling down. Sepolia currently uses
 // only the public pool because RPC_URL has historically meant the mainnet name-resolution RPC.
 //
@@ -48,5 +49,6 @@ export function rpcEndpointConfig(chainId, env) {
     : '';
   const preferred = /^https?:\/\//i.test(configured) ? configured : null;
   const endpoints = [...new Set(preferred ? [preferred, ...chain.rpcs] : chain.rpcs)];
-  return { endpoints, preferred };
+  const token = preferred && typeof env?.RPC_TOKEN === 'string' ? env.RPC_TOKEN.trim() : '';
+  return { endpoints, preferred, preferredAuth: token ? `Bearer ${token}` : null };
 }

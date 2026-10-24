@@ -54,8 +54,11 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   the dashboard. Public endpoints tend to start rejecting Worker traffic without notice.
 - The NameNFT address lives at the top of `worker.js`; chain and endpoint pools live in
   `rpc-config.js`. A dedicated mainnet endpoint can be configured with
-  `npx wrangler secret put RPC_URL`. It remains preferred while healthy, with the public pool as
-  rotated fallback.
+  `npx wrangler secret put RPC_URL`, and its credential with `npx wrangler secret put RPC_TOKEN`
+  (sent as `Authorization: Bearer`, only to `RPC_URL`). It remains preferred while healthy, with the
+  public pool as rotated fallback; a call whose result exceeds the endpoint's return-data limit moves
+  to the public pool without benching it. Production uses the owner's Erigon through the token-scoped
+  rpc-gateway at `rpc.slopo.net` (role `gns_gateway`: `eth_call`, `eth_blockNumber`, `eth_chainId`).
 - **RPC load shaping.** Normal Worker globals cannot safely share request-bound I/O promises. Four
   Durable Object broker shards per continent therefore coordinate identical calls, rotate public
   endpoints, cool down failing endpoints for 30 seconds, and apply explicit 5-second lookup and

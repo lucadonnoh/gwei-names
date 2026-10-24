@@ -52,6 +52,12 @@ export async function readRpcJson(response) {
   return JSON.parse(new TextDecoder().decode(bytes.subarray(0, total)));
 }
 
+// An endpoint that caps call results (Erigon's --rpc.returndata.limit) can't serve one oversized page,
+// but it is healthy for everything else, so that call moves on without benching the endpoint.
+function isResultTooLarge(message) {
+  return /returndata|return data|result.{0,40}exceed/i.test(message || '');
+}
+
 function isRateLimited(message) {
   return /rate|limit|429|too many|capacity|quota|exceeded/i.test(message || '');
 }
@@ -94,14 +100,14 @@ export class RpcPool {
     this.rrCursor = 0;
   }
 
-  rpc({ to, data, endpoints, preferred = null, timeoutMs = this.timeoutMs }) {
+  rpc({ to, data, endpoints, preferred = null, preferredAuth = null, timeoutMs = this.timeoutMs }) {
     // Include endpoint configuration and timeout class so a deployment/config change cannot join
     // an older call that happens to have identical calldata.
-    const key = `${timeoutMs}\0${preferred || ''}\0${endpoints.join('\0')}\0${to}\0${data}`;
+    const key = `${timeoutMs}\0${preferred || ''}\0${preferredAuth ? 'auth' : ''}\0${endpoints.join('\0')}\0${to}\0${data}`;
     const running = this.inflight.get(key);
     if (running) return running;
 
-    const task = this.#run({ to, data, endpoints, preferred, timeoutMs });
+    const task = this.#run({ to, data, endpoints, preferred, preferredAuth, timeoutMs });
     this.inflight.set(key, task);
     const clear = () => {
       if (this.inflight.get(key) === task) this.inflight.delete(key);
@@ -180,7 +186,7 @@ export class RpcPool {
     this.unhealthyUntil.set(url, this.now() + this.cooldownMs);
   }
 
-  async #perform({ to, data, endpoints, preferred, timeoutMs }) {
+  async #perform({ to, data, endpoints, preferred, preferredAuth, timeoutMs }) {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -195,9 +201,12 @@ export class RpcPool {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const headers = { 'content-type': 'application/json' };
+        // The credential for the dedicated endpoint never goes to the public ones.
+        if (preferredAuth && url === preferred) headers.authorization = preferredAuth;
         const response = await this.fetchImpl(url, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers,
           body,
           signal: controller.signal,
         });
@@ -216,7 +225,7 @@ export class RpcPool {
         if (json?.error) {
           const message = json.error?.message || 'rpc error';
           if (/revert/i.test(message)) return { reverted: true };
-          if (isRateLimited(message)) this.#bench(url);
+          if (!isResultTooLarge(message) && isRateLimited(message)) this.#bench(url);
           failures.push(`${host}: ${String(message).slice(0, 100)}`);
           continue;
         }

@@ -1216,3 +1216,76 @@ test('the daily health check reports each endpoint that no longer answers', asyn
     console.error = originalError;
   }
 });
+
+// ---- own RPC: the token stays with RPC_URL ---------------------------------------------------------
+
+test('RPC_TOKEN is sent as a Bearer token to RPC_URL and never to the public endpoints', async () => {
+  const privateRpc = 'https://rpc.example.invalid/';
+  const seen = [];
+  const fetchMock = makeFetch({
+    rpc: (data, url, to, init) => {
+      seen.push([url, init.headers.authorization ?? null]);
+      // The own node is down for the contenthash call, so that call falls back to the public pool.
+      if (url === privateRpc && data.startsWith(SEL.ch)) return new Response('down', { status: 503 });
+      return rpcReturning(CH_IPFS)(data);
+    },
+    ipfs: () => new Response('ok', { status: 200 }),
+  });
+  const res = await invoke('https://donnoh.gwei.domains/', {
+    cache: makeCache(), fetchMock, env: { RPC_URL: privateRpc, RPC_TOKEN: ' s3cret ' },
+  });
+  assert.equal(res.status, 200);
+  assert.ok(seen.some(([url]) => url !== privateRpc), 'fell back to a public endpoint');
+  for (const [url, auth] of seen) {
+    assert.equal(auth, url === privateRpc ? 'Bearer s3cret' : null, url);
+  }
+});
+
+test('an endpoint that caps result size is skipped for that call but not benched', async () => {
+  const privateRpc = 'https://rpc.example.invalid/';
+  const tooLarge = () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32000,
+    message: 'call returned result on length 1293056 exceeding --rpc.returndata.limit 1048576' } }),
+  { headers: { 'content-type': 'application/json' } });
+  const urls = [];
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_AUTO, onCall: (data) => abiBytesReturn('<!doctype html>big') }),
+  });
+  const wrapped = async (input, init) => {
+    const body = typeof init?.body === 'string' ? init.body : '';
+    if (body.includes('eth_call')) {
+      const url = typeof input === 'string' ? input : input.url;
+      urls.push(url);
+      if (url === privateRpc && body.includes('"0x"')) return tooLarge();
+    }
+    return fetchMock(input, init);
+  };
+  wrapped.calls = fetchMock.calls;
+  const env = { RPC_URL: privateRpc };
+  const res = await invoke('https://rock.gwei.domains/', { cache: makeCache(), fetchMock: wrapped, env });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<!doctype html>big');
+  const pageCall = urls.lastIndexOf(privateRpc);
+  assert.ok(urls.slice(pageCall + 1).some((u) => u !== privateRpc), 'the oversized call moved to a public endpoint');
+
+  urls.length = 0;
+  await invoke('https://rock.gwei.domains/', { cache: makeCache(), fetchMock: wrapped, env });
+  assert.equal(urls[0], privateRpc, 'the own node is still tried first afterwards');
+});
+
+test('the health check authenticates to RPC_URL only', async () => {
+  const original = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (url, init = {}) => {
+    sent.push([url, init.headers?.authorization ?? null]);
+    if (url.includes('/ipfs/bafkqaaa')) return new Response('');
+    return new Response('{"jsonrpc":"2.0","id":1,"result":"0x1"}');
+  };
+  try {
+    const summary = await checkEndpoints({ RPC_URL: 'https://rpc.example.invalid/', RPC_TOKEN: 't0k', IPFS_GATEWAYS: '["https://node.example"]' });
+    assert.deepEqual(summary.failures, []);
+    for (const [url, auth] of sent) assert.equal(auth, url === 'https://rpc.example.invalid/' ? 'Bearer t0k' : null, url);
+    assert.ok(sent.some(([url]) => url === 'https://rpc.example.invalid/'));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
