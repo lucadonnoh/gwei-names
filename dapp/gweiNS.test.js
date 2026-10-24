@@ -2524,3 +2524,47 @@ test('profile editor: one bundled confirmation via EIP-5792 when the wallet supp
   assert.match(html, /if \(!\(await sendRecordBatch\(calls\)\)\) \{\s*for \(let i = 0; i < changes\.length; i\+\+\)/);
   assert.match(html, /const textKeys = PROFILE_KEYS;/, 'Manage reads every profile record');
 });
+
+function postsHarness() {
+  const start = html.indexOf('const POST_MAX_BYTES = ');
+  const end = html.indexOf('let currentPostFee = null;', start);
+  assert.notEqual(start, -1, 'post helpers must exist');
+  const context = vm.createContext({ TextEncoder });
+  vm.runInContext(html.slice(start, end) + `
+    globalThis.api = { POST_MAX_BYTES, postBytesFrom, postPathFor, postTimeFromDate, postFeeFrom, tokenHexOf };`, context);
+  return context.api;
+}
+
+test('posts: the dapp builds the bytes, paths and fees the gateway and publisher expect', async () => {
+  const api = postsHarness();
+  const gateway = await import('../gateway/posts-format.js');
+  const bytes = api.postBytesFrom('Exploring the blobspace', 'Body *md* ü', 1667844963);
+  assert.deepEqual([...bytes], [...gateway.encodePost({ title: 'Exploring the blobspace', body: 'Body *md* ü', time: 1667844963 })]);
+  assert.deepEqual(gateway.parsePost(bytes), { title: 'Exploring the blobspace', body: 'Body *md* ü', time: 1667844963 });
+  assert.equal(api.POST_MAX_BYTES, gateway.MAX_POST_BYTES);
+  for (const title of ['Exploring the blobspace', 'Café über alles', '🦄', 'Forced txs vs based sequencing']) {
+    const hash = '0x' + 'ab12'.repeat(16);
+    assert.equal(api.postPathFor(hash, title), gateway.postPath(hash, title));
+  }
+  // gwei_poster.quote(base=0.1 gwei, tip=0.05 gwei (raised to the minimum), blob=0.006 gwei), rounded up to a gwei.
+  assert.equal(api.postFeeFrom(100000000n, 100000n, 6000000n), 13880000000000n);
+  const capped = 3n * (25600n * (100000000n + 2000000000n) + 131072n * 6000000n);
+  assert.equal(api.postFeeFrom(100000000n, 10n ** 12n, 6000000n), (capped + 999999999n) / 10n ** 9n * 10n ** 9n, 'tip capped at 2 gwei');
+  assert.equal(api.tokenHexOf(0x1234n), '0x' + '1234'.padStart(64, '0'));
+});
+
+test('posts: a back-dated post gets noon UTC of its day; today keeps the current time', () => {
+  const api = postsHarness();
+  const now = Date.UTC(2026, 9, 24, 15, 30);
+  const today = new Date(now);
+  const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  assert.equal(api.postTimeFromDate(todayValue, now), Math.floor(now / 1000));
+  assert.equal(api.postTimeFromDate('2022-11-07', now), Date.UTC(2022, 10, 7, 12) / 1000);
+  assert.equal(api.postTimeFromDate('', now), Math.floor(now / 1000));
+});
+
+test('posts: the Posts button and recent posts stay hidden until GnsPosts and the publisher are configured', () => {
+  assert.match(html, /\$\{postsEnabled\(\) \? `<button onclick="showManageForm\('posts'\)">Posts<\/button>` : ''\}/);
+  assert.match(html, /if \(!sec \|\| !list \|\| !postsEnabled\(\)\) return;/);
+  assert.match(html, /<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"><\/iframe>/, 'previews render in a script-less sandbox');
+});

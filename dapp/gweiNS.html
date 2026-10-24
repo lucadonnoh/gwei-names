@@ -433,6 +433,14 @@ body.modal-open { overflow: hidden; }
 .profile-hint { font-size: 11px; color: var(--fg-muted); line-height: 1.5; margin: -6px 0 14px; }
 .profile-hint a { color: inherit; }
 .profile-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted); margin: 22px 0 12px; }
+.manage-form textarea.post-editor { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; min-height: 240px; }
+.post-preview { display: none; width: 100%; height: 420px; border: 1px solid var(--border-muted); background: #fff; margin: 4px 0 14px; }
+.post-list { margin-bottom: 8px; font-size: 13px; }
+.post-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-muted); }
+.post-row .post-date { flex: none; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.post-row a { flex: 1; color: var(--fg); overflow-wrap: anywhere; }
+.post-row .post-state { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
+.manage-form .post-row button { width: auto; margin: 0; padding: 4px 10px; font-size: 10px; }
 .profile-avatar-preview { display: none; width: 56px; height: 56px; object-fit: cover; margin: -4px 0 14px; background: var(--manage-bg); }
 .profile-color { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; }
 .profile-color label { margin: 0; text-transform: none; letter-spacing: normal; font-size: 13px; color: var(--fg); }
@@ -1713,6 +1721,10 @@ body.vote-dock-open { padding-bottom: 104px; }
   </div>
   <div class="stats-hist" id="statsHist"></div>
   <div class="stats-note">names by length (bytes) · ★ = premium tier (1–4 chars)</div>
+  <div class="stats-sites" id="statsPosts" style="display:none;">
+    <div class="sites-label">recent posts</div>
+    <div class="sites-list" id="postsList"></div>
+  </div>
   <div class="stats-sites" id="statsSites" style="display:none;">
     <div class="sites-label">recent websites</div>
     <div class="sites-list" id="sitesList"></div>
@@ -1978,6 +1990,9 @@ const NETWORKS = {
     voting: '0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005', // GnsIntegrationVoting (mainnet, verified)
     votingDeployBlock: 25838194,
     votingIndexer: 'https://eth.blockscout.com',
+    // GnsPosts (posts/SPEC.md) and the gwei.domains publisher; the Posts UI stays hidden while unset.
+    posts: '',
+    postsPublisher: '',
     enabled: true
   },
   sepolia: {
@@ -2029,6 +2044,16 @@ const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpass
 const VOTING_CONTRACT = NET.voting;
 const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
 const VOTING_INDEXER = NET.votingIndexer || null;
+const POSTS_CONTRACT = NET.posts || '';
+const POSTS_PUBLISHER = NET.postsPublisher || '';
+const POSTS_API = 'https://gwei.domains/api'; // the gateway's post index, readable from any origin
+const POSTS_ABI = [
+  'function authorize(uint256 tokenId, bytes32 postHash, address publisher) payable',
+  'function remove(uint256 tokenId, bytes32 postHash)',
+];
+function postsEnabled() {
+  return CHAIN_ID === 1 && /^0x[0-9a-fA-F]{40}$/.test(POSTS_CONTRACT) && /^0x[0-9a-fA-F]{40}$/.test(POSTS_PUBLISHER);
+}
 
 function setActiveNetwork(key) {
   if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
@@ -2209,6 +2234,28 @@ async function loadStats() {
   const _c = document.getElementById('statsContent'); if (_c) _c.style.display = '';
 }
 loadStats();
+
+// The newest posts across all names, from the gateway's post index.
+async function loadRecentPosts() {
+  const sec = document.getElementById('statsPosts'), list = document.getElementById('postsList');
+  if (!sec || !list || !postsEnabled()) return;
+  try {
+    const res = await fetch(POSTS_API + '/posts/recent?limit=8');
+    const { posts } = await res.json();
+    if (!posts || !posts.length) return;
+    list.innerHTML = '';
+    for (const p of posts) {
+      if (!/\.gwei$/.test(p.name || '')) continue;
+      const a = document.createElement('a');
+      a.href = new URL(postPathFor(p.hash, p.title), 'https://' + p.name.slice(0, -5) + '.gwei.domains').href;
+      a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = p.title + ' · ' + p.name;
+      list.appendChild(a);
+    }
+    sec.style.display = list.children.length ? '' : 'none';
+  } catch (e) {}
+}
+loadRecentPosts();
 
 // ── Free names: claim <label>.<FREE_ROOT>.gwei free via the SubdomainRegistrar ──
 const REGISTRAR_ABI = [
@@ -5971,6 +6018,7 @@ async function showManage(tokenId, name) {
     if (isOwner) {
       let actionsHtml = `
         <button onclick="showManageForm('profile')">Edit Profile</button>
+        ${postsEnabled() ? `<button onclick="showManageForm('posts')">Posts</button>` : ''}
         <button onclick="showManageForm('transfer')">Transfer</button>
         <button onclick="showManageForm('setAddr')">Set Recipient</button>
         <button onclick="showManageForm('setContent')">Set Website</button>
@@ -6208,6 +6256,215 @@ function profileFormHtml() {
     `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>`;
 }
 
+// ── Posts (posts/SPEC.md): a post is JSON bytes named by their keccak-256 hash. The owner authorizes
+// the hash on GnsPosts and pays the gwei.domains publisher, which puts the bytes in a blob. ──
+const POST_MAX_BYTES = 126968;
+const POST_FEE_GAS = 25600n; // the publisher's expected gas for a one-post blob transaction
+const BLOB_GAS = 131072n;
+// The bytes the gateway and publisher expect: v, title, body, time, in that order, no whitespace.
+function postBytesFrom(title, body, time) {
+  return new TextEncoder().encode(JSON.stringify({ v: 1, title, body, time }));
+}
+// Same slug as the gateway (gateway/posts-format.js postPath).
+function postPathFor(hash, title) {
+  const slug = (title || '').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+  return `/posts/${hash.slice(2, 14)}${slug ? '-' + slug : ''}`;
+}
+// A date input (YYYY-MM-DD) → Unix seconds: now for today, noon UTC for any other day, so posts
+// written today keep their order and back-dated ones (ported articles) show the right day.
+function postTimeFromDate(value, now = Date.now()) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  const today = new Date(now);
+  const isToday = !m || (Number(m[1]) === today.getFullYear() && Number(m[2]) === today.getMonth() + 1 && Number(m[3]) === today.getDate());
+  return isToday ? Math.floor(now / 1000) : Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) / 1000);
+}
+// What the dapp pays the publisher per post: three times a one-post blob transaction at current
+// prices, rounded up to a gwei (gwei_poster.quote).
+function postFeeFrom(baseFee, tip, blobBaseFee) {
+  const MIN_TIP = 50000000n, MAX_TIP = 2000000000n;
+  const t = tip < MIN_TIP ? MIN_TIP : tip > MAX_TIP ? MAX_TIP : tip;
+  const fee = 3n * (POST_FEE_GAS * (baseFee + t) + BLOB_GAS * blobBaseFee);
+  return (fee + 999999999n) / 1000000000n * 1000000000n;
+}
+function tokenHexOf(tokenId) {
+  return '0x' + BigInt(tokenId).toString(16).padStart(64, '0');
+}
+
+let currentPostFee = null;
+async function refreshPostQuote() {
+  try {
+    const rpc = await getRpc();
+    const [block, blobFee, tip] = await Promise.all([
+      rpc.getBlock('latest'),
+      rpc.send('eth_blobBaseFee', []),
+      rpc.send('eth_maxPriorityFeePerGas', []).catch(() => '0x0'),
+    ]);
+    currentPostFee = postFeeFrom(BigInt(block.baseFeePerGas ?? 0n), BigInt(tip), BigInt(blobFee));
+  } catch (e) {
+    currentPostFee = null;
+  }
+  updatePostCost();
+}
+function readPostForm() {
+  const title = ($('ppTitle')?.value || '').trim();
+  const body = $('ppBody')?.value || '';
+  return { title, body, bytes: postBytesFrom(title, body, postTimeFromDate($('ppDate')?.value)) };
+}
+function updatePostCost() {
+  const el = $('ppCost');
+  if (!el) return;
+  const { bytes } = readPostForm();
+  const size = `${bytes.length.toLocaleString()} of ${POST_MAX_BYTES.toLocaleString()} bytes`;
+  if (bytes.length > POST_MAX_BYTES) { el.textContent = `Too long: ${size}.`; return; }
+  el.textContent = currentPostFee == null
+    ? `${size}. Checking the publishing fee…`
+    : `${size}. Publishing costs ${ethers.formatEther(currentPostFee)} ETH, paid to the gwei.domains publisher, plus gas for one transaction.`;
+}
+
+function postsFormHtml() {
+  const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
+  const hasWebsite = currentHasContenthash || !!currentContentContract;
+  const today = new Date();
+  const dateValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return (pageUrl
+    ? `<div class="profile-hint">Posts appear on <a href="${pageUrl}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>${hasWebsite ? ' once no website is set: the website takes the page while it is' : ''}. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
+    : '') +
+    '<div class="post-list" id="ppList" aria-live="polite"></div>' +
+    '<div class="profile-section">New post</div>' +
+    '<label for="ppTitle">Title</label><input type="text" id="ppTitle" maxlength="200">' +
+    `<label for="ppDate">Date</label><input type="date" id="ppDate" value="${dateValue}">` +
+    '<label for="ppBody">Text</label><textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
+    '<div class="profile-hint">Markdown: # heading, **bold**, *italic*, [link](https://…), ![image](https://… or ipfs://…), - list, &gt; quote, `code`, $math$.</div>' +
+    '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +
+    '<button onclick="doPublishPost()">Publish</button>' +
+    '<button class="secondary" onclick="previewPost()">Preview</button>' +
+    `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>` +
+    '<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"></iframe>';
+}
+
+async function loadOwnPosts() {
+  const el = $('ppList');
+  if (!el || !currentTokenId) return;
+  const tokenId = currentTokenId;
+  try {
+    const res = await fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`, { cache: 'no-store' });
+    const { posts } = await res.json();
+    if (tokenId !== currentTokenId || !$('ppList')) return;
+    if (!posts?.length) { el.innerHTML = '<div class="profile-hint" style="margin:0;">No posts yet.</div>'; return; }
+    const base = `https://${currentTokenName}.${GWEI_GATEWAY}`;
+    el.innerHTML = posts.map((p) => `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
+      `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
+      `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
+      `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="profile-hint" style="margin:0;">Couldn’t load your posts right now.</div>';
+  }
+}
+
+async function previewPost() {
+  const { title, bytes } = readPostForm();
+  const frame = $('ppPreview');
+  if (!frame) return;
+  if (!title) { showStatus('Give the post a title first', 'error'); return; }
+  try {
+    const res = await fetch(`${POSTS_API}/posts/preview`, { method: 'POST', body: bytes });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'Preview failed');
+    // The preview runs in a sandboxed frame with no scripts, the same markup the page will serve.
+    frame.srcdoc = '<!doctype html><meta charset="utf-8"><style>' +
+      'body{font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;margin:20px;color:#000;overflow-wrap:anywhere}' +
+      'h1{font-size:24px;line-height:1.25;margin:0 0 20px}h2{font-size:19px;margin:28px 0 10px}h3{font-size:16px}' +
+      'img{max-width:100%;height:auto;display:block;margin:0 auto}pre{background:#f5f5f5;padding:12px;overflow-x:auto;font-size:13px}' +
+      'code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;background:#f5f5f5;padding:1px 4px}pre code{padding:0}' +
+      'blockquote{border-left:2px solid #666;margin:0 0 16px;padding-left:14px;color:#666}a{color:#000}</style>' +
+      `<h1>${escapeHtml(out.title)}</h1>${out.html}`;
+    frame.style.display = 'block';
+    frame.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } catch (e) {
+    showStatus(e.message || 'Preview failed', 'error');
+  }
+}
+
+// Upload the bytes. Returns false if the gateway is turning anonymous uploads away right now; those
+// bytes are accepted again once the post is authorized on-chain.
+async function uploadPost(bytes, hash) {
+  const res = await fetch(`${POSTS_API}/posts`, { method: 'POST', body: bytes });
+  const out = await res.json().catch(() => ({}));
+  if (res.status === 429 || res.status === 503) return false;
+  if (!res.ok) throw new Error(out.error || `Upload failed (${res.status})`);
+  if (out.hash !== hash) throw new Error('The gateway stored different bytes than this post');
+  return true;
+}
+async function waitForPostIndexed(hash, timeoutMs = 120000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    fetch(`${POSTS_API}/sync`, { method: 'POST' }).catch(() => {});
+    const res = await fetch(`${POSTS_API}/posts/${hash}`, { cache: 'no-store' }).catch(() => null);
+    const detail = res?.ok ? await res.json().catch(() => null) : null;
+    if (detail?.authorizations?.length) return true;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+  }
+  return false;
+}
+
+async function doPublishPost() {
+  if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
+  const { title, bytes } = readPostForm();
+  if (!title) { showStatus('Give the post a title', 'error'); return; }
+  if (bytes.length > POST_MAX_BYTES) { showStatus(`The post is too long: ${bytes.length} bytes, the most is ${POST_MAX_BYTES}`, 'error'); return; }
+  const hash = ethers.keccak256(bytes);
+  const name = currentTokenName;
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Uploading the post...', '');
+    const uploaded = await uploadPost(bytes, hash);
+    await refreshPostQuote();
+    if (currentPostFee == null) throw new Error('Couldn’t read current gas prices to price the post');
+    const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
+    showStatus(`Approve the post: ${ethers.formatEther(currentPostFee)} ETH to the publisher`, '');
+    const tx = await wcTransaction(posts.authorize(currentTokenId, hash, POSTS_PUBLISHER, { value: currentPostFee }), 'Approve the post');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Confirmed. Adding it to your page...', '', tx.hash);
+    const indexed = await waitForPostIndexed(hash);
+    if (!uploaded) {
+      for (let i = 0; i < 12 && !(await uploadPost(bytes, hash)); i++) await new Promise((resolve) => setTimeout(resolve, 10000));
+    }
+    const url = `https://${name}.${GWEI_GATEWAY}${postPathFor(hash, title)}`;
+    $('status').innerHTML = escapeHtml(indexed ? 'Posted! It is on your page now and goes into an Ethereum blob within a few minutes. ' : 'Posted! It will appear on your page within a few minutes. ') +
+      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color:inherit;">View post →</a>`;
+    $('status').className = 'status show success';
+    if ($('ppTitle')) { $('ppTitle').value = ''; $('ppBody').value = ''; $('ppPreview').style.display = 'none'; }
+    loadOwnPosts();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doRemovePost(hash) {
+  if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
+  if (!confirm('Take this post off your page? Its text stays in the Ethereum blob.')) return;
+  isProcessing = true;
+  try {
+    const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
+    const tx = await wcTransaction(posts.remove(currentTokenId, hash), 'Approve removing the post');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    fetch(`${POSTS_API}/sync`, { method: 'POST' }).catch(() => {});
+    showStatus('Removed. It leaves your page within a minute.', 'success', tx.hash);
+    setTimeout(loadOwnPosts, 30000);
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+  }
+}
+
 function showManageForm(action) {
   const form = $('manageForm');
   let html = '';
@@ -6215,6 +6472,9 @@ function showManageForm(action) {
   switch (action) {
     case 'profile':
       html = profileFormHtml();
+      break;
+    case 'posts':
+      html = postsFormHtml();
       break;
     case 'transfer':
       html = `
@@ -6283,10 +6543,11 @@ function showManageForm(action) {
 
   form.innerHTML = html;
   form.classList.add('show');
-  form.oninput = action === 'profile' ? updateProfileCost : null;
+  form.oninput = action === 'profile' ? updateProfileCost : action === 'posts' ? updatePostCost : null;
   form.onchange = action === 'profile' ? updateProfileCost : null;
   if (action === 'renew') previewRenew();
   if (action === 'profile') { previewProfileAvatar(); updateProfileCost(); }
+  if (action === 'posts') { loadOwnPosts(); refreshPostQuote(); }
 }
 
 // Read and normalize the years input to 1..25. Keep the visible value in sync
