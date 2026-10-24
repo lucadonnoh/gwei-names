@@ -173,27 +173,32 @@ function profileRows(profile) {
 }
 
 // --- generative avatar ----------------------------------------------------------------------------
-// For names without an avatar record: a symmetric 7x7 pixel mark (the site's pixel "G" look) on a flat
+// For names without an avatar record: a symmetric 9x9 pixel mark (the site's pixel "G" look) on a flat
 // share-card background colour with the cards' faint dots. The name's token ID is the seed, so a
 // name always gets the same one. The page embeds it as SVG; link previews get the same image as a PNG,
 // since X and others don't render SVG.
+// The pattern alone tells names apart (owners can set the background with their accent colour): 45
+// random bits, so two names share one with even odds only at about 7 million names.
 const AVATAR_COLORS = ['#161616', '#244577', '#175640', '#402370', '#732430']; // SHARE_BGS in dapp/gweiNS.html
-const AVATAR_GRID = 7, AVATAR_CELL = 16, AVATAR_SIZE = 160, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
+const AVATAR_GRID = 9, AVATAR_HALF = 5, AVATAR_CELL = 16, AVATAR_SIZE = 180, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
+const AVATAR_MIN_CELLS = 16; // fewer (or more than 81 - 16) lit cells and the pattern is inverted
 function avatarModel(seedHex, accent) {
   const bytes = hexToBytes(String(seedHex).replace(/^0x/, '').padStart(64, '0').slice(-64));
   // The owner's accent colour, when set, replaces the seeded background.
   const color = /^#[0-9a-f]{6}$/i.test(accent || '') ? accent : AVATAR_COLORS[bytes[0] % AVATAR_COLORS.length];
+  // One bit per cell of the left half and the middle column, from the bytes after the colour byte.
+  const bit = (i) => (bytes[1 + (i >> 3)] >> (i & 7)) & 1;
   const cells = [];
   for (let y = 0; y < AVATAR_GRID; y++) {
-    for (let x = 0; x < 4; x++) {
-      if (bytes[1 + y * 4 + x] < 128) continue;
+    for (let x = 0; x < AVATAR_HALF; x++) {
+      if (!bit(y * AVATAR_HALF + x)) continue;
       cells.push([x, y]);
-      if (x < 3) cells.push([AVATAR_GRID - 1 - x, y]);
+      if (x < AVATAR_HALF - 1) cells.push([AVATAR_GRID - 1 - x, y]);
     }
   }
   // Hash outputs are almost never this sparse or dense, but a nearly blank or solid avatar shouldn't
   // happen at all; the inverse of a symmetric pattern is symmetric too.
-  if (cells.length < 10 || cells.length > AVATAR_GRID * AVATAR_GRID - 10) {
+  if (cells.length < AVATAR_MIN_CELLS || cells.length > AVATAR_GRID * AVATAR_GRID - AVATAR_MIN_CELLS) {
     const lit = new Set(cells.map(([x, y]) => `${x},${y}`));
     const inverse = [];
     for (let y = 0; y < AVATAR_GRID; y++) for (let x = 0; x < AVATAR_GRID; x++) if (!lit.has(`${x},${y}`)) inverse.push([x, y]);
@@ -291,8 +296,10 @@ function nameBadges(name, profile) {
 }
 
 // --- page template (gwei.domains look) -------------------------------------------------------------
+const DARK_VARS = '--bg:#0a0a0a;--fg:#e8e8e0;--muted:#888;--panel:#151515;--btn-bg:#e8e8e0;--btn-fg:#0a0a0a;--btn-hover:#ccc';
 const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#000;--btn-fg:#fff;--btn-hover:#333}' +
-  '@media (prefers-color-scheme:dark){:root{--bg:#0a0a0a;--fg:#e8e8e0;--muted:#888;--panel:#151515;--btn-bg:#e8e8e0;--btn-fg:#0a0a0a;--btn-hover:#ccc}}' +
+  // Dark follows the browser unless the visitor picked a theme (the .dark / .light class).
+  `:root.dark{${DARK_VARS}}@media (prefers-color-scheme:dark){:root:not(.light){${DARK_VARS}}}` +
   '*{margin:0;padding:0;box-sizing:border-box}' +
   'body{font-family:Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;padding:60px 20px 40px;max-width:480px;margin:0 auto;line-height:1.5}' +
   'h1{font-size:14px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}h1 a{color:inherit;text-decoration:none}' +
@@ -331,13 +338,35 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.post-body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em;background:var(--panel);padding:1px 4px}' +
   '.post-body pre code{background:none;padding:0;font-size:inherit}' +
   '.post-body img{display:block;max-width:100%;height:auto;margin:0 auto}' +
-  '.post-body hr{border:0;border-top:1px solid var(--muted);opacity:.4;margin:28px 0}';
+  '.post-body hr{border:0;border-top:1px solid var(--muted);opacity:.4;margin:28px 0}' +
+  // The theme switch, as on gwei.domains: a moon in light mode, a sun in dark mode. Shown only when
+  // the theme script runs (it adds .js).
+  '.theme-toggle{display:none;position:fixed;right:20px;bottom:20px;width:40px;height:40px;padding:9px;border:0;background:none;color:var(--fg);opacity:.5;cursor:pointer}' +
+  '.theme-toggle:hover{opacity:1}.theme-toggle svg{display:block;width:22px;height:22px}:root.js .theme-toggle{display:block}' +
+  '.theme-toggle .sun,:root.dark .theme-toggle .moon{display:none}:root.dark .theme-toggle .sun{display:block}' +
+  '@media (prefers-color-scheme:dark){:root:not(.light) .theme-toggle .moon{display:none}:root:not(.light) .theme-toggle .sun{display:block}}';
+
+// The visitor's theme choice is one cookie on gwei.domains, shared by the dapp and every name page.
+// This is the only script these pages run; the CSP allows exactly this text, by hash.
+export const THEME_SCRIPT = "(()=>{const r=document.documentElement,m=document.cookie.match(/(?:^|; )gwei-theme=(dark|light)/);" +
+  "r.classList.add('js');if(m)r.classList.add(m[1]);document.addEventListener('click',(e)=>{" +
+  "if(!e.target.closest||!e.target.closest('.theme-toggle'))return;" +
+  "const dark=r.classList.contains('dark')||(!r.classList.contains('light')&&matchMedia('(prefers-color-scheme:dark)').matches),next=dark?'light':'dark';" +
+  "r.classList.remove('dark','light');r.classList.add(next);" +
+  "document.cookie='gwei-theme='+next+';domain=gwei.domains;path=/;max-age=31536000;samesite=lax;secure'})})()";
+export const THEME_SCRIPT_HASH = "'sha256-dxlP3npe0Va4W5wE17PadXXMxWUrgG+QGfh4JLNtB8Q='";
+const THEME_TOGGLE = '<button class="theme-toggle" type="button" title="Switch light or dark" aria-label="Switch light or dark mode">' +
+  '<svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>' +
+  '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>' +
+  '</button>';
 
 export function renderLayout({ title, head = '', body, subtitle = '' }) {
   return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<meta name="color-scheme" content="light dark">' +
     `<title>${escapeHtml(title)}</title><link rel="icon" href="https://gwei.domains/favicon.ico">${head}<style>${STYLE}</style>` +
+    `<script>${THEME_SCRIPT}</script>` +
     '<h1><a href="https://gwei.domains">Gwei Name Service</a></h1>' +
-    (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body;
+    (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body + THEME_TOGGLE;
 }
 
 export function metaTags({ title, description, url, image, imageSize, type = 'profile' }) {
@@ -441,4 +470,4 @@ export function renderUnregistered({ name, dappHash }) {
 }
 
 // No scripts on these pages; images (avatars) over https or inline, styles inline.
-export const PROFILE_CSP = "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+export const PROFILE_CSP = `default-src 'none'; script-src ${THEME_SCRIPT_HASH}; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`;

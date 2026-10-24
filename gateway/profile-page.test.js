@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { inflateSync } from 'node:zlib';
 import {
   PROFILE_TEXT_KEYS, avatarPng, avatarSvg, avatarUrl, decodeAggregate3, encodeAggregate3, nftAvatarRef, parseGweiPage,
-  profileFromResults, renderProfile, renderUnregistered,
+  profileFromResults, renderProfile, renderUnregistered, THEME_SCRIPT,
 } from './profile-page.js';
 
 const NFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
@@ -60,7 +60,7 @@ test('the profile page escapes records and only links to safe URLs', () => {
     },
   }));
   const html = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: 'https://alice.gwei.domains/', profile });
-  assert.doesNotMatch(html, /<script>/);
+  assert.doesNotMatch(html.replace(`<script>${THEME_SCRIPT}</script>`, ''), /<script/i, 'no script but the pinned theme switch');
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; co/);
   assert.match(html, /Alice &lt;b&gt;/);
   assert.match(html, /src="https:\/\/ipfs\.filebase\.io\/ipfs\/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644\/me\.png"/);
@@ -109,10 +109,17 @@ test('the generated avatar is deterministic per name, symmetric, and a valid PNG
   assert.equal(avatarSvg(seedA), avatarSvg(seedA));
   assert.notEqual(avatarSvg(seedA), avatarSvg(seedB));
   const cells = [...avatarSvg(seedA).matchAll(/<rect x="(\d+)" y="(\d+)" width="16"/g)].map(([, x, y]) => `${x},${y}`);
+  assert.ok(cells.length >= 16 && cells.length <= 65, 'never nearly blank or solid');
   for (const c of cells) {
     const [x, y] = c.split(',').map(Number);
-    assert.ok(cells.includes(`${24 + (6 - (x - 24) / 16) * 16},${y}`), `mirror of ${c}`);
+    assert.ok(cells.includes(`${18 + (8 - (x - 18) / 16) * 16},${y}`), `mirror of ${c}`);
   }
+  // 45 independent cells: every one of the left five columns flips with some seed.
+  const key = (seed) => avatarSvg(seed).replace(/<rect width="180" height="180" fill="#[0-9a-f]{6}"\/>/, '');
+  const seen = new Set();
+  const { createHash } = await import('node:crypto');
+  for (let i = 0; i < 2000; i++) seen.add(key(createHash('sha256').update(String(i)).digest('hex')));
+  assert.equal(seen.size, 2000, 'no repeats in 2000 seeds');
 
   const png = await avatarPng(seedA, 64);
   assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
@@ -157,7 +164,7 @@ test('gwei-page shapes the profile: accent button and avatar, link list, banner,
   assert.equal(profile.text['gwei-page'], undefined, 'the raw record is not rendered as text');
   const html = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: 'https://alice.gwei.domains/', profile });
   assert.match(html, /class="btn" style="background:#f0e68c;border-color:#f0e68c;color:#000"/, 'dark text on a light accent');
-  assert.match(html, /<rect width="160" height="160" fill="#f0e68c"\/>/, 'generated avatar uses the accent');
+  assert.match(html, /<rect width="180" height="180" fill="#f0e68c"\/>/, 'generated avatar uses the accent');
   assert.match(html, /<div class="links"><a href="https:\/\/warpcast\.com\/alice" [^>]*>warpcast\.com\/alice<\/a><a href="https:\/\/alice\.blog\/" [^>]*>alice\.blog<\/a><\/div>/);
   assert.doesNotMatch(html, /javascript:/);
   assert.match(html, /<img class="banner" src="https:\/\/img\.example\/banner\.png"/);
@@ -165,4 +172,19 @@ test('gwei-page shapes the profile: accent button and avatar, link list, banner,
 
   const dark = profileFromResults(results({ text: { 'gwei-page': '{"color":"#402370"}' } }));
   assert.match(renderProfile({ name: 'x.gwei', dappHash: 'x', pageUrl: 'https://x.gwei.domains/', profile: dark }), /color:#fff"/);
+});
+
+test('the theme switch: one hash-pinned script, shared cookie, system theme by default', async () => {
+  const { THEME_SCRIPT, THEME_SCRIPT_HASH, PROFILE_CSP, renderLayout } = await import('./profile-page.js');
+  const { createHash } = await import('node:crypto');
+  assert.equal(THEME_SCRIPT_HASH, `'sha256-${createHash('sha256').update(THEME_SCRIPT).digest('base64')}'`, 'the CSP hash matches the script');
+  assert.match(PROFILE_CSP, new RegExp(`script-src ${THEME_SCRIPT_HASH.replace(/[+/]/g, '\\$&')};`));
+  assert.doesNotMatch(PROFILE_CSP, /unsafe-inline'; img|script-src[^;]*unsafe/);
+  const html = renderLayout({ title: 't', body: '<p>x</p>' });
+  assert.equal(html.split('<script>').length, 2, 'exactly one script');
+  assert.ok(html.includes(`<script>${THEME_SCRIPT}</script>`));
+  assert.match(html, /<button class="theme-toggle" type="button"/);
+  assert.match(html, /:root\.dark\{--bg:#0a0a0a/);
+  assert.match(html, /@media \(prefers-color-scheme:dark\)\{:root:not\(\.light\)\{--bg:#0a0a0a/);
+  assert.match(THEME_SCRIPT, /domain=gwei\.domains;path=\/;max-age=31536000;samesite=lax;secure/);
 });
