@@ -753,14 +753,124 @@ test('manual mode: MIME comes from the path extension', async () => {
   assert.equal(res.headers.get('content-type'), 'image/svg+xml');
 });
 
-test('auto mode is reported as unsupported, not served', async () => {
+const rpcRevert = () => new Response(
+  JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } }),
+  { headers: { 'content-type': 'application/json' } },
+);
+const SEL_HTML = '0x33c34ac3';
+
+test('auto mode: the root is a call with empty calldata, and its bytes are served', async () => {
   for (const mode of [MODE_AUTO, '0x' + pad32('0')]) {
     const cache = makeCache();
-    const fetchMock = makeFetch({ rpc: rpcWeb3({ mode, onCall: () => 'SHOULD NOT BE CALLED' }) });
+    const seen = [];
+    const fetchMock = makeFetch({
+      rpc: rpcWeb3({ mode, onCall: (data) => { seen.push(data); return abiBytesReturn('<!doctype html><h1>auto</h1>'); } }),
+    });
     const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
-    assert.equal(res.status, 415);
-    assert.match(await res.text(), /resource-request/);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), '<!doctype html><h1>auto</h1>');
+    assert.deepEqual(seen, ['0x']);
+    assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8', 'undefined MIME is sniffed');
+    assert.equal(res.headers.get('x-web3-resolve-mode'), 'auto');
+    assert.equal(res.headers.get('x-web3-auto-fallback'), null);
   }
+});
+
+test('auto mode: a root that reverts falls back to html() (privacypools.gwei)', async () => {
+  const cache = makeCache();
+  const seen = [];
+  const page = '<!doctype html>\n<title>Privacy Pools v2</title>' + 'x'.repeat(5000);
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_AUTO, onCall: (data) => {
+      seen.push(data);
+      return data === SEL_HTML ? abiBytesReturn(page) : rpcRevert();
+    } }),
+  });
+  const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), page);
+  assert.deepEqual(seen, ['0x', SEL_HTML]);
+  assert.equal(res.headers.get('x-web3-auto-fallback'), 'html()');
+  assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
+
+  // The page itself stays reachable at its ERC-6860 path.
+  const direct = await invoke('https://rock.gwei.domains/html', { cache: makeCache(), fetchMock });
+  assert.equal(await direct.text(), page);
+  assert.equal(direct.headers.get('x-web3-auto-fallback'), null);
+});
+
+test('auto mode: a root with no page and no html() is a 404', async () => {
+  const fetchMock = makeFetch({ rpc: rpcWeb3({ mode: MODE_AUTO, onCall: () => rpcRevert() }) });
+  const res = await invoke('https://rock.gwei.domains/', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /serves no page at its root/);
+});
+
+test('auto mode: methods and arguments become an ABI call; MIME follows the last string argument', async () => {
+  const seen = [];
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_AUTO, onCall: (data) => { seen.push(data); return abiBytesReturn('<svg/>'); } }),
+  });
+  const res = await invoke('https://rock.gwei.domains/file/string!logo.svg', { cache: makeCache(), fetchMock });
+  assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+  // file(string) = 0x69930d06, then offset 0x20 and the string tail.
+  assert.equal(seen[0], '0x69930d06' + pad32('20') + pad32('8') + toHex(utf8('logo.svg')).padEnd(64, '0'));
+
+  seen.length = 0;
+  await invoke('https://rock.gwei.domains/renderBroker/9999', { cache: makeCache(), fetchMock });
+  assert.equal(seen[0], '0x7ccdcaa1' + pad32('270f'));
+});
+
+test('auto mode: returns gives JSON, and mime.* sets the content type', async () => {
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_AUTO, onCall: (data) => {
+      if (data.startsWith('0x70a08231')) return '0x' + pad32('2a'); // balanceOf(address)
+      if (data.startsWith('0xc87b56dd')) return abiBytesReturn('data:application/json,%7B%22a%22%3A1%7D'); // tokenURI(uint256)
+      return abiBytesReturn('<svg/>');
+    } }),
+  });
+  const owner = '0x00000000000000000000000000000000DeaDBeef';
+  let res = await invoke(`https://rock.gwei.domains/balanceOf/${owner}?returns=(uint256)`, { cache: makeCache(), fetchMock });
+  assert.equal(res.headers.get('content-type'), 'application/json');
+  assert.equal(await res.text(), '["0x2a"]');
+
+  res = await invoke(`https://rock.gwei.domains/balanceOf/${owner}?returns=()`, { cache: makeCache(), fetchMock });
+  assert.equal(await res.text(), `["0x${pad32('2a')}"]`);
+
+  res = await invoke('https://rock.gwei.domains/image/1?mime.content=image/svg%2Bxml', { cache: makeCache(), fetchMock });
+  assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+  res = await invoke('https://rock.gwei.domains/image/1?mime.type=svg', { cache: makeCache(), fetchMock });
+  assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+  res = await invoke('https://rock.gwei.domains/image/1?mime.content=bogus', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 400);
+
+  res = await invoke('https://rock.gwei.domains/tokenURI/1?mime.dataurl', { cache: makeCache(), fetchMock });
+  assert.equal(res.headers.get('content-type'), 'application/json');
+  assert.equal(await res.text(), '{"a":1}');
+});
+
+test('auto mode: bad paths are rejected without calling the contract, and reverts are 404s', async () => {
+  const seen = [];
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ mode: MODE_AUTO, onCall: (data) => { seen.push(data); return rpcRevert(); } }),
+  });
+  let res = await invoke('https://rock.gwei.domains/favicon.ico', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404);
+  res = await invoke('https://rock.gwei.domains/balanceOf/vitalik.eth', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 400);
+  assert.match(await res.text(), /Name-service arguments/);
+  assert.deepEqual(seen, [], 'neither request reached the contract');
+
+  res = await invoke('https://rock.gwei.domains/missing', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /call reverted/);
+});
+
+test('modes other than auto, manual and 5219 are reported as unsupported', async () => {
+  const fetchMock = makeFetch({ rpc: rpcWeb3({ mode: modeWord('bogus'), onCall: () => 'SHOULD NOT BE CALLED' }) });
+  const res = await invoke('https://rock.gwei.domains/', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 415);
+  assert.match(await res.text(), /auto, manual, and resource-request/);
 });
 
 test('chunked (web3-next-chunk) responses are refused rather than truncated', async () => {

@@ -13,6 +13,9 @@
 import { createGatewayPool, configuredGateways } from './content-gateways.js';
 
 import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN } from './rpc-config.js';
+import {
+  AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
+} from './web3-auto.js';
 
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
 // Chains a `contentcontract` record may point at, keyed by chain id, with their ERC-3770 short names.
@@ -55,19 +58,13 @@ const SEL_CONTENTHASH = 'cb323d76'; // contenthash(uint256)
 const SEL_TEXT = '308e3386'; // text(uint256,string)
 const SEL_RESOLVEMODE = 'dd473fae'; // resolveMode()
 const SEL_REQUEST = '1374c460'; // request(string[],(string,string)[])
+const SEL_HTML = '33c34ac3'; // html(), the getter single-file site contracts expose
 const CONTENTCONTRACT = 'contentcontract'; // ERC-6821 text record key
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 const pad32 = (h) => h.padStart(64, '0');
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
-// Index loop rather than `h.match(/../g)`: a web3:// body can be hundreds of KB, and the regex form
-// allocates an intermediate array with one string per byte.
-function hexToBytes(h) {
-  const out = new Uint8Array(h.length >> 1);
-  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
-  return out;
-}
 const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -237,6 +234,30 @@ const MIME = {
 function mimeFor(pathname) {
   const m = /\.([a-z0-9]+)$/i.exec(pathname || '');
   return m ? MIME[m[1].toLowerCase()] : undefined;
+}
+// Auto mode leaves the MIME type undefined when nothing names one. Browsers would sniff it, but every
+// response is sent with `nosniff`, so recognize the common formats here instead.
+function sniffMime(bytes) {
+  const startsWith = (...sig) => sig.every((b, i) => bytes[i] === b);
+  if (startsWith(0x89, 0x50, 0x4e, 0x47)) return MIME.png;
+  if (startsWith(0xff, 0xd8, 0xff)) return MIME.jpg;
+  if (startsWith(0x47, 0x49, 0x46, 0x38)) return MIME.gif;
+  if (startsWith(0x25, 0x50, 0x44, 0x46, 0x2d)) return MIME.pdf;
+  if (startsWith(0x52, 0x49, 0x46, 0x46) && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return MIME.webp;
+  }
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, 1024));
+  } catch (_) {
+    // A multi-byte character cut at the 1 KiB boundary is still text.
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, 1020)); } catch (_) { text = null; }
+  }
+  if (text === null || /[\x00-\x08\x0e-\x1f]/.test(text)) return 'application/octet-stream';
+  const head = text.replace(/^\uFEFF?\s*/, '').slice(0, 256).toLowerCase();
+  if (head.startsWith('<!doctype html') || head.startsWith('<html')) return MIME.html;
+  if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return MIME.svg;
+  return MIME.txt;
 }
 
 function encodeString(sel, str) {
@@ -561,7 +582,9 @@ async function resolveMode(chainId, address, route, cache, ctx) {
 //   "5219"   — ERC-6944 resource request: request(pathSegments, queryPairs) returns an HTTP status,
 //              a body, and headers, so the contract speaks HTTP itself.
 //   "manual" — the raw path+query is the calldata; the return is ABI-encoded bytes.
-//   auto     — not served yet; needs path→method translation and the ERC-7087 MIME rules.
+//   auto     — `/<method>/<arg>…` is an ABI call (web3-auto.js) and `/` is a call with empty calldata;
+//              the return is ABI-encoded bytes, or JSON when a `returns` attribute is given. MIME types
+//              follow ERC-7087.
 async function serveWeb3(ref, name, url, cache, ctx, route) {
   const chain = CHAINS[ref.chainId];
   if (!chain) return page(name, '<p>This name points to a contract on an unsupported chain.</p>', 415);
@@ -621,11 +644,66 @@ async function serveWeb3(ref, name, url, cache, ctx, route) {
     body = readDynamic(hex, word(hex, 0));
     if (body === null) return page(name, '<p>This contract returned a malformed response.</p>', 502, 'no-store');
     headers.set('content-type', mimeFor(url.pathname) || 'text/html; charset=utf-8');
+  } else if (mode === 'auto') {
+    let call, query;
+    try {
+      call = encodeAutoCall(url.pathname);
+      query = parseAutoQuery(url.search);
+    } catch (error) {
+      if (error instanceof AutoModeError) return page(name, `<p>${escapeHtml(error.message)}</p>`, error.status);
+      throw error;
+    }
+    let res = await rpcCall(ref.chainId, ref.address, call.data, route, { long: true });
+    if (!res) return rpcFailed();
+    // Not part of ERC-6860: when the empty-calldata root call reverts or returns nothing, try `html()`
+    // once, so a single-file site contract still has a front page at its name.
+    if (call.root && !res.result && !query.returns) {
+      const fallback = await rpcCall(ref.chainId, ref.address, '0x' + SEL_HTML, route, { long: true });
+      if (!fallback) return rpcFailed();
+      if (fallback.result) {
+        res = fallback;
+        headers.set('x-web3-auto-fallback', 'html()');
+      }
+    }
+    if (res.reverted || (call.root && !res.result)) {
+      return page(name, call.root
+        ? '<p>This contract serves no page at its root: the call with empty calldata reverts.</p>'
+        : '<p>This contract has no page here (the call reverted).</p>', 404);
+    }
+
+    if (query.returns) {
+      try {
+        body = utf8(encodeAutoReturn(res.result, query.returns));
+      } catch (error) {
+        if (error instanceof AutoModeError) return page(name, `<p>${escapeHtml(error.message)}</p>`, error.status, 'no-store');
+        throw error;
+      }
+      headers.set('content-type', 'application/json');
+    } else {
+      const hex = (res.result || '0x').slice(2);
+      body = hex.length >= 128 ? readDynamic(hex, word(hex, 0)) : null;
+      if (body === null) return page(name, '<p>This contract returned a malformed response.</p>', 502, 'no-store');
+      let contentType;
+      if (query.mime?.content !== undefined) {
+        if (!isMimeType(query.mime.content)) return page(name, '<p>Invalid <b>mime.content</b> value.</p>', 400);
+        contentType = query.mime.content;
+      } else if (query.mime?.type !== undefined) {
+        contentType = MIME[query.mime.type.toLowerCase()];
+        if (!contentType) return page(name, '<p>Unrecognized <b>mime.type</b> extension.</p>', 400);
+      } else if (query.mime?.dataurl) {
+        const parsed = parseDataUrl(body);
+        if (!parsed) return page(name, '<p>This contract did not return a valid data URL.</p>', 502, 'no-store');
+        ({ contentType, body } = parsed);
+      } else if (call.lastArg?.type.kind === 'string') {
+        contentType = mimeFor(call.lastArg.value);
+      }
+      headers.set('content-type', contentType || sniffMime(body));
+    }
   } else {
     return page(
       name,
       `<p>This name points to a <b>${escapeHtml(mode)}</b>-mode contract. gwei.domains serves ` +
-      `resource-request (ERC-5219) and manual mode so far.</p>`,
+      'auto, manual, and resource-request (ERC-5219) mode.</p>',
       415,
     );
   }
