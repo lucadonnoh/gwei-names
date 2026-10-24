@@ -97,7 +97,7 @@ body {
   min-height: 100vh;
   padding: 60px 20px;
   padding-bottom: 20px;
-  max-width: 480px;
+  max-width: 770px; /* the column every gwei.domains page shares: 730px of content */
   margin: 0 auto;
 }
 h1 {
@@ -506,8 +506,9 @@ body.modal-open { overflow: hidden; }
   0% { transform: translateY(0); }
   100% { transform: translateY(-50%); }
 }
+/* The scrolling names sit in the left margin, so they need room beside the 770px column. */
+@media (max-width: 980px) { .scroll-names { display: none; } }
 @media (max-width: 700px) {
-  .scroll-names { display: none; }
   body { padding: 80px 16px 100px; }
   .wallet { top: 16px; right: 16px; }
   .wallet button { padding: 10px 14px; font-size: 11px; }
@@ -918,12 +919,14 @@ body.vote-dock-open { padding-bottom: 104px; }
   position:fixed;
   bottom:max(20px, env(safe-area-inset-bottom, 0px));
   right:max(20px, env(safe-area-inset-right, 0px));
-  border:none; cursor:pointer; padding:9px; margin:-9px;
-  opacity:0.5; transition:opacity 0.2s; z-index:100;
-  width:40px; height:40px; background:none; color:var(--fg);
+  border:none; cursor:pointer; padding:9px; margin:0;
+  opacity:0.75; transition:opacity 0.2s; z-index:100;
+  width:40px; height:40px; color:var(--fg);
+  /* It floats over the text on narrow screens, so it sits on a disc of the page colour. */
+  background:var(--bg); border-radius:50%; box-shadow:0 1px 6px rgba(0,0,0,.15);
 }
-/* The generic button:hover rule sets a background; the icon button never has one. */
-.dark-toggle:hover, :root.dark .dark-toggle:hover { opacity:1; background:none; color:var(--fg); }
+/* The generic button:hover rule sets a background; keep the page-coloured disc. */
+.dark-toggle:hover, :root.dark .dark-toggle:hover { opacity:1; background:var(--bg); color:var(--fg); }
 .dark-toggle svg { display:block; width:22px; height:22px; }
 .dark-toggle .sun, :root.dark .dark-toggle .moon { display:none; }
 :root.dark .dark-toggle .sun { display:block; }

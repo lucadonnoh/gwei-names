@@ -301,7 +301,8 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   // Dark follows the browser unless the visitor picked a theme (the .dark / .light class).
   `:root.dark{${DARK_VARS}}@media (prefers-color-scheme:dark){:root:not(.light){${DARK_VARS}}}` +
   '*{margin:0;padding:0;box-sizing:border-box}' +
-  'body{font-family:Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;padding:60px 20px 40px;max-width:480px;margin:0 auto;line-height:1.5}' +
+  // One column width for every gwei.domains page: 730px of content, as on vitalik.eth.limo.
+  'body{font-family:Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;padding:60px 20px 80px;max-width:770px;margin:0 auto;line-height:1.5}' +
   'h1{font-size:14px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;margin-bottom:12px}h1 a{color:inherit;text-decoration:none}' +
   '.subtitle{font-size:12px;color:var(--muted);margin-bottom:40px;letter-spacing:.03em}' +
   'a{color:var(--fg);text-underline-offset:3px}a:hover{opacity:.55}' +
@@ -326,11 +327,11 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.post-name{flex:1;overflow-wrap:anywhere}.post-link .badge{margin:0}' +
   '.byline{display:inline-flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none;font-size:13px;margin-bottom:28px}' +
   '.byline .avatar{width:32px;height:32px;margin:0}' +
-  '.post-title{font-size:24px;font-weight:600;line-height:1.25;overflow-wrap:anywhere;margin-bottom:6px}' +
+  '.post-title{font-size:28px;font-weight:600;line-height:1.25;overflow-wrap:anywhere;margin-bottom:6px}' +
   '.post-meta{font-size:12px;color:var(--muted);letter-spacing:.03em;margin-bottom:28px}' +
-  '.post-body{font-size:15px;line-height:1.65;overflow-wrap:anywhere}' +
-  '.post-body p,.post-body ul,.post-body ol,.post-body blockquote,.post-body pre{font-size:15px;margin:0 0 16px}' +
-  '.post-body h2{font-size:19px;line-height:1.3;margin:32px 0 10px}.post-body h3{font-size:16px;margin:28px 0 8px}' +
+  '.post-body{font-size:16px;line-height:1.75;overflow-wrap:anywhere}' +
+  '.post-body p,.post-body ul,.post-body ol,.post-body blockquote{font-size:16px;margin:0 0 18px}.post-body pre{margin:0 0 18px}' +
+  '.post-body h2{font-size:22px;line-height:1.3;margin:36px 0 12px}.post-body h3{font-size:18px;margin:30px 0 10px}' +
   '.post-body h4{font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin:24px 0 8px}' +
   '.post-body ul,.post-body ol{padding-left:22px}.post-body li{margin-bottom:4px}' +
   '.post-body blockquote{border-left:2px solid var(--muted);padding-left:14px;color:var(--muted)}' +
@@ -341,7 +342,8 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.post-body hr{border:0;border-top:1px solid var(--muted);opacity:.4;margin:28px 0}' +
   // The theme switch, as on gwei.domains: a moon in light mode, a sun in dark mode. Shown only when
   // the theme script runs (it adds .js).
-  '.theme-toggle{display:none;position:fixed;right:20px;bottom:20px;width:40px;height:40px;padding:9px;border:0;background:none;color:var(--fg);opacity:.5;cursor:pointer}' +
+  // It floats over the text on narrow screens, so it sits on a disc of the page colour.
+  '.theme-toggle{display:none;position:fixed;right:20px;bottom:20px;width:40px;height:40px;padding:9px;border:0;border-radius:50%;background:var(--bg);box-shadow:0 1px 6px rgba(0,0,0,.15);color:var(--fg);opacity:.75;cursor:pointer}' +
   '.theme-toggle:hover{opacity:1}.theme-toggle svg{display:block;width:22px;height:22px}:root.js .theme-toggle{display:block}' +
   '.theme-toggle .sun,:root.dark .theme-toggle .moon{display:none}:root.dark .theme-toggle .sun{display:block}' +
   '@media (prefers-color-scheme:dark){:root:not(.light) .theme-toggle .moon{display:none}:root:not(.light) .theme-toggle .sun{display:block}}';

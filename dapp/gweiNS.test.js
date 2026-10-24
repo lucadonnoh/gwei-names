@@ -2447,7 +2447,7 @@ test('dialogs and controls are keyboard accessible', () => {
   assert.match(html, /<div id="availability" class="availability" aria-live="polite">/);
   assert.match(html, /<div id="status" class="status" aria-live="polite">/);
   assert.doesNotMatch(html, /<(?:div|span)[^>]*onclick="toggle(?:Free|Zk)Panel\(\)"/, 'panel toggles are buttons');
-  assert.match(html, /\.dark-toggle:hover, :root\.dark \.dark-toggle:hover \{ opacity:1; background:none;/, 'hover never paints a disc despite button:hover');
+  assert.match(html, /\.dark-toggle:hover, :root\.dark \.dark-toggle:hover \{ opacity:1; background:var\(--bg\);/, 'hover keeps the page-coloured disc despite button:hover');
   assert.match(html, /<button class="dark-toggle" onclick="toggleDark\(\)" title="Switch light or dark" aria-label="Switch light or dark mode"><svg class="moon"[^]*<svg class="sun"/, 'a moon and a sun icon');
   assert.match(html, /:root\.dark \.dark-toggle \.sun \{ display:block; \}/, 'dark mode shows the sun');
 });
