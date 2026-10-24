@@ -1,0 +1,27 @@
+# The publisher on eth-node. It reaches the local Erigon and IPFS APIs on 127.0.0.1, so it shares the
+# host network; it has no inbound port. The key and the ntfy token are files only it can read.
+services:
+  gwei-poster:
+    build: .
+    image: gwei-poster:local
+    container_name: gwei-poster
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 64
+    environment:
+      POSTER_RPC: http://127.0.0.1:28545
+      POSTER_API: https://gwei.domains/api
+      POSTER_CONTRACT: ${POSTER_CONTRACT:?set POSTER_CONTRACT in .env}
+      POSTER_FROM_BLOCK: ${POSTER_FROM_BLOCK:?set POSTER_FROM_BLOCK in .env}
+      POSTER_KEY_FILE: /run/secrets/poster-key
+      POSTER_IPFS_API: http://127.0.0.1:5001
+      POSTER_NTFY_URL: ${POSTER_NTFY_URL:-}
+      POSTER_NTFY_TOKEN_FILE: ${POSTER_NTFY_TOKEN_FILE:-}
+    volumes:
+      - /var/lib/gwei-poster:/data
+      - /etc/gwei-poster/key:/run/secrets/poster-key:ro
+      - /etc/gwei-poster/ntfy-token:/run/secrets/ntfy-token:ro
