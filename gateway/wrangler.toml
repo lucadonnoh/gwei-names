@@ -8,6 +8,8 @@ workers_dev = false
 # diff.gwei.domains service are unaffected (apex isn't matched; diff is proxied through).
 routes = [
   { pattern = "*.gwei.domains/*", zone_name = "gwei.domains" },
+  # The posts API (posts/SPEC.md) lives on the dapp's own origin; every other apex path stays with the dapp.
+  { pattern = "gwei.domains/api/*", zone_name = "gwei.domains" },
 ]
 
 [[durable_objects.bindings]]
@@ -18,6 +20,15 @@ class_name = "RpcBroker"
 type = "durable-object"
 storage = "sqlite"
 
+# The index of .gwei posts, rebuilt from GnsPosts events and the blobs they name (posts-store.js).
+[[durable_objects.bindings]]
+name = "POST_INDEX"
+class_name = "PostIndex"
+
+[exports.PostIndex]
+type = "durable-object"
+storage = "sqlite"
+
 [vars]
 # The same IPFS/IPNS retrieval path applies to every GNS name and CID. Filebase is the public gateway
 # that still answers Worker traffic. ipfs.io and dweb.link are left out: they rate-limit Cloudflare's
@@ -25,9 +36,15 @@ storage = "sqlite"
 # the daily health check fail every day.
 IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.filebase.io"]'
 
-# Daily endpoint health check (the `scheduled` handler in worker.js).
+# GnsPosts (src/GnsPosts.sol) and the block it was deployed in; indexing is off while unset.
+POSTS_CONTRACT = ''
+POSTS_FROM_BLOCK = ''
+# Where the post indexer fetches blobs: Blobscan, which keeps them past the 18 days beacon nodes do, then beacon APIs.
+BLOB_SOURCES = '{"blobscan":"https://api.blobscan.com","beacons":["https://ethereum-beacon-api.publicnode.com"]}'
+
+# Daily endpoint health check, and the post index sync every minute (the `scheduled` handler in worker.js).
 [triggers]
-crons = ["17 6 * * *"]
+crons = ["17 6 * * *", "* * * * *"]
 
 # Keep Workers Logs, so rpc_failed, resolve_stale and endpoint_health events can be read after the fact.
 [observability]

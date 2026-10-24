@@ -18,8 +18,11 @@ import {
 } from './web3-auto.js';
 import {
   AVATAR_PNG_PATH, MULTICALL3, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, decodeAggregate3, encodeAggregate3, nftAvatarRef,
-  profileFromResults, renderLayout, renderProfile, renderUnregistered,
+  postListHtml, profileFromResults, renderLayout, renderProfile, renderUnregistered,
 } from './profile-page.js';
+import { renderFeed, renderPostPage } from './post-page.js';
+import { MAX_POST_BYTES, POST_PATH, parsePost, postPath } from './posts-format.js';
+import { renderMarkdown } from './markdown.js';
 
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6'; // GNS NameNFT (mainnet; same address on Sepolia)
 // Chains a `contentcontract` record may point at, keyed by chain id, with their ERC-3770 short names.
@@ -468,6 +471,113 @@ async function ethCall(chainId, to, data, route, options) {
   const r = await rpcCall(chainId, to, data, route, options);
   return r && r.result ? r.result : null;
 }
+// --- posts --------------------------------------------------------------------------------------
+// Posts (posts/SPEC.md) are indexed by one PostIndex Durable Object, synced every minute by the cron
+// trigger. Name pages read it directly; gwei.domains/api/* exposes it to the dapp and to anyone else.
+const POSTS_CRON = '* * * * *';
+const postIndex = (env) => (env?.POST_INDEX?.getByName ? env.POST_INDEX.getByName('posts') : null);
+// A broken index must never take a profile page down with it.
+async function fromIndex(read, fallback) {
+  try {
+    return await read();
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'posts_index_error', message: String(error?.message || error).slice(0, 200) }));
+    return fallback;
+  }
+}
+
+// Everything under /api is public data, so any origin may read it (and upload posts, which only
+// count once a name's owner authorizes their hash on-chain).
+const API_HEADERS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  'access-control-max-age': '86400',
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'; sandbox",
+};
+function apiJson(value, status = 200, cache = 'no-store') {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': cache, ...API_HEADERS },
+  });
+}
+function apiBytes(bytes, type) {
+  // Posts and blobs are named by their hash, so they never change.
+  return new Response(bytes, {
+    headers: { 'content-type': type, 'cache-control': 'public, max-age=31536000, immutable', ...API_HEADERS },
+  });
+}
+// The request body, or null once it passes `max` bytes.
+async function readBody(request, max) {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.byteLength; }
+  return bytes;
+}
+
+async function handleApi(request, url, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: API_HEADERS });
+  const index = postIndex(env);
+  if (!index) return apiJson({ error: 'Posts are not enabled on this gateway.' }, 503);
+  const path = url.pathname.replace(/\/+$/, '');
+  const hashIn = (re) => re.exec(path)?.[1]?.toLowerCase();
+  let m;
+  try {
+    if (request.method === 'POST') {
+      if (path === '/api/sync') return apiJson(await index.poke());
+      if (path !== '/api/posts' && path !== '/api/posts/preview') return apiJson({ error: 'Not found.' }, 404);
+      const bytes = await readBody(request, MAX_POST_BYTES);
+      if (!bytes) return apiJson({ error: `A post is at most ${MAX_POST_BYTES} bytes.` }, 413);
+      if (path === '/api/posts/preview') {
+        const post = parsePost(bytes);
+        if (!post) return apiJson({ error: 'Not a v1 post: a JSON object with "v": 1, a "title" and a "body".' }, 400);
+        return apiJson({ title: post.title, html: renderMarkdown(post.body) });
+      }
+      const result = await index.upload(bytes, request.headers.get('cf-connecting-ip') || '');
+      return result.error ? apiJson({ error: result.error }, result.status || 400) : apiJson(result, 201);
+    }
+    if (request.method !== 'GET' && request.method !== 'HEAD') return apiJson({ error: 'Method not allowed.' }, 405);
+    if (path === '/api/posts/recent') {
+      const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 20, 1), 50);
+      return apiJson({ posts: await index.recent(limit) }, 200, 'public, max-age=30');
+    }
+    if ((m = hashIn(/^\/api\/posts\/(0x[0-9a-fA-F]{64})\/raw$/))) {
+      const bytes = await index.raw(m);
+      return bytes ? apiBytes(bytes, 'application/json; charset=utf-8') : apiJson({ error: 'Unknown post.' }, 404, 'public, max-age=10');
+    }
+    if ((m = hashIn(/^\/api\/posts\/(0x[0-9a-fA-F]{64})$/))) {
+      const detail = await index.detail(m);
+      return detail ? apiJson(detail, 200, 'public, max-age=30') : apiJson({ error: 'Unknown post.' }, 404, 'public, max-age=10');
+    }
+    if ((m = hashIn(/^\/api\/names\/(0x[0-9a-fA-F]{64})\/posts$/))) {
+      return apiJson({ posts: await index.forCurrentOwner(m, 100) }, 200, 'public, max-age=30');
+    }
+    if ((m = hashIn(/^\/api\/blobs\/(0x01[0-9a-fA-F]{62})$/))) {
+      const bytes = await index.blobBytes(m);
+      return bytes ? apiBytes(bytes, 'application/octet-stream') : apiJson({ error: 'Unknown blob.' }, 404, 'public, max-age=10');
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ event: 'posts_api_error', path, message: String(error?.message || error).slice(0, 200) }));
+    return apiJson({ error: 'The post index is unavailable right now.' }, 503);
+  }
+  return apiJson({ error: 'Not found.' }, 404);
+}
+
 // Gateway pages (errors, "no website", name profiles) share gwei.domains' look via profile-page.js.
 function page(title, body, status, cache = 'public, max-age=60') {
   return htmlResponse(renderLayout({ title, body }), status, cache);
@@ -870,7 +980,9 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
 
-    // Only subdomains of gwei.domains; the apex (the dapp) is routed elsewhere.
+    // The apex is the dapp; only its /api/* routes reach this Worker.
+    if (host === 'gwei.domains' && url.pathname.startsWith('/api/')) return handleApi(request, url, env);
+    // Otherwise only subdomains of gwei.domains.
     if (!host.endsWith('.gwei.domains')) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
     const sub = host.slice(0, -'.gwei.domains'.length); // "donnoh", "diff", "a.b", …
     if (!sub) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
@@ -905,11 +1017,31 @@ export default {
         const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }));
         return new Response(await avatarPng(r.profile.seed, 256, r.profile.page?.color), { status: 200, headers });
       }
+      const pageUrl = `https://${host}/`;
+      const index = postIndex(env);
+      // Posts count for the name's current owner only, so a sold name doesn't carry its old posts.
+      const token = r.profile?.seed && r.profile.owner ? '0x' + r.profile.seed : null;
+      const postMatch = POST_PATH.exec(url.pathname);
+      if (index && token && postMatch) {
+        const post = await fromIndex(() => index.postForToken(token, r.profile.owner, postMatch[1]), null);
+        if (post) {
+          return htmlResponse(renderPostPage({ name, pageUrl, profile: r.profile, post }), 200, 'public, max-age=60', PROFILE_CSP);
+        }
+      }
+      if (index && token && url.pathname === '/feed.xml') {
+        const posts = await fromIndex(() => index.forToken(token, r.profile.owner, 20), []);
+        const bodies = posts.length ? await fromIndex(() => index.bodies(posts.map((p) => p.hash)), []) : [];
+        const feed = renderFeed({ name, pageUrl, posts: posts.map((p, i) => ({ ...p, body: bodies[i] || '' })) });
+        const headers = harden(new Headers({ 'content-type': 'application/atom+xml; charset=utf-8', 'cache-control': 'public, max-age=300' }));
+        return new Response(feed, { status: 200, headers });
+      }
       if (url.pathname !== '/') {
         return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
       }
       if (r.profile) {
-        return htmlResponse(renderProfile({ name, dappHash, pageUrl: `https://${host}/`, profile: r.profile }), 200, undefined, PROFILE_CSP);
+        const posts = index && token ? await fromIndex(() => index.forToken(token, r.profile.owner, 50), []) : [];
+        const postsHtml = postListHtml(posts, postPath);
+        return htmlResponse(renderProfile({ name, dappHash, pageUrl, profile: r.profile, postsHtml }), 200, undefined, PROFILE_CSP);
       }
       return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains/#${dappHash}">set one →</a></p>`, 404);
     }
@@ -986,6 +1118,16 @@ export default {
   // silently (the October 2026 RPC outage was only noticed by visitors), so failures are logged at
   // error level, where Workers Logs keeps them.
   async scheduled(controller, env, ctx) {
+    if (controller.cron === POSTS_CRON) {
+      const index = postIndex(env);
+      if (index) {
+        ctx.waitUntil(index.sync().then(
+          (result) => { if (result?.events || result?.blobs) console.log(JSON.stringify({ event: 'posts_sync', ...result })); },
+          (error) => console.error(JSON.stringify({ event: 'posts_sync_failed', message: String(error?.message || error).slice(0, 200) })),
+        ));
+      }
+      return;
+    }
     ctx.waitUntil(checkEndpoints(env));
   },
 };

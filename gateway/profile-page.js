@@ -12,7 +12,7 @@ const SEL_AGGREGATE3 = '82ad56cb'; // aggregate3((address,bool,bytes)[])
 export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email', 'header', 'gwei-page'];
 
 const pad32 = (h) => h.padStart(64, '0');
-const escapeHtml = (s) =>
+export const escapeHtml = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // --- Multicall3 ------------------------------------------------------------------------------------
@@ -312,7 +312,26 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.actions{margin-top:16px}' +
   '.btn{display:inline-block;padding:12px 24px;font-size:12px;text-transform:uppercase;letter-spacing:.1em;background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--btn-bg);text-decoration:none;margin:8px 8px 0 0}' +
   '.btn:hover{background:var(--btn-hover);opacity:1}.btn.secondary{background:var(--bg);color:var(--fg)}' +
-  '.note{font-size:12px;color:var(--muted);margin-top:40px;line-height:1.6}.note a{color:var(--muted)}';
+  '.note{font-size:12px;color:var(--muted);margin-top:40px;line-height:1.6}.note a{color:var(--muted)}' +
+  '.section{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:32px 0 4px}' +
+  '.post-link{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--panel);color:var(--fg);text-decoration:none;font-size:14px}' +
+  '.post-link:hover{opacity:.55}.post-date{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}' +
+  '.post-name{flex:1;overflow-wrap:anywhere}.post-link .badge{margin:0}' +
+  '.byline{display:inline-flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none;font-size:13px;margin-bottom:28px}' +
+  '.byline .avatar{width:32px;height:32px;margin:0}' +
+  '.post-title{font-size:24px;font-weight:600;line-height:1.25;overflow-wrap:anywhere;margin-bottom:6px}' +
+  '.post-meta{font-size:12px;color:var(--muted);letter-spacing:.03em;margin-bottom:28px}' +
+  '.post-body{font-size:15px;line-height:1.65;overflow-wrap:anywhere}' +
+  '.post-body p,.post-body ul,.post-body ol,.post-body blockquote,.post-body pre{font-size:15px;margin:0 0 16px}' +
+  '.post-body h2{font-size:19px;line-height:1.3;margin:32px 0 10px}.post-body h3{font-size:16px;margin:28px 0 8px}' +
+  '.post-body h4{font-size:12px;text-transform:uppercase;letter-spacing:.1em;margin:24px 0 8px}' +
+  '.post-body ul,.post-body ol{padding-left:22px}.post-body li{margin-bottom:4px}' +
+  '.post-body blockquote{border-left:2px solid var(--muted);padding-left:14px;color:var(--muted)}' +
+  '.post-body pre{background:var(--panel);padding:12px 14px;overflow-x:auto;font-size:13px;line-height:1.5}' +
+  '.post-body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em;background:var(--panel);padding:1px 4px}' +
+  '.post-body pre code{background:none;padding:0;font-size:inherit}' +
+  '.post-body img{display:block;max-width:100%;height:auto;margin:0 auto}' +
+  '.post-body hr{border:0;border-top:1px solid var(--muted);opacity:.4;margin:28px 0}';
 
 export function renderLayout({ title, head = '', body, subtitle = '' }) {
   return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -321,10 +340,10 @@ export function renderLayout({ title, head = '', body, subtitle = '' }) {
     (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body;
 }
 
-function metaTags({ title, description, url, image, imageSize }) {
+export function metaTags({ title, description, url, image, imageSize, type = 'profile' }) {
   const tag = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
   return tag('name', 'description', description) +
-    tag('property', 'og:type', 'profile') + tag('property', 'og:site_name', 'Gwei Name Service') +
+    tag('property', 'og:type', type) + tag('property', 'og:site_name', 'Gwei Name Service') +
     tag('property', 'og:title', title) + tag('property', 'og:description', description) +
     tag('property', 'og:url', url) + tag('property', 'og:image', image) +
     (imageSize ? tag('property', 'og:image:width', imageSize) + tag('property', 'og:image:height', imageSize) : '') +
@@ -334,7 +353,7 @@ function metaTags({ title, description, url, image, imageSize }) {
 
 // `name` is the full name ("alice.gwei"), `dappHash` its gwei.domains link fragment, `pageUrl` this page.
 // Readable text on an accent background: black or white, by relative luminance.
-function textOn(hex) {
+export function textOn(hex) {
   const [r, g, b] = rgb(hex).map((v) => {
     const c = v / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -342,7 +361,17 @@ function textOn(hex) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#000' : '#fff';
 }
 
-export function renderProfile({ name, dappHash, pageUrl, profile }) {
+// Posts (posts/SPEC.md) listed under the profile, newest first. Each is { hash, title, time, onchain }.
+export function postListHtml(posts, postPath) {
+  if (!posts?.length) return '';
+  const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+  return '<div class="section">Posts</div><div class="posts">' + posts.map((p) =>
+    `<a class="post-link" href="${escapeHtml(postPath(p.hash, p.title))}"><span class="post-date">${day(p.time)}</span>` +
+    `<span class="post-name">${escapeHtml(p.title)}</span>${p.onchain ? '' : '<span class="badge">Publishing</span>'}</a>`).join('') +
+    '</div>';
+}
+
+export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = '' }) {
   const t = profile.text || {};
   const page = profile.page || {};
   const accent = page.color || null;
@@ -367,22 +396,39 @@ export function renderProfile({ name, dappHash, pageUrl, profile }) {
     (links.length
       ? `<div class="links">${links.map((href) => `<a href="${escapeHtml(href)}" rel="nofollow ugc noopener">${escapeHtml(href.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a>`).join('')}</div>`
       : '') +
+    postsHtml +
     `<div class="panel">${rows}</div>` +
     `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="${dapp}">View on gwei.domains</a>` +
     `<a class="btn secondary" href="${escapeHtml(share)}" rel="noopener">Share</a></div>` +
     `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
     `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
     '<a href="https://gwei.domains/guide/">host a website →</a></p>';
+  const feed = postsHtml ? `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` : '';
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
-    head: avatar?.startsWith('https://')
+    head: feed + (avatar?.startsWith('https://')
       ? metaTags({ title: name, description, url: pageUrl, image: avatar })
       : profile.seed
         ? metaTags({ title: name, description, url: pageUrl, image: new URL(AVATAR_PNG_PATH, pageUrl).href, imageSize: '256' })
-        : metaTags({ title: name, description, url: pageUrl, image: 'https://gwei.domains/icon-512.png' }),
+        : metaTags({ title: name, description, url: pageUrl, image: 'https://gwei.domains/icon-512.png' })),
     body,
   });
+}
+
+// The avatar a page shows for a name: its image record (or NFT), else the generated mark.
+export function avatarHtml(profile) {
+  const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
+  if (avatar) return `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">`;
+  return profile.seed ? avatarSvg(profile.seed, profile.page?.color) : '';
+}
+
+// The image link previews use: the avatar when it's a plain https URL, else the generated PNG.
+export function shareImage(profile, pageUrl) {
+  const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
+  if (avatar?.startsWith('https://')) return { image: avatar };
+  if (profile.seed) return { image: new URL(AVATAR_PNG_PATH, pageUrl).href, imageSize: '256' };
+  return { image: 'https://gwei.domains/icon-512.png' };
 }
 
 export function renderUnregistered({ name, dappHash }) {

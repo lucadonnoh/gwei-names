@@ -231,12 +231,12 @@ function makeRpcBrokerNamespace(fetchMock, env) {
 }
 
 // Drive the worker; awaits ctx.waitUntil so cache writes settle before the next call.
-async function invoke(urlStr, { method = 'GET', headers = {}, env = {}, cache, fetchMock } = {}) {
+async function invoke(urlStr, { method = 'GET', headers = {}, body, env = {}, cache, fetchMock } = {}) {
   const ctx = { _p: [], waitUntil(p) { this._p.push(Promise.resolve(p)); } };
   globalThis.caches = { default: cache };
   globalThis.fetch = fetchMock;
   if (!env.RPC_BROKER) env.RPC_BROKER = makeRpcBrokerNamespace(fetchMock, env);
-  const res = await worker.fetch(new Request(urlStr, { method, headers }), env, ctx);
+  const res = await worker.fetch(new Request(urlStr, { method, headers, body }), env, ctx);
   await Promise.allSettled(ctx._p);
   return res;
 }
@@ -1405,4 +1405,187 @@ test('profiles: primary-name badge, generated avatar as the preview image, and i
   // Not a profile (no records answer): the avatar path is just a missing page.
   res = await invoke('https://nobody.gwei.domains/.well-known/gwei-avatar.png', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
   assert.equal(res.status, 404);
+});
+
+// ---- posts ----------------------------------------------------------------------------------
+// A stand-in for the PostIndex Durable Object namespace with canned answers; the index itself is
+// tested in posts.test.js. `calls` records every method call.
+const POST_A = { hash: '0x' + 'a1'.repeat(32), title: 'Exploring the blobspace', time: 1667844963,
+  onchain: { blob: '0x01' + 'b1'.repeat(31), tx: '0x' + 'c1'.repeat(32), block: 26263300, time: 1792850000, publisher: '0x' + '9b'.repeat(20) } };
+const POST_B = { hash: '0x' + 'a2'.repeat(32), title: 'Pending <one>', time: 1700000000, onchain: null };
+const BODIES = { [POST_A.hash]: '## Hello\n\nSome **math**: $y_0$.', [POST_B.hash]: 'pending body' };
+function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
+  const calls = [];
+  const answer = (name, value) => async (...args) => {
+    calls.push([name, ...args]);
+    if (fail) throw new Error('index down');
+    return typeof value === 'function' ? value(...args) : value;
+  };
+  const stub = {
+    forToken: answer('forToken', posts),
+    postForToken: answer('postForToken', (token, owner, prefix) => {
+      const p = posts.find((x) => x.hash.slice(2, 14) === prefix);
+      return p ? { ...p, body: BODIES[p.hash] } : null;
+    }),
+    bodies: answer('bodies', (hashes) => hashes.map((h) => BODIES[h] ?? null)),
+    upload: answer('upload', (bytes) => (bytes.length ? { hash: '0x' + 'd1'.repeat(32) } : { status: 400, error: 'Not a v1 post.' })),
+    detail: answer('detail', (hash) => (hash === POST_A.hash ? { hash, title: POST_A.title, body: BODIES[hash] } : null)),
+    raw: answer('raw', (hash) => (hash === POST_A.hash ? utf8('{"v":1}') : null)),
+    blobBytes: answer('blobBytes', (vh) => (vh === POST_A.onchain.blob ? new Uint8Array([1, 2, 3]) : null)),
+    recent: answer('recent', [{ name: 'alice.gwei', ...POST_A }]),
+    forCurrentOwner: answer('forCurrentOwner', posts),
+    poke: answer('poke', { throttled: true }),
+    sync: answer('sync', { events: 2, blobs: 1 }),
+  };
+  return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
+}
+const aliceProfile = () => makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) }) });
+const TOKEN_HEX = '0x' + pad32('1234');
+
+test('a profile lists the owner’s posts, newest first, with a feed link', async () => {
+  const POST_INDEX = fakePostIndex();
+  const res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX } });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /<div class="section">Posts<\/div>/);
+  assert.match(html, /<a class="post-link" href="\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"><span class="post-date">2022-11-07<\/span><span class="post-name">Exploring the blobspace<\/span><\/a>/);
+  assert.match(html, /<span class="post-name">Pending &lt;one&gt;<\/span><span class="badge">Publishing<\/span>/);
+  assert.match(html, /<link rel="alternate" type="application\/atom\+xml" title="alice\.gwei" href="\/feed\.xml">/);
+  assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'forToken'), ['forToken', TOKEN_HEX, '0x' + pad32('b0b').slice(24), 50],
+    'posts are read for the token and its current owner (ownerOf), not the resolved address');
+});
+
+test('a profile without posts has no posts section, and a broken index only drops the list', async () => {
+  let res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX: fakePostIndex({ posts: [] }) } });
+  let html = await res.text();
+  assert.doesNotMatch(html, /class="section">Posts/);
+  assert.doesNotMatch(html, /feed\.xml/);
+  res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX: fakePostIndex({ fail: true }) } });
+  assert.equal(res.status, 200);
+  html = await res.text();
+  assert.match(html, /<div class="name">alice\.gwei<\/div>/);
+  assert.doesNotMatch(html, /class="section">Posts/);
+});
+
+test('a post page renders the body safely and shows where it lives on Ethereum', async () => {
+  const POST_INDEX = fakePostIndex();
+  let res = await invoke('https://alice.gwei.domains/posts/a1a1a1a1a1a1-whatever-slug', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX } });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
+  let html = await res.text();
+  assert.match(html, /<title>Exploring the blobspace · alice\.gwei<\/title>/);
+  assert.match(html, /<h2 class="post-title">Exploring the blobspace<\/h2><div class="post-meta">2022-11-07<\/div>/);
+  assert.match(html, /<div class="post-body"><h2 id="hello">Hello<\/h2><p>Some <strong>math<\/strong>: <math><msub><mi>y<\/mi><mn>0<\/mn><\/msub><\/math>\.<\/p><\/div>/);
+  assert.match(html, /On Ethereum since block <a href="https:\/\/etherscan\.io\/block\/26263300">26263300<\/a>/);
+  assert.match(html, /href="https:\/\/blobscan\.com\/blob\/0x01b1b1/);
+  assert.match(html, /<meta property="og:type" content="article">/);
+  assert.match(html, /<meta property="og:url" content="https:\/\/alice\.gwei\.domains\/posts\/a1a1a1a1a1a1-exploring-the-blobspace">/);
+  assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'postForToken').slice(1), [TOKEN_HEX, '0x' + pad32('b0b').slice(24), 'a1a1a1a1a1a1']);
+
+  res = await invoke('https://alice.gwei.domains/posts/a2a2a2a2a2a2', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX } });
+  assert.match(await res.text(), /Authorized by the owner, waiting for its blob/);
+
+  res = await invoke('https://alice.gwei.domains/posts/ffffffffffff-nope', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX } });
+  assert.equal(res.status, 404);
+});
+
+test('the Atom feed carries rendered, escaped post bodies', async () => {
+  const res = await invoke('https://alice.gwei.domains/feed.xml', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX: fakePostIndex() } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/atom+xml; charset=utf-8');
+  const xml = await res.text();
+  assert.match(xml, /^<\?xml version="1\.0" encoding="utf-8"\?><feed xmlns="http:\/\/www\.w3\.org\/2005\/Atom"><title>alice\.gwei<\/title>/);
+  assert.match(xml, /<entry><title>Exploring the blobspace<\/title><link href="https:\/\/alice\.gwei\.domains\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"\/><id>urn:gwei-post:0xa1a1/);
+  assert.match(xml, /<content type="html">&lt;h2 id=&quot;hello&quot;&gt;Hello&lt;\/h2&gt;/);
+  assert.match(xml, /<title>Pending &lt;one&gt;<\/title>/);
+});
+
+test('posts only exist on profile pages: a name with a website serves its own /posts paths', async () => {
+  const POST_INDEX = fakePostIndex();
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('site page', { status: 200 }) });
+  const res = await invoke('https://donnoh.gwei.domains/posts/a1a1a1a1a1a1', { cache: makeCache(), fetchMock, env: { POST_INDEX } });
+  assert.equal(await res.text(), 'site page');
+  assert.equal(POST_INDEX.calls.length, 0);
+});
+
+test('the posts API: uploads, reads, CORS and sandboxing', async () => {
+  const POST_INDEX = fakePostIndex();
+  const env = { POST_INDEX };
+  const fetchMock = makeFetch({});
+  const api = (path, opts = {}) => invoke('https://gwei.domains' + path, { cache: makeCache(), fetchMock, env, ...opts });
+
+  let res = await api('/api/posts', { method: 'OPTIONS' });
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.match(res.headers.get('access-control-allow-methods'), /POST/);
+
+  res = await api('/api/posts', { method: 'POST', body: '{"v":1,"title":"t","body":"b"}', headers: { 'cf-connecting-ip': '203.0.113.7' } });
+  assert.equal(res.status, 201);
+  assert.deepEqual(await res.json(), { hash: '0x' + 'd1'.repeat(32) });
+  const upload = POST_INDEX.calls.find((c) => c[0] === 'upload');
+  assert.equal(new TextDecoder().decode(upload[1]), '{"v":1,"title":"t","body":"b"}');
+  assert.equal(upload[2], '203.0.113.7');
+  assert.equal(res.headers.get('content-security-policy'), "default-src 'none'; sandbox");
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+
+  res = await api('/api/posts', { method: 'POST', body: '' });
+  assert.equal(res.status, 400);
+  res = await api('/api/posts', { method: 'POST', body: 'x'.repeat(130000) });
+  assert.equal(res.status, 413);
+
+  res = await api('/api/posts/preview', { method: 'POST', body: '{"v":1,"title":"T","body":"<b>hi</b> *there*"}' });
+  assert.deepEqual(await res.json(), { title: 'T', html: '<p>&lt;b&gt;hi&lt;/b&gt; <em>there</em></p>' });
+  res = await api('/api/posts/preview', { method: 'POST', body: 'nope' });
+  assert.equal(res.status, 400);
+
+  res = await api('/api/posts/' + POST_A.hash.toUpperCase().replace('0X', '0x'));
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).title, POST_A.title);
+  res = await api('/api/posts/' + POST_B.hash);
+  assert.equal(res.status, 404);
+
+  res = await api(`/api/posts/${POST_A.hash}/raw`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+  assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
+  assert.equal(await res.text(), '{"v":1}');
+
+  res = await api(`/api/blobs/${POST_A.onchain.blob}`);
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [1, 2, 3]);
+  assert.equal(res.headers.get('content-type'), 'application/octet-stream');
+
+  res = await api(`/api/names/${TOKEN_HEX}/posts`);
+  assert.equal((await res.json()).posts.length, 2);
+  res = await api('/api/posts/recent?limit=500');
+  assert.equal((await res.json()).posts[0].name, 'alice.gwei');
+  assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'recent'), ['recent', 50], 'limit is capped');
+
+  res = await api('/api/sync', { method: 'POST' });
+  assert.deepEqual(await res.json(), { throttled: true });
+  res = await api('/api/nothing');
+  assert.equal(res.status, 404);
+  res = await api('/api/posts/' + POST_A.hash, { method: 'DELETE' });
+  assert.equal(res.status, 405);
+
+  res = await invoke('https://gwei.domains/api/posts/recent', { cache: makeCache(), fetchMock, env: { POST_INDEX: fakePostIndex({ fail: true }) } });
+  assert.equal(res.status, 503);
+  res = await invoke('https://gwei.domains/api/posts/recent', { cache: makeCache(), fetchMock, env: {} });
+  assert.equal(res.status, 503);
+});
+
+test('the every-minute cron syncs the post index; the daily one checks endpoints', async () => {
+  const POST_INDEX = fakePostIndex();
+  const waits = [];
+  const ctx = { waitUntil: (p) => waits.push(p) };
+  const logged = [];
+  const log = console.log;
+  console.log = (line) => logged.push(line);
+  try {
+    await worker.scheduled({ cron: '* * * * *' }, { POST_INDEX }, ctx);
+    await Promise.all(waits);
+  } finally {
+    console.log = log;
+  }
+  assert.deepEqual(POST_INDEX.calls.map((c) => c[0]), ['getByName', 'sync']);
+  assert.match(logged.join('\n'), /"event":"posts_sync","events":2,"blobs":1/);
 });
