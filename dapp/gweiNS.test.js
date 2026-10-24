@@ -2599,3 +2599,13 @@ test('the theme choice is shared with name pages through a gwei.domains cookie',
   assert.equal(run('', '1', false).dark, true, 'the old local flag still counts');
   assert.equal(run('', null, false).toggle(), 'gwei-theme=dark;domain=gwei.domains;path=/;max-age=31536000;samesite=lax;secure');
 });
+
+test('posts: editing the form clears a stale form error', () => {
+  const start = html.indexOf('function updatePostCost() {');
+  const end = html.indexOf('\nfunction postsFormHtml()', start);
+  const classes = new Set(['status', 'show', 'error']);
+  const status = { classList: { contains: (c) => classes.has(c), remove: (c) => classes.delete(c) } };
+  const context = vm.createContext({ $: (id) => (id === 'status' ? status : null) });
+  vm.runInContext(html.slice(start, end) + '\nupdatePostCost();', context);
+  assert.equal(classes.has('show'), false);
+});

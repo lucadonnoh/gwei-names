@@ -6308,6 +6308,9 @@ function readPostForm() {
   return { title, body, bytes: postBytesFrom(title, body) };
 }
 function updatePostCost() {
+  // An error about the form ("give the post a title") is stale as soon as the form changes.
+  const status = $('status');
+  if (status?.classList.contains('error')) status.classList.remove('show');
   const el = $('ppCost');
   if (!el) return;
   const { bytes } = readPostForm();
