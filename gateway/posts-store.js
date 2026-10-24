@@ -81,6 +81,8 @@ const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
 const POS = 4294967296; // block * 2^32 + log index orders events, however many logs a block has
 const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 // The first blob that really carries a post, as one string column (a correlated subquery).
+// A post's date: the block of the first blob that carries it, else its first authorization.
+const ONCHAIN_TS = '(SELECT p.ts FROM pub p JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
 const ONCHAIN = "(SELECT p.blob || '|' || p.tx || '|' || p.block || '|' || p.ts || '|' || p.publisher FROM pub p " +
   'JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
 function parseOnchain(value) {
@@ -157,7 +159,7 @@ export class PostStore {
   storeContent(hash, bytes, post) {
     this.sql.exec(
       'INSERT OR IGNORE INTO content (hash, bytes, title, time, received) VALUES (?, ?, ?, ?, ?)',
-      hash, toBuffer(bytes), post.title, post.time, this.now(),
+      hash, toBuffer(bytes), post.title, null, this.now(),
     );
   }
 
@@ -190,7 +192,8 @@ export class PostStore {
       'SELECT a.token, a.author, a.publisher, a.fee, a.tx, a.block, a.ts, n.name FROM auth a LEFT JOIN names n ON n.token = a.token ' +
       'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
     ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
-    return { hash, title: post.title, body: post.body, time: post.time, authorizations, onchain: this.onchain(hash) };
+    const onchain = this.onchain(hash);
+    return { hash, title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
   }
 
   // Posts shown for a name: authorized by its current owner, not withdrawn since, with known bytes,
@@ -201,15 +204,15 @@ export class PostStore {
     const rows = this.rows(
       'WITH latest AS (SELECT hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ' +
       'FROM auth WHERE token = ? AND author = ? GROUP BY hash) ' +
-      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, c.time, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
+      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
       'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ? + r.idx > l.pos) ' +
       (prefix ? 'AND substr(l.hash, 3, ?) = ? ' : '') +
-      ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(time, first_ts) DESC LIMIT ?',
+      ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(onchain_ts, first_ts) DESC LIMIT ?',
       POS, token, owner, token, owner, POS, ...(prefix ? [prefix.length, prefix] : []),
       this.now() - PENDING_SECONDS, Math.min(Math.max(limit, 1), MAX_LIST),
     );
     return rows.map((row) => ({
-      hash: row.hash, title: row.title, time: row.time ?? row.first_ts, authorized: row.first_ts, onchain: parseOnchain(row.onchain),
+      hash: row.hash, title: row.title, time: row.onchain_ts ?? row.first_ts, authorized: row.first_ts, onchain: parseOnchain(row.onchain),
     }));
   }
 
@@ -227,7 +230,7 @@ export class PostStore {
     }
     const candidates = this.rows(
       'WITH latest AS (SELECT token, author, hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ' +
-      `SELECT * FROM (SELECT l.token, l.author, l.hash, l.pos, l.first_ts, l.last_ts, n.name, c.title, c.time, ${ONCHAIN} AS onchain ` +
+      `SELECT * FROM (SELECT l.token, l.author, l.hash, l.pos, l.first_ts, l.last_ts, n.name, c.title, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain ` +
       "FROM latest l JOIN content c ON c.hash = l.hash JOIN names n ON n.token = l.token AND n.name != '' " +
       'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = l.token AND r.hash = l.hash AND r.author = l.author AND r.block * ? + r.idx > l.pos)) ' +
       'WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY pos DESC LIMIT ?',
@@ -239,7 +242,7 @@ export class PostStore {
     for (const c of candidates) {
       if (owners.get(c.token) !== c.author || (perName.get(c.token) || 0) >= RECENT_PER_NAME) continue;
       perName.set(c.token, (perName.get(c.token) || 0) + 1);
-      posts.push({ name: c.name, token: c.token, hash: c.hash, title: c.title, time: c.time ?? c.first_ts, authorized: c.first_ts, onchain: parseOnchain(c.onchain) });
+      posts.push({ name: c.name, token: c.token, hash: c.hash, title: c.title, time: c.onchain_ts ?? c.first_ts, authorized: c.first_ts, onchain: parseOnchain(c.onchain) });
       if (posts.length >= limit) break;
     }
     this.recentCache = { at: now, limit, posts };

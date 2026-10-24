@@ -6264,23 +6264,16 @@ function profileFormHtml() {
 const POST_MAX_BYTES = 126968;
 const POST_FEE_GAS = 25600n; // the publisher's expected gas for a one-post blob transaction
 const BLOB_GAS = 131072n;
-// The bytes the gateway and publisher expect: v, title, body, time, in that order, no whitespace.
-function postBytesFrom(title, body, time) {
-  return new TextEncoder().encode(JSON.stringify({ v: 1, title, body, time }));
+// The bytes the gateway and publisher expect: v, title, body, in that order, no whitespace. A post
+// has no date of its own: it is dated by the block of the blob that carries it.
+function postBytesFrom(title, body) {
+  return new TextEncoder().encode(JSON.stringify({ v: 1, title, body }));
 }
 // Same slug as the gateway (gateway/posts-format.js postPath).
 function postPathFor(hash, title) {
   const slug = (title || '').normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
   return `/posts/${hash.slice(2, 14)}${slug ? '-' + slug : ''}`;
-}
-// A date input (YYYY-MM-DD) → Unix seconds: now for today, noon UTC for any other day, so posts
-// written today keep their order and back-dated ones (ported articles) show the right day.
-function postTimeFromDate(value, now = Date.now()) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
-  const today = new Date(now);
-  const isToday = !m || (Number(m[1]) === today.getFullYear() && Number(m[2]) === today.getMonth() + 1 && Number(m[3]) === today.getDate());
-  return isToday ? Math.floor(now / 1000) : Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) / 1000);
 }
 // What the dapp pays the publisher per post: three times a one-post blob transaction at current
 // prices, rounded up to a gwei (gwei_poster.quote).
@@ -6312,7 +6305,7 @@ async function refreshPostQuote() {
 function readPostForm() {
   const title = ($('ppTitle')?.value || '').trim();
   const body = $('ppBody')?.value || '';
-  return { title, body, bytes: postBytesFrom(title, body, postTimeFromDate($('ppDate')?.value)) };
+  return { title, body, bytes: postBytesFrom(title, body) };
 }
 function updatePostCost() {
   const el = $('ppCost');
@@ -6328,15 +6321,12 @@ function updatePostCost() {
 function postsFormHtml() {
   const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
   const hasWebsite = currentHasContenthash || !!currentContentContract;
-  const today = new Date();
-  const dateValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return (pageUrl
     ? `<div class="profile-hint">Posts appear on <a href="${pageUrl}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>${hasWebsite ? ' once no website is set: the website takes the page while it is' : ''}. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
     : '') +
     '<div class="post-list" id="ppList" aria-live="polite"></div>' +
     '<div class="profile-section">New post</div>' +
     '<label for="ppTitle">Title</label><input type="text" id="ppTitle" maxlength="200">' +
-    `<label for="ppDate">Date</label><input type="date" id="ppDate" value="${dateValue}">` +
     '<label for="ppBody">Text</label><textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
     '<div class="profile-hint">Markdown: # heading, **bold**, *italic*, [link](https://…), ![image](https://… or ipfs://…), - list, &gt; quote, `code`, $math$.</div>' +
     '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +

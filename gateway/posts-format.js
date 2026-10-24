@@ -17,8 +17,9 @@ export const MAX_TITLE_CHARS = 200;
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 export const postHash = (bytes) => '0x' + toHex(keccak256(bytes));
 
-// A v1 post: { "v": 1, "title": string, "body": string, "time"?: unix seconds }. Unknown fields are
-// ignored, so later versions can add some. Returns null for anything else.
+// A v1 post: { "v": 1, "title": string, "body": string }. Unknown fields are ignored, so later
+// versions can add some. A post has no date of its own: it is dated by the block of the blob that
+// carries it. Returns null for anything else.
 export function parsePost(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > MAX_POST_BYTES) return null;
   let doc;
@@ -31,15 +32,12 @@ export function parsePost(bytes) {
   if (typeof doc.title !== 'string' || typeof doc.body !== 'string') return null;
   const title = doc.title.trim();
   if (!title || [...title].length > MAX_TITLE_CHARS) return null;
-  const time = Number.isSafeInteger(doc.time) && doc.time > 0 && doc.time < 1e11 ? doc.time : null;
-  return { title, body: doc.body, time };
+  return { title, body: doc.body };
 }
 
 // Serialize a post the way the dapp does: fixed key order, no whitespace.
-export function encodePost({ title, body, time }) {
-  const doc = { v: 1, title, body };
-  if (time != null) doc.time = time;
-  return new TextEncoder().encode(JSON.stringify(doc));
+export function encodePost({ title, body }) {
+  return new TextEncoder().encode(JSON.stringify({ v: 1, title, body }));
 }
 
 // Blob → payload bytes, or null if any field element has a nonzero top byte (not this encoding).

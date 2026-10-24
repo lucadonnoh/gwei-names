@@ -35,11 +35,8 @@ SETUP_PATH = os.environ.get("POSTER_TRUSTED_SETUP", os.path.join(os.path.dirname
 SETUP = ckzg.load_trusted_setup(SETUP_PATH, 0)
 
 
-def post(title, body, time_=None):
-    doc = {"v": 1, "title": title, "body": body}
-    if time_ is not None:
-        doc["time"] = time_
-    return json.dumps(doc, ensure_ascii=False, separators=(",", ":")).encode()
+def post(title, body):
+    return json.dumps({"v": 1, "title": title, "body": body}, ensure_ascii=False, separators=(",", ":")).encode()
 
 
 class Formats(unittest.TestCase):
@@ -56,12 +53,12 @@ class Formats(unittest.TestCase):
         self.assertEqual(gp.rlp(long).hex(), "b838" + long.hex())
 
     def test_blob_matches_the_gateway(self):
-        # gateway/posts-format.js: encodeBlob([encodePost({title:'Hello',body:'First **post**',time:1700000000}),
+        # gateway/posts-format.js: encodeBlob([encodePost({title:'Hello',body:'First **post**'}),
         #                                      encodePost({title:'Ünïcode',body:'x'.repeat(5000)})]) → sha256
-        posts = [post("Hello", "First **post**", 1700000000), post("Ünïcode", "x" * 5000)]
-        self.assertEqual(posts[0], b'{"v":1,"title":"Hello","body":"First **post**","time":1700000000}')
+        posts = [post("Hello", "First **post**"), post("Ünïcode", "x" * 5000)]
+        self.assertEqual(posts[0], b'{"v":1,"title":"Hello","body":"First **post**"}')
         blob = gp.encode_blob(posts)
-        self.assertEqual(hashlib.sha256(blob).hexdigest(), "b74ebebb5df2cd4faacfeb7527e69730acc6eb8a20392d4bed18014ee54eb960")
+        self.assertEqual(hashlib.sha256(blob).hexdigest(), "9c3e258e73193074a80ba36a65577f1676207ad0e437dcfdecb37dc1ca682a95")
         self.assertEqual(gp.decode_blob(blob), posts)
         self.assertTrue(all(blob[i * 32] == 0 for i in range(4096)))
 
@@ -516,7 +513,7 @@ class EndToEnd(unittest.TestCase):
         signer = gp.Signer(os.urandom(32))
         self.rpc("anvil_setBalance", signer.address, hex(10**17))
         poster = self.make_poster(signer)
-        a, b = post("First", "Hello from **anvil**", 1700000000), post("Second", "ü" * 3000)
+        a, b = post("First", "Hello from **anvil**"), post("Second", "ü" * 3000)
         ha, hb = "0x" + gp.keccak(a).hex(), "0x" + gp.keccak(b).hex()
         FakeApi.posts.update({ha: a, hb: b})
         self.authorize(ha, signer.address, 10**15)

@@ -26,14 +26,15 @@ test('event topics are the keccak of the GnsPosts event signatures', () => {
 });
 
 test('parsePost accepts v1 posts and rejects everything else', () => {
-  assert.deepEqual(parsePost(encodePost({ title: ' Hello ', body: 'hi', time: 1700000000 })), { title: 'Hello', body: 'hi', time: 1700000000 });
-  assert.deepEqual(parsePost(utf8('{"v":1,"title":"t","body":"","extra":[1]}')), { title: 't', body: '', time: null });
+  assert.deepEqual(parsePost(encodePost({ title: ' Hello ', body: 'hi' })), { title: 'Hello', body: 'hi' });
+  assert.deepEqual(parsePost(utf8('{"v":1,"title":"t","body":"","extra":[1]}')), { title: 't', body: '' });
+  assert.deepEqual(parsePost(utf8('{"v":1,"title":"t","body":"b","time":1}')), { title: 't', body: 'b' }, 'a post has no date of its own');
+  assert.equal(new TextDecoder().decode(encodePost({ title: 't', body: 'b' })), '{"v":1,"title":"t","body":"b"}');
   for (const bad of ['', 'nope', '[]', '{"v":2,"title":"t","body":"b"}', '{"v":1,"title":"","body":"b"}',
     '{"v":1,"title":"t"}', '{"v":1,"title":1,"body":"b"}', `{"v":1,"title":"${'x'.repeat(201)}","body":"b"}`]) {
     assert.equal(parsePost(utf8(bad)), null, bad);
   }
   assert.equal(parsePost(Uint8Array.from([0x7b, 0xff, 0x7d])), null, 'invalid UTF-8');
-  assert.equal(parsePost(utf8('{"v":1,"title":"t","body":"b","time":-5}')).time, null);
   const big = encodePost({ title: 't', body: 'x'.repeat(MAX_POST_BYTES) });
   assert.equal(parsePost(big), null, 'over the size limit');
 });
@@ -279,8 +280,8 @@ function makeStore(world, env = {}) {
   return store;
 }
 
-function postBytes(title, body = 'Body of ' + title, time = 1_690_000_000) {
-  const bytes = encodePost({ title, body, time });
+function postBytes(title, body = 'Body of ' + title) {
+  const bytes = encodePost({ title, body });
   return { bytes, hash: postHash(bytes) };
 }
 
@@ -466,8 +467,8 @@ test('removal hides a post until its author authorizes it again', async () => {
 test('recent lists posts across names and drops names whose owner changed', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
-  const a = postBytes('Alice post', 'a', 1_700_000_100);
-  const b = postBytes('Bob post', 'b', 1_700_000_200);
+  const a = postBytes('Alice post', 'a');
+  const b = postBytes('Bob post', 'b');
   const vh = versionedHash(8);
   world.blobs[vh] = encodeBlob([a.bytes, b.bytes]);
   world.owners = { [TOKEN]: ALICE, [TOKEN2]: BOB };
@@ -524,7 +525,7 @@ test('a claimed blob stuffed with junk only records the claimed entries', async 
   const world = fakeWorld();
   const store = makeStore(world);
   const real = postBytes('Real');
-  const junk = Array.from({ length: 500 }, (_, i) => postBytes('j' + i, '', 1).bytes);
+  const junk = Array.from({ length: 500 }, (_, i) => postBytes('j' + i, '').bytes);
   const vh = versionedHash(20);
   world.blobs[vh] = encodeBlob([...junk, real.bytes]);
   world.logs.push(authorized(500, 0, TOKEN, real.hash, ALICE, ALICE, 0n), published(501, 0, real.hash, vh, BOB));
@@ -598,8 +599,8 @@ test('recent shows at most two posts per name', async () => {
   const store = makeStore(world);
   world.owners = { [TOKEN]: ALICE, [TOKEN2]: BOB };
   world.names = { [TOKEN]: 'alice.gwei', [TOKEN2]: 'bob.gwei' };
-  const posts = Array.from({ length: 5 }, (_, i) => postBytes('alice ' + i, 'b', 1_700_000_000 + i));
-  const bob = postBytes('bob post', 'b', 1_600_000_000);
+  const posts = Array.from({ length: 5 }, (_, i) => postBytes('alice ' + i, 'b'));
+  const bob = postBytes('bob post', 'b');
   const vh = versionedHash(23);
   world.blobs[vh] = encodeBlob([...posts.map((p) => p.bytes), bob.bytes]);
   world.logs.push(authorized(400, 0, TOKEN2, bob.hash, BOB), published(400, 1, bob.hash, vh));
@@ -688,4 +689,30 @@ test('fuzz: rendered posts only ever contain the renderer’s own tags and attri
     });
     assert.doesNotMatch(text, /[<>"]/, `stray markup ${JSON.stringify(text)} from ${JSON.stringify(input)}`);
   }
+});
+
+test('a post is dated by the block of the blob that carries it, else by its authorization', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const early = postBytes('Authorized first, published later');
+  const late = postBytes('Authorized second, published first');
+  const pending = postBytes('Not in a blob yet');
+  const vhA = versionedHash(30), vhB = versionedHash(31);
+  world.blobs[vhA] = encodeBlob([late.bytes]);
+  world.blobs[vhB] = encodeBlob([early.bytes]);
+  for (const p of [early, late, pending]) store.upload(p.bytes, 'ip');
+  world.logs.push(
+    authorized(500, 0, TOKEN, early.hash, ALICE), authorized(510, 0, TOKEN, late.hash, ALICE),
+    published(520, 0, late.hash, vhA), published(600, 0, early.hash, vhB),
+    authorized(700, 0, TOKEN, pending.hash, ALICE),
+  );
+  await store.sync();
+  const posts = store.forToken(TOKEN, ALICE);
+  assert.deepEqual(posts.map((p) => [p.title, p.time]), [
+    ['Not in a blob yet', world.timestamp(700)],
+    ['Authorized first, published later', world.timestamp(600)],
+    ['Authorized second, published first', world.timestamp(520)],
+  ]);
+  assert.equal(store.detail(early.hash).time, world.timestamp(600));
+  assert.equal(store.detail(pending.hash).time, world.timestamp(700));
 });

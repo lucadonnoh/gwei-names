@@ -2532,16 +2532,16 @@ function postsHarness() {
   assert.notEqual(start, -1, 'post helpers must exist');
   const context = vm.createContext({ TextEncoder });
   vm.runInContext(html.slice(start, end) + `
-    globalThis.api = { POST_MAX_BYTES, postBytesFrom, postPathFor, postTimeFromDate, postFeeFrom, tokenHexOf };`, context);
+    globalThis.api = { POST_MAX_BYTES, postBytesFrom, postPathFor, postFeeFrom, tokenHexOf };`, context);
   return context.api;
 }
 
 test('posts: the dapp builds the bytes, paths and fees the gateway and publisher expect', async () => {
   const api = postsHarness();
   const gateway = await import('../gateway/posts-format.js');
-  const bytes = api.postBytesFrom('Exploring the blobspace', 'Body *md* ü', 1667844963);
-  assert.deepEqual([...bytes], [...gateway.encodePost({ title: 'Exploring the blobspace', body: 'Body *md* ü', time: 1667844963 })]);
-  assert.deepEqual(gateway.parsePost(bytes), { title: 'Exploring the blobspace', body: 'Body *md* ü', time: 1667844963 });
+  const bytes = api.postBytesFrom('Exploring the blobspace', 'Body *md* ü');
+  assert.deepEqual([...bytes], [...gateway.encodePost({ title: 'Exploring the blobspace', body: 'Body *md* ü' })]);
+  assert.deepEqual(gateway.parsePost(bytes), { title: 'Exploring the blobspace', body: 'Body *md* ü' });
   assert.equal(api.POST_MAX_BYTES, gateway.MAX_POST_BYTES);
   for (const title of ['Exploring the blobspace', 'Café über alles', '🦄', 'Forced txs vs based sequencing']) {
     const hash = '0x' + 'ab12'.repeat(16);
@@ -2554,14 +2554,10 @@ test('posts: the dapp builds the bytes, paths and fees the gateway and publisher
   assert.equal(api.tokenHexOf(0x1234n), '0x' + '1234'.padStart(64, '0'));
 });
 
-test('posts: a back-dated post gets noon UTC of its day; today keeps the current time', () => {
+test('posts: the form has no date: a post is dated by its blob', () => {
+  assert.doesNotMatch(html, /id="ppDate"/);
   const api = postsHarness();
-  const now = Date.UTC(2026, 9, 24, 15, 30);
-  const today = new Date(now);
-  const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-  assert.equal(api.postTimeFromDate(todayValue, now), Math.floor(now / 1000));
-  assert.equal(api.postTimeFromDate('2022-11-07', now), Date.UTC(2022, 10, 7, 12) / 1000);
-  assert.equal(api.postTimeFromDate('', now), Math.floor(now / 1000));
+  assert.equal(new TextDecoder().decode(api.postBytesFrom('T', 'B')), '{"v":1,"title":"T","body":"B"}');
 });
 
 test('posts: mainnet points at the deployed GnsPosts and the gwei.domains publisher', () => {

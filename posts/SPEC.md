@@ -34,15 +34,16 @@ attached to the same transaction. Contract wallets, which can't send blobs, can 
 A post is a UTF-8 JSON object, at most 126,968 bytes:
 
 ```json
-{"v":1,"title":"Exploring the blobspace","body":"Markdown text…","time":1667844963}
+{"v":1,"title":"Exploring the blobspace","body":"Markdown text…"}
 ```
 
 - `v`: `1`.
 - `title`: a non-empty string of at most 200 characters.
 - `body`: Markdown (below).
-- `time`: optional, the date the author gives the post, in Unix seconds. Clients fall back to the
-  block time of the authorization.
 - Other fields are ignored, so later versions can add some.
+
+A post has no date of its own. It is dated by the block of the first blob that carries it, or,
+while no blob does yet, by the block of its first authorization.
 
 `postHash` is the keccak-256 hash of the exact bytes. Any byte change is a different post.
 
