@@ -188,3 +188,17 @@ test('the theme switch: one hash-pinned script, shared cookie, system theme by d
   assert.match(html, /@media \(prefers-color-scheme:dark\)\{:root:not\(\.light\)\{--bg:#0a0a0a/);
   assert.match(THEME_SCRIPT, /domain=gwei\.domains;path=\/;max-age=31536000;samesite=lax;secure/);
 });
+
+test('name pages use the name’s avatar as their favicon', async () => {
+  const { faviconLinks, renderUnregistered } = await import('./profile-page.js');
+  assert.equal(faviconLinks({ seed: 'ab'.repeat(32), text: {} }),
+    '<link rel="icon" type="image/png" href="/.well-known/gwei-avatar.png"><link rel="apple-touch-icon" href="/.well-known/gwei-avatar.png">');
+  assert.equal(faviconLinks({ seed: 'ab'.repeat(32), text: { avatar: 'ipfs://bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/me.png' } }),
+    '<link rel="icon" href="https://ipfs.filebase.io/ipfs/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/me.png">');
+  assert.equal(faviconLinks({ seed: 'ab'.repeat(32), avatarImage: 'https://nft.example/a.png?x="y"', text: {} }), '<link rel="icon" href="https://nft.example/a.png?x=%22y%22">');
+  assert.equal(faviconLinks({ seed: 'ab'.repeat(32), text: { avatar: 'javascript:alert(1)' } }).includes('gwei-avatar.png'), true, 'unsafe avatars fall back to the generated one');
+  const profile = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: 'https://alice.gwei.domains/', profile: { seed: 'ab'.repeat(32), text: {}, address: '0x' + '1'.repeat(40) } });
+  assert.match(profile, /<link rel="icon" type="image\/png" href="\/\.well-known\/gwei-avatar\.png">/);
+  assert.doesNotMatch(profile, /gwei\.domains\/favicon\.ico/);
+  assert.match(renderUnregistered({ name: 'nobody.gwei', dappHash: 'nobody' }), /<link rel="icon" href="https:\/\/gwei\.domains\/favicon\.ico">/);
+});

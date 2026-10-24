@@ -3,7 +3,7 @@
 
 import { excerpt, renderMarkdown } from './markdown.js';
 import { postPath } from './posts-format.js';
-import { avatarHtml, escapeHtml, metaTags, renderLayout, shareImage, textOn } from './profile-page.js';
+import { avatarHtml, escapeHtml, faviconLinks, metaTags, renderLayout, shareImage, textOn } from './profile-page.js';
 
 const short = (hex) => `${hex.slice(0, 10)}…${hex.slice(-6)}`;
 const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
@@ -40,6 +40,7 @@ export function renderPostPage({ name, pageUrl, profile, post }) {
   return renderLayout({
     title: `${post.title} · ${name}`,
     subtitle: '.gwei post',
+    icon: faviconLinks(profile),
     head: `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` +
       metaTags({ title: post.title, description, url, type: 'article', ...shareImage(profile, pageUrl) }),
     body,

@@ -362,10 +362,11 @@ const THEME_TOGGLE = '<button class="theme-toggle" type="button" title="Switch l
   '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>' +
   '</button>';
 
-export function renderLayout({ title, head = '', body, subtitle = '' }) {
+// `icon` is the page's favicon link(s); name pages pass the name's avatar (faviconLinks).
+export function renderLayout({ title, head = '', body, subtitle = '', icon = '<link rel="icon" href="https://gwei.domains/favicon.ico">' }) {
   return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<meta name="color-scheme" content="light dark">' +
-    `<title>${escapeHtml(title)}</title><link rel="icon" href="https://gwei.domains/favicon.ico">${head}<style>${STYLE}</style>` +
+    `<title>${escapeHtml(title)}</title>${icon}${head}<style>${STYLE}</style>` +
     `<script>${THEME_SCRIPT}</script>` +
     '<h1><a href="https://gwei.domains">Gwei Name Service</a></h1>' +
     (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body + THEME_TOGGLE;
@@ -438,6 +439,7 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
+    icon: faviconLinks(profile),
     head: feed + (avatar?.startsWith('https://')
       ? metaTags({ title: name, description, url: pageUrl, image: avatar })
       : profile.seed
@@ -452,6 +454,15 @@ export function avatarHtml(profile) {
   const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
   if (avatar) return `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">`;
   return profile.seed ? avatarSvg(profile.seed, profile.page?.color) : '';
+}
+
+// A name's pages use its avatar as their icon: the image record (or NFT) when it has one, else the
+// generated mark as a PNG, which every browser takes as a favicon (Safari ignores SVG ones).
+export function faviconLinks(profile) {
+  const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
+  if (avatar) return `<link rel="icon" href="${escapeHtml(avatar)}">`;
+  if (profile.seed) return `<link rel="icon" type="image/png" href="${AVATAR_PNG_PATH}"><link rel="apple-touch-icon" href="${AVATAR_PNG_PATH}">`;
+  return '<link rel="icon" href="https://gwei.domains/favicon.ico">';
 }
 
 // The image link previews use: the avatar when it's a plain https URL, else the generated PNG.
