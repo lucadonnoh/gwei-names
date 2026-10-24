@@ -2447,8 +2447,9 @@ test('dialogs and controls are keyboard accessible', () => {
   assert.match(html, /<div id="availability" class="availability" aria-live="polite">/);
   assert.match(html, /<div id="status" class="status" aria-live="polite">/);
   assert.doesNotMatch(html, /<(?:div|span)[^>]*onclick="toggle(?:Free|Zk)Panel\(\)"/, 'panel toggles are buttons');
-  assert.match(html, /:root\.dark \.dark-toggle, :root\.dark \.dark-toggle:hover \{ background-color:#fff; \}/, 'dark mode keeps background-clip');
-  assert.match(html, /\.dark-toggle:hover \{[^}]*background-clip:content-box;/, 'hover keeps background-clip despite button:hover');
+  assert.match(html, /\.dark-toggle:hover, :root\.dark \.dark-toggle:hover \{ opacity:1; background:none;/, 'hover never paints a disc despite button:hover');
+  assert.match(html, /<button class="dark-toggle" onclick="toggleDark\(\)" title="Switch light or dark" aria-label="Switch light or dark mode"><svg class="moon"[^]*<svg class="sun"/, 'a moon and a sun icon');
+  assert.match(html, /:root\.dark \.dark-toggle \.sun \{ display:block; \}/, 'dark mode shows the sun');
 });
 
 test('verify name takes the token ID, not the contract address, from marketplace and explorer URLs', () => {
@@ -2577,4 +2578,28 @@ test('posts: the Posts button and recent posts stay hidden until GnsPosts and th
   assert.match(html, /\$\{postsEnabled\(\) \? `<button onclick="showManageForm\('posts'\)">Posts<\/button>` : ''\}/);
   assert.match(html, /if \(!sec \|\| !list \|\| !postsEnabled\(\)\) return;/);
   assert.match(html, /<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"><\/iframe>/, 'previews render in a script-less sandbox');
+});
+
+test('the theme choice is shared with name pages through a gwei.domains cookie', () => {
+  const boot = html.slice(html.indexOf('// Dark mode: apply'), html.indexOf('</script>', html.indexOf('// Dark mode: apply')));
+  const run = (cookie, stored, systemDark) => {
+    const classes = new Set();
+    const writes = [];
+    const context = vm.createContext({
+      document: {
+        get cookie() { return cookie; }, set cookie(v) { writes.push(v); },
+        documentElement: { classList: { add: (c) => classes.add(c), toggle: (c) => (classes.has(c) ? (classes.delete(c), false) : (classes.add(c), true)) } },
+      },
+      localStorage: { getItem: () => stored, setItem: () => {} },
+      matchMedia: () => ({ matches: systemDark }),
+    });
+    vm.runInContext(boot, context);
+    return { dark: classes.has('dark'), toggle: () => { vm.runInContext('toggleDark()', context); return writes.at(-1); } };
+  };
+  assert.equal(run('', null, true).dark, true, 'system dark');
+  assert.equal(run('', null, false).dark, false, 'system light');
+  assert.equal(run('a=1; gwei-theme=light', null, true).dark, false, 'the cookie beats the system');
+  assert.equal(run('gwei-theme=dark', '0', false).dark, true, 'the cookie beats the old local flag');
+  assert.equal(run('', '1', false).dark, true, 'the old local flag still counts');
+  assert.equal(run('', null, false).toggle(), 'gwei-theme=dark;domain=gwei.domains;path=/;max-age=31536000;samesite=lax;secure');
 });
