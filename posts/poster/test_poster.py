@@ -146,6 +146,7 @@ class FakeChain:
         self.logs = []
         self.sent = []
         self.receipts = {}
+        self.send_error = None
 
     def __call__(self, method, *params):
         if method == "eth_blockNumber":
@@ -162,9 +163,11 @@ class FakeChain:
         if method == "eth_getBalance":
             return hex(self.balance)
         if method == "eth_getTransactionCount":
-            return hex(self.nonce + (len({tx_fields(r)["nonce"] for r in self.sent}) if params[1] == "pending" else 0))
+            return hex(self.nonce)
         if method == "eth_sendRawTransaction":
             self.sent.append(params[0])
+            if self.send_error:
+                raise self.send_error
             return "0x" + "00" * 32
         if method == "eth_getTransactionReceipt":
             return self.receipts.get(params[0])
@@ -174,14 +177,16 @@ class FakeChain:
 CONTRACT = "0x" + "c0" * 20
 
 
-def auth_log(block, idx, post_hash, publisher, fee, token="0x" + "11" * 32):
+def auth_log(block, idx, post_hash, publisher, fee, token="0x" + "11" * 32, tx=None):
     return {"address": CONTRACT, "blockNumber": hex(block), "logIndex": hex(idx), "removed": False,
+            "transactionHash": tx or "0x" + f"{block:x}{idx:x}".rjust(64, "0"),
             "topics": [gp.T_AUTHORIZED, token, post_hash, "0x" + "00" * 12 + "aa" * 20],
             "data": "0x" + publisher[2:].rjust(64, "0") + hex(fee)[2:].rjust(64, "0")}
 
 
 def pub_log(block, idx, post_hash, vh):
     return {"address": CONTRACT, "blockNumber": hex(block), "logIndex": hex(idx), "removed": False,
+            "transactionHash": "0x" + f"{block:x}{idx:x}".rjust(64, "0"),
             "topics": [gp.T_PUBLISHED, post_hash, vh, "0x" + "00" * 12 + "bb" * 20], "data": "0x"}
 
 
@@ -333,6 +338,63 @@ class Griefing(unittest.TestCase):
         self.chain.logs.append(pub_log(10, 0, "0x" + "ef" * 32, vh))
         self.poster.step()
         self.assertFalse(any("/blobs/" in path for path in FakeApi.requests))
+
+    def test_a_payment_moved_by_a_reorg_is_counted_once(self):
+        h = self.job(10, 0, 5)
+        tx = self.chain.logs[-1]["transactionHash"]
+        self.poster.scan(self.chain.head)
+        # The same transaction lands in another block after a reorg.
+        self.chain.logs.append(auth_log(12, 3, h, self.signer.address, 5, tx=tx))
+        self.poster.set_meta("cursor", 0)
+        self.poster.scan(self.chain.head)
+        self.assertEqual(self.poster.db.execute("SELECT fee FROM jobs WHERE hash = ?", (h,)).fetchone()[0], "5")
+
+    def test_a_broadcast_with_no_answer_is_tracked_and_never_sent_twice(self):
+        self.job(10, 0, gp.quote(*self.prices))
+        self.chain.send_error = TimeoutError("timed out")  # the node may have taken it anyway
+        self.poster.step()
+        self.assertEqual(len(self.chain.sent), 1)
+        self.assertEqual(self.poster.db.execute("SELECT status FROM txs").fetchone()[0], "pending")
+        self.chain.send_error = None
+        for _ in range(3):
+            self.chain.head += 1
+            self.poster.step()
+        nonces = {tx_fields(r)["nonce"] for r in self.chain.sent}
+        self.assertEqual(nonces, {0}, "no second batch at a new nonce, only rebroadcasts of the same one")
+
+    def test_a_refused_broadcast_gives_the_posts_back(self):
+        h = self.job(10, 0, gp.quote(*self.prices))
+        self.chain.send_error = gp.RpcError("eth_sendRawTransaction: insufficient funds")
+        with self.assertRaises(gp.RpcError):
+            self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM txs").fetchone()[0], "refused")
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs WHERE hash = ?", (h,)).fetchone()[0], "new")
+
+    def test_a_used_nonce_is_rechecked_before_requeueing(self):
+        h = self.job(10, 0, gp.quote(*self.prices))
+        self.poster.step()
+        tx_hash = self.poster.db.execute("SELECT hash FROM txs").fetchone()[0]
+        self.chain.nonce = 1  # the nonce is used, but the receipt isn't visible yet
+        self.chain.head += 1
+        self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs WHERE hash = ?", (h,)).fetchone()[0], "sent")
+        self.chain.receipts[tx_hash] = {"status": "0x1", "blockNumber": hex(self.chain.head)}
+        self.chain.head += 1
+        self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs WHERE hash = ?", (h,)).fetchone()[0], "done")
+        self.assertEqual(len(self.chain.sent), 1)
+
+    def test_jobs_without_bytes_cant_crowd_out_the_rest(self):
+        fee = gp.quote(*self.prices)
+        for i in range(60):  # paid, but their bytes never show up
+            self.chain.logs.append(auth_log(10, i, "0x" + f"{i:064x}", self.signer.address, fee))
+        good = self.job(20, 0, fee)
+        for _ in range(4):
+            if self.chain.sent:
+                break
+            self.chain.head += 1
+            self.poster.step()
+        self.assertEqual(tx_fields(self.chain.sent[0])["data"], gp.publish_calldata([bytes.fromhex(good[2:])]))
 
     def test_no_funds_no_spend(self):
         self.chain.balance = 0

@@ -2,7 +2,11 @@
 // contract's events and the blobs they name. Every publisher's blobs count the same, ours included.
 // Post bytes arrive either in a blob or through the upload API (anyone may upload; bytes are kept
 // because their keccak-256 hash is what the name's owner authorized, so the source doesn't matter).
-// Only blobs named by an authorized post are fetched and kept.
+//
+// Everything an outsider can add is bounded by what it costs them on-chain or by a cap: only blobs
+// that claim an authorized post are fetched, only the claimed entries in them are stored, blob
+// bytes are kept for 30 days (the gwei.domains publisher pins them to IPFS for good), and bytes
+// that never make it into a blob expire.
 //
 // The logic lives here, over a SQLite handle shaped like Durable Object storage (`sql.exec`), so it
 // runs under Node in tests; posts-index.js wraps it in the Durable Object.
@@ -24,15 +28,22 @@ const SEL_RESOLVE = '4f896d4f'; // resolve(uint256): zero unless active
 const CONFIRMATIONS = 2; // index up to head - 2, so a one-block reorg can't leave a phantom event
 const LOG_RANGE = 2000; // blocks per eth_getLogs (public RPCs cap ranges)
 const LOG_RANGES_PER_SYNC = 5;
-const BLOBS_PER_SYNC = 3;
+const BLOBS_PER_SYNC = 6;
 const BLOB_MAX_TRIES = 60; // with the 6-hour backoff cap, about two weeks
+const BLOB_KEEP_SECONDS = 30 * 86400; // long enough for mirrors to copy a blob
 const PENDING_SECONDS = 86400; // an authorized post shows for a day while it waits for its blob
 const UPLOAD_TTL_SECONDS = 86400; // uploaded bytes no owner authorized are dropped after this
-// Unclaimed uploads are capped by size. Bytes an owner already authorized skip every limit, so a
-// flood of junk can delay posting but never block it: authorize first, then upload.
+const AUTHORIZED_TTL_SECONDS = 3 * 86400; // authorized bytes that never reach a blob, after this
+// Uploads not yet in a blob are capped by size. Bytes an owner already authorized skip the per-IP
+// limit and the unclaimed cap, so junk uploads can delay posting but not block it.
 const MAX_UNCLAIMED_BYTES = 256 * 1024 * 1024;
+const MAX_UNPUBLISHED_BYTES = 2 * 1024 * 1024 * 1024;
 const UPLOADS_PER_HOUR = 20; // per client IP (IPv6: per /64)
 const OWNER_CACHE_SECONDS = 60;
+const RECENT_CACHE_SECONDS = 30;
+const RECENT_PER_NAME = 2;
+const NAME_RETRY_SECONDS = 86400;
+const MAX_LIST = 200;
 const BEACON_GENESIS = 1606824023; // mainnet beacon genesis time; slots are 12 s
 const RPC_TIMEOUT_MS = 10_000;
 const BLOB_TIMEOUT_MS = 15_000;
@@ -52,11 +63,14 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS pub_blob ON pub (blob)',
   'CREATE TABLE IF NOT EXISTS removal (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, token TEXT NOT NULL, hash TEXT NOT NULL, author TEXT NOT NULL, PRIMARY KEY (block, idx))',
   'CREATE INDEX IF NOT EXISTS removal_key ON removal (token, hash, author)',
-  // A blob named by PostPublished: its bytes once fetched, and fetch retries until then.
-  'CREATE TABLE IF NOT EXISTS blob (vh TEXT PRIMARY KEY, block INTEGER NOT NULL, ts INTEGER NOT NULL, bytes BLOB, tries INTEGER NOT NULL DEFAULT 0, next_try INTEGER NOT NULL DEFAULT 0)',
-  // Which post hashes a fetched blob really contains.
+  // A blob named by PostPublished. status: 'due' (not fetched yet), 'kept' (some claim held; bytes
+  // kept for BLOB_KEEP_SECONDS) or 'rejected' (no claim held; nothing kept).
+  "CREATE TABLE IF NOT EXISTS blob (vh TEXT PRIMARY KEY, block INTEGER NOT NULL, ts INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'due', bytes BLOB, fetched INTEGER, tries INTEGER NOT NULL DEFAULT 0, next_try INTEGER NOT NULL DEFAULT 0)",
+  // Claimed posts a fetched blob really contains.
   'CREATE TABLE IF NOT EXISTS carried (vh TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (vh, hash))',
-  'CREATE TABLE IF NOT EXISTS names (token TEXT PRIMARY KEY, name TEXT NOT NULL)',
+  'CREATE INDEX IF NOT EXISTS carried_hash ON carried (hash)',
+  // A token's full name; '' while unknown (retried after NAME_RETRY_SECONDS).
+  'CREATE TABLE IF NOT EXISTS names (token TEXT PRIMARY KEY, name TEXT NOT NULL, checked INTEGER NOT NULL)',
 ];
 
 const HASH = /^0x[0-9a-f]{64}$/;
@@ -64,7 +78,16 @@ const toBytes = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
 const toBuffer = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 const word = (data, i) => '0x' + data.slice(2 + i * 64, 2 + (i + 1) * 64);
 const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
-const POS = 100000; // block * POS + log index orders events
+const POS = 4294967296; // block * 2^32 + log index orders events, however many logs a block has
+const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// The first blob that really carries a post, as one string column (a correlated subquery).
+const ONCHAIN = "(SELECT p.blob || '|' || p.tx || '|' || p.block || '|' || p.ts || '|' || p.publisher FROM pub p " +
+  'JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
+function parseOnchain(value) {
+  if (!value) return null;
+  const [blob, tx, block, time, publisher] = value.split('|');
+  return { blob, tx, block: Number(block), time: Number(time), publisher };
+}
 
 export class PostStore {
   constructor(sql, env = {}, { fetchImpl = (input, init) => fetch(input, init), now = () => Math.floor(Date.now() / 1000) } = {}) {
@@ -74,6 +97,7 @@ export class PostStore {
     this.now = now;
     this.uploadsByIp = new Map();
     this.owners = new Map();
+    this.recentCache = null;
     this.syncing = null;
     for (const statement of SCHEMA) sql.exec(statement);
   }
@@ -103,7 +127,15 @@ export class PostStore {
     if (!post) return { status: 400, error: 'Not a v1 post: a JSON object with "v": 1, a "title" and a "body".' };
     const hash = postHash(bytes);
     if (this.rows('SELECT 1 FROM content WHERE hash = ?', hash).length) return { hash };
+    const unpublished = (authorizedOnly) => this.rows(
+      'SELECT COALESCE(SUM(LENGTH(c.bytes)), 0) AS n FROM content c WHERE NOT EXISTS (SELECT 1 FROM carried k WHERE k.hash = c.hash) ' +
+      `AND ${authorizedOnly ? '' : 'NOT '}EXISTS (SELECT 1 FROM auth a WHERE a.hash = c.hash)`,
+    )[0].n;
     if (this.rows('SELECT 1 FROM auth WHERE hash = ? LIMIT 1', hash).length) {
+      if (unpublished(true) + bytes.length > MAX_UNPUBLISHED_BYTES) {
+        console.error(JSON.stringify({ event: 'posts_upload_cap', kind: 'authorized' }));
+        return { status: 503, error: 'The post index is full right now. Try again later.' };
+      }
       this.storeContent(hash, bytes, post);
       return { hash };
     }
@@ -112,10 +144,10 @@ export class PostStore {
     const client = clientKey(ip);
     const recent = (this.uploadsByIp.get(client) || []).filter((t) => now - t < 3600);
     if (recent.length >= UPLOADS_PER_HOUR) return { status: 429, error: 'Too many uploads from this address. Try again in an hour.' };
-    const unclaimed = this.rows(
-      'SELECT COALESCE(SUM(LENGTH(c.bytes)), 0) AS n FROM content c WHERE NOT EXISTS (SELECT 1 FROM auth a WHERE a.hash = c.hash)',
-    )[0].n;
-    if (unclaimed + bytes.length > MAX_UNCLAIMED_BYTES) return { status: 503, error: 'The upload queue is full. Authorize the post first, then upload it.' };
+    if (unpublished(false) + bytes.length > MAX_UNCLAIMED_BYTES) {
+      console.error(JSON.stringify({ event: 'posts_upload_cap', kind: 'unclaimed' }));
+      return { status: 503, error: 'The upload queue is full. Authorize the post first, then upload it.' };
+    }
     recent.push(now);
     this.uploadsByIp.set(client, recent);
     this.storeContent(hash, bytes, post);
@@ -135,79 +167,83 @@ export class PostStore {
     return row ? toBytes(row.bytes) : null;
   }
 
+  body(hash) {
+    const bytes = this.raw(hash);
+    return bytes ? parsePost(bytes)?.body ?? null : null;
+  }
+
   blobBytes(vh) {
     const row = this.rows('SELECT bytes FROM blob WHERE vh = ? AND bytes IS NOT NULL', vh)[0];
     return row ? toBytes(row.bytes) : null;
   }
 
-  // The first blob that really carries the post, if any.
   onchain(hash) {
-    const row = this.rows(
-      'SELECT p.blob, p.tx, p.block, p.ts, p.publisher FROM pub p JOIN carried k ON k.vh = p.blob AND k.hash = p.hash ' +
-      'WHERE p.hash = ? ORDER BY p.block, p.idx LIMIT 1', hash,
-    )[0];
-    return row ? { blob: row.blob, tx: row.tx, block: row.block, time: row.ts, publisher: row.publisher } : null;
+    return parseOnchain(this.rows(`SELECT ${ONCHAIN} AS onchain FROM (SELECT ? AS hash) l`, hash)[0]?.onchain);
   }
 
   detail(hash) {
-    const row = this.rows('SELECT bytes, title, time FROM content WHERE hash = ?', hash)[0];
+    const row = this.rows('SELECT bytes FROM content WHERE hash = ?', hash)[0];
     if (!row) return null;
     const post = parsePost(toBytes(row.bytes));
+    // Anyone can authorize anyone's hash for their own name, so the list is capped.
     const authorizations = this.rows(
       'SELECT a.token, a.author, a.publisher, a.fee, a.tx, a.block, a.ts, n.name FROM auth a LEFT JOIN names n ON n.token = a.token ' +
-      'WHERE a.hash = ? ORDER BY a.block, a.idx', hash,
+      'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
     ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
     return { hash, title: post.title, body: post.body, time: post.time, authorizations, onchain: this.onchain(hash) };
   }
 
   // Posts shown for a name: authorized by its current owner, not withdrawn since, with known bytes,
-  // and either carried by a blob or still inside the pending window.
-  forToken(token, owner, limit = 50) {
+  // and either carried by a blob or still inside the pending window. One query, newest first.
+  forToken(token, owner, limit = 50, prefix = null) {
     token = token.toLowerCase();
     owner = (owner || '').toLowerCase();
     const rows = this.rows(
       'WITH latest AS (SELECT hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ' +
       'FROM auth WHERE token = ? AND author = ? GROUP BY hash) ' +
-      'SELECT l.hash, l.first_ts, l.last_ts, c.title, c.time FROM latest l JOIN content c ON c.hash = l.hash ' +
+      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, c.time, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
       'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ? + r.idx > l.pos) ' +
-      'ORDER BY COALESCE(c.time, l.first_ts) DESC LIMIT ?',
-      POS, token, owner, token, owner, POS, Math.max(limit * 2, limit + 20),
+      (prefix ? 'AND substr(l.hash, 3, ?) = ? ' : '') +
+      ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(time, first_ts) DESC LIMIT ?',
+      POS, token, owner, token, owner, POS, ...(prefix ? [prefix.length, prefix] : []),
+      this.now() - PENDING_SECONDS, Math.min(Math.max(limit, 1), MAX_LIST),
     );
-    const now = this.now();
-    const posts = [];
-    for (const row of rows) {
-      const onchain = this.onchain(row.hash);
-      if (!onchain && now - row.last_ts > PENDING_SECONDS) continue;
-      posts.push({ hash: row.hash, title: row.title, time: row.time ?? row.first_ts, authorized: row.first_ts, onchain });
-      if (posts.length >= limit) break;
-    }
-    return posts;
+    return rows.map((row) => ({
+      hash: row.hash, title: row.title, time: row.time ?? row.first_ts, authorized: row.first_ts, onchain: parseOnchain(row.onchain),
+    }));
   }
 
   postForToken(token, owner, prefix) {
-    const match = this.forToken(token, owner, 1000).find((p) => p.hash.slice(2, 2 + prefix.length) === prefix);
-    if (!match) return null;
-    const post = parsePost(this.raw(match.hash));
-    return { ...match, body: post.body };
+    const [match] = this.forToken(token, owner, 1, prefix);
+    return match ? { ...match, body: this.body(match.hash) } : null;
   }
 
-  // Newest posts across all names, for gwei.domains. Owners are re-checked so a sold or expired
-  // name's old posts drop out.
+  // Newest posts across all names, for gwei.domains: one query, at most RECENT_PER_NAME per name,
+  // cached briefly. Owners are re-checked so a sold or expired name's old posts drop out.
   async recent(limit = 20) {
+    const now = this.now();
+    if (this.recentCache && now - this.recentCache.at < RECENT_CACHE_SECONDS && this.recentCache.limit >= limit) {
+      return this.recentCache.posts.slice(0, limit);
+    }
     const candidates = this.rows(
-      'SELECT a.token, a.author, a.hash, MAX(a.block * ? + a.idx) AS pos, n.name FROM auth a ' +
-      'JOIN content c ON c.hash = a.hash JOIN names n ON n.token = a.token GROUP BY a.token, a.author, a.hash ORDER BY pos DESC LIMIT ?',
-      POS, limit * 4,
+      'WITH latest AS (SELECT token, author, hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ' +
+      `SELECT * FROM (SELECT l.token, l.author, l.hash, l.pos, l.first_ts, l.last_ts, n.name, c.title, c.time, ${ONCHAIN} AS onchain ` +
+      "FROM latest l JOIN content c ON c.hash = l.hash JOIN names n ON n.token = l.token AND n.name != '' " +
+      'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = l.token AND r.hash = l.hash AND r.author = l.author AND r.block * ? + r.idx > l.pos)) ' +
+      'WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY pos DESC LIMIT ?',
+      POS, POS, now - PENDING_SECONDS, limit * 6,
     );
     const owners = await this.currentOwners([...new Set(candidates.map((c) => c.token))]);
-    const out = [];
+    const perName = new Map();
+    const posts = [];
     for (const c of candidates) {
-      if (owners.get(c.token) !== c.author) continue;
-      const shown = this.forToken(c.token, c.author, 1000).find((p) => p.hash === c.hash);
-      if (shown) out.push({ name: c.name, token: c.token, ...shown });
-      if (out.length >= limit) break;
+      if (owners.get(c.token) !== c.author || (perName.get(c.token) || 0) >= RECENT_PER_NAME) continue;
+      perName.set(c.token, (perName.get(c.token) || 0) + 1);
+      posts.push({ name: c.name, token: c.token, hash: c.hash, title: c.title, time: c.time ?? c.first_ts, authorized: c.first_ts, onchain: parseOnchain(c.onchain) });
+      if (posts.length >= limit) break;
     }
-    return out;
+    this.recentCache = { at: now, limit, posts };
+    return posts;
   }
 
   // token → owner for active names (inactive ones map to null), cached for a minute.
@@ -255,7 +291,7 @@ export class PostStore {
   async #sync() {
     const contract = this.contract;
     if (!contract) return { skipped: 'POSTS_CONTRACT is not set' };
-    const head = Number(BigInt(await this.rpc('eth_blockNumber', [])));
+    const head = await this.head();
     const safe = head - CONFIRMATIONS;
     // Without a recorded cursor, start at the contract's deployment block (or at the head, if unset).
     const start = Number(this.env.POSTS_FROM_BLOCK) > 0 ? Number(this.env.POSTS_FROM_BLOCK) - 1 : safe;
@@ -264,24 +300,25 @@ export class PostStore {
     for (let n = 0; n < LOG_RANGES_PER_SYNC && cursor < safe; n++) {
       const from = cursor + 1;
       const to = Math.min(safe, from + LOG_RANGE - 1);
-      const logs = await this.rpc('eth_getLogs', [{
+      const logs = await this.logs({
         address: contract,
         fromBlock: '0x' + from.toString(16),
         toBlock: '0x' + to.toString(16),
         topics: [[T_AUTHORIZED, T_PUBLISHED, T_REMOVED]],
-      }]);
-      events += await this.ingest(Array.isArray(logs) ? logs : []);
+      });
+      events += await this.ingest(logs);
       cursor = to;
       this.setMeta('cursor', cursor);
     }
     await this.fillNames();
     const blobs = await this.fetchBlobs();
     this.prune();
+    if (events || blobs) this.recentCache = null;
     return { head, cursor, events, blobs };
   }
 
   async ingest(logs) {
-    const live = logs.filter((log) => !log.removed && log.address?.toLowerCase() === this.contract);
+    const live = logs.filter((log) => !log.removed && log.address?.toLowerCase() === this.contract && log.topics?.length === 4);
     // Logs don't always carry the block time; fetch it once per block when they don't.
     const times = new Map();
     for (const log of live) {
@@ -299,18 +336,18 @@ export class PostStore {
       const idx = Number(BigInt(log.logIndex));
       const ts = times.get(block);
       const [topic, a, b, c] = log.topics.map((t) => t.toLowerCase());
-      if (topic === T_AUTHORIZED && log.topics.length === 4) {
+      if (topic === T_AUTHORIZED && /^0x[0-9a-fA-F]{128}$/.test(log.data || '')) {
         this.sql.exec(
           'INSERT OR IGNORE INTO auth (block, idx, tx, ts, token, hash, author, publisher, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           block, idx, log.transactionHash, ts, a, b, topicAddress(c), topicAddress(word(log.data, 0)), BigInt(word(log.data, 1)).toString(),
         );
-      } else if (topic === T_PUBLISHED && log.topics.length === 4) {
+      } else if (topic === T_PUBLISHED) {
         this.sql.exec(
           'INSERT OR IGNORE INTO pub (block, idx, tx, ts, hash, blob, publisher) VALUES (?, ?, ?, ?, ?, ?, ?)',
           block, idx, log.transactionHash, ts, a, b, topicAddress(c),
         );
         this.sql.exec('INSERT OR IGNORE INTO blob (vh, block, ts) VALUES (?, ?, ?)', b, block, ts);
-      } else if (topic === T_REMOVED && log.topics.length === 4) {
+      } else if (topic === T_REMOVED) {
         this.sql.exec(
           'INSERT OR IGNORE INTO removal (block, idx, tx, token, hash, author) VALUES (?, ?, ?, ?, ?, ?)',
           block, idx, log.transactionHash, a, b, topicAddress(c),
@@ -323,29 +360,41 @@ export class PostStore {
     return count;
   }
 
-  // Full names for tokens that posted, via NameNFT.getFullName (a token's name never changes).
+  // Full names for tokens that posted, via NameNFT.getFullName (a token's name never changes). A
+  // token without a name (say, a subname whose parent was re-registered) is retried daily, so it
+  // can't hold up the others.
   async fillNames() {
-    const tokens = this.rows('SELECT DISTINCT a.token FROM auth a LEFT JOIN names n ON n.token = a.token WHERE n.token IS NULL LIMIT 30').map((r) => r.token);
+    const tokens = this.rows(
+      'SELECT a.token FROM auth a LEFT JOIN names n ON n.token = a.token ' +
+      "WHERE n.token IS NULL OR (n.name = '' AND n.checked < ?) GROUP BY a.token ORDER BY n.checked IS NOT NULL, MIN(a.block) LIMIT 30",
+      this.now() - NAME_RETRY_SECONDS,
+    ).map((r) => r.token);
     if (!tokens.length) return;
     const calls = tokens.map((token) => ({ target: NAMENFT, data: '0x' + SEL_GETFULLNAME + token.slice(2) }));
     const decoded = decodeAggregate3(await this.rpc('eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest']));
     if (!decoded) return;
     tokens.forEach((token, i) => {
       const r = decoded[i];
-      if (!r?.success || r.data.length < 128) return;
-      const length = Number(BigInt('0x' + r.data.slice(64, 128)));
-      const name = new TextDecoder().decode(hexToBytes(r.data.slice(128, 128 + length * 2)));
-      if (name) this.sql.exec('INSERT OR IGNORE INTO names (token, name) VALUES (?, ?)', token, name);
+      let name = '';
+      if (r?.success && r.data.length >= 128) {
+        const length = Number(BigInt('0x' + r.data.slice(64, 128)));
+        name = length <= 1024 ? new TextDecoder().decode(hexToBytes(r.data.slice(128, 128 + length * 2))) : '';
+      }
+      this.sql.exec('INSERT INTO names (token, name, checked) VALUES (?, ?, ?) ON CONFLICT (token) DO UPDATE SET name = excluded.name, checked = excluded.checked',
+        token, name, this.now());
     });
   }
 
-  // Fetch the blobs authorized posts point at, record which posts each really carries, and keep
-  // the bytes of any authorized post found there.
+  // Fetch blobs that claim an authorized post. Blobs sent by the publisher the author named (or by
+  // the author) go first, so other people's claims can't push them back. Only the claimed entries a
+  // blob really contains are recorded; a blob none of whose claims hold is not kept.
   async fetchBlobs() {
     const now = this.now();
     const due = this.rows(
-      'SELECT b.vh, b.ts, b.tries FROM blob b WHERE b.bytes IS NULL AND b.tries < ? AND b.next_try <= ? ' +
-      'AND EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh) ORDER BY b.block LIMIT ?',
+      'SELECT b.vh, b.ts, b.tries, EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh ' +
+      'AND (p.publisher = a.publisher OR p.publisher = a.author)) AS named FROM blob b ' +
+      "WHERE b.status = 'due' AND b.tries < ? AND b.next_try <= ? AND EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh) " +
+      'ORDER BY named DESC, b.block LIMIT ?',
       BLOB_MAX_TRIES, now, BLOBS_PER_SYNC,
     );
     let fetched = 0;
@@ -356,18 +405,26 @@ export class PostStore {
         this.sql.exec('UPDATE blob SET tries = tries + 1, next_try = ? WHERE vh = ?', now + wait, vh);
         continue;
       }
+      const claimed = new Set(this.rows('SELECT hash FROM pub WHERE blob = ?', vh).map((r) => r.hash));
+      let held = 0;
       for (const entry of decodeBlob(blob)) {
         const hash = postHash(entry);
+        if (!claimed.has(hash)) continue;
+        claimed.delete(hash);
+        held++;
         this.sql.exec('INSERT OR IGNORE INTO carried (vh, hash) VALUES (?, ?)', vh, hash);
         const post = parsePost(entry);
         if (post) this.storeContent(hash, entry, post);
       }
-      this.sql.exec('UPDATE blob SET bytes = ?, tries = tries + 1 WHERE vh = ?', toBuffer(blob), vh);
+      if (held) this.sql.exec("UPDATE blob SET status = 'kept', bytes = ?, fetched = ?, tries = tries + 1 WHERE vh = ?", toBuffer(blob), now, vh);
+      else this.sql.exec("UPDATE blob SET status = 'rejected', fetched = ?, tries = tries + 1 WHERE vh = ?", now, vh);
       fetched++;
     }
     return fetched;
   }
 
+  // A blob from the first source that has it. When a second source has it too, they must agree:
+  // the gateway can't check KZG itself, so it doesn't take one source's word when it can compare.
   async fetchBlob(vh, ts) {
     const sources = this.blobSources();
     const attempts = [];
@@ -376,13 +433,18 @@ export class PostStore {
     for (const beacon of sources.beacons) {
       attempts.push(async () => (await this.getJson(`${beacon}/eth/v1/beacon/blobs/${slot}?versioned_hashes=${vh}`))?.data?.[0]);
     }
+    let first = null;
     for (const attempt of attempts) {
-      try {
-        const hex = await attempt();
-        if (typeof hex === 'string' && /^0x[0-9a-fA-F]+$/.test(hex) && hex.length === 2 + BLOB_BYTES * 2) return hexToBytes(hex.slice(2));
-      } catch (_) {}
+      let hex = null;
+      try { hex = await attempt(); } catch (_) {}
+      if (typeof hex !== 'string' || !/^0x[0-9a-fA-F]+$/.test(hex) || hex.length !== 2 + BLOB_BYTES * 2) continue;
+      const bytes = hexToBytes(hex.slice(2));
+      if (!first) { first = bytes; continue; }
+      if (sameBytes(first, bytes)) return first;
+      console.error(JSON.stringify({ event: 'posts_blob_mismatch', vh }));
+      return null;
     }
-    return null;
+    return first;
   }
 
   blobSources() {
@@ -405,20 +467,70 @@ export class PostStore {
     return readRpcJson(response);
   }
 
-  // Uploads nobody authorized within UPLOAD_TTL_SECONDS are dropped.
+  // Bytes that never made it into a blob expire (a day if nobody authorized them, three days if
+  // someone did), and blob bytes go after 30 days. Posts carried by a blob are kept for good.
   prune() {
+    const now = this.now();
     this.sql.exec(
-      'DELETE FROM content WHERE received < ? AND NOT EXISTS (SELECT 1 FROM auth a WHERE a.hash = content.hash)',
-      this.now() - UPLOAD_TTL_SECONDS,
+      'DELETE FROM content WHERE NOT EXISTS (SELECT 1 FROM carried k WHERE k.hash = content.hash) AND (received < ? ' +
+      'OR (received < ? AND NOT EXISTS (SELECT 1 FROM auth a WHERE a.hash = content.hash)))',
+      now - AUTHORIZED_TTL_SECONDS, now - UPLOAD_TTL_SECONDS,
     );
+    this.sql.exec('UPDATE blob SET bytes = NULL WHERE bytes IS NOT NULL AND fetched < ?', now - BLOB_KEEP_SECONDS);
   }
 
-  // JSON-RPC over the gateway's mainnet endpoints: the preferred one (with its token) first.
-  async rpc(method, params) {
-    const { endpoints, preferred, preferredAuth } = rpcEndpointConfig(1, this.env);
+  // --- RPC -------------------------------------------------------------------------------------------
+  // The preferred endpoint (the owner's node) is trusted. Public fallbacks aren't taken on their own
+  // word: two must answer, the lower head wins, and only logs both return are used.
+  async head() {
+    const { preferred } = rpcEndpointConfig(1, this.env);
+    if (preferred) {
+      try { return Number(BigInt(await this.rpcAt([preferred], 'eth_blockNumber', []))); } catch (_) {}
+    }
+    const answers = await this.publicAnswers('eth_blockNumber', []);
+    return Math.min(...answers.map((a) => Number(BigInt(a))));
+  }
+
+  async logs(filter) {
+    const { preferred } = rpcEndpointConfig(1, this.env);
+    if (preferred) {
+      try {
+        const logs = await this.rpcAt([preferred], 'eth_getLogs', [filter]);
+        if (Array.isArray(logs)) return logs;
+      } catch (_) {}
+    }
+    const [a, b] = await this.publicAnswers('eth_getLogs', [filter]);
+    if (!Array.isArray(a) || !Array.isArray(b)) throw new Error('eth_getLogs: malformed answer');
+    const key = (log) => [log.blockNumber, log.logIndex, log.transactionHash, ...(log.topics || []), log.data, log.removed ? 1 : 0].join('|').toLowerCase();
+    const inB = new Set(b.map(key));
+    return a.filter((log) => inB.has(key(log)));
+  }
+
+  // Answers from two different public endpoints, or an error.
+  async publicAnswers(method, params) {
+    const { endpoints, preferred } = rpcEndpointConfig(1, this.env);
+    const answers = [];
+    for (const url of endpoints.filter((u) => u !== preferred)) {
+      try {
+        answers.push(await this.rpcAt([url], method, params));
+      } catch (_) {
+        continue;
+      }
+      if (answers.length === 2) return answers;
+    }
+    throw new Error(`${method}: fewer than two public endpoints answered`);
+  }
+
+  // Calls that only read (owners, names, block times) take any endpoint, preferred first.
+  rpc(method, params) {
+    return this.rpcAt(rpcEndpointConfig(1, this.env).endpoints, method, params);
+  }
+
+  async rpcAt(urls, method, params) {
+    const { preferred, preferredAuth } = rpcEndpointConfig(1, this.env);
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
     const failures = [];
-    for (const url of endpoints) {
+    for (const url of urls) {
       try {
         const headers = { 'content-type': 'application/json' };
         if (preferredAuth && url === preferred) headers.authorization = preferredAuth;

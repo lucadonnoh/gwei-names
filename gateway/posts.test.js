@@ -185,16 +185,22 @@ function fakeWorld() {
     head: 1000, logs: [], owners: {}, names: {}, blobs: {}, blobscanDown: false, beaconDown: false, calls: [],
     timestamp: (block) => 1_700_000_000 + block * 12,
   };
+  world.rpcDown = new Set(); // hosts that fail
+  world.extraLogs = {}; // host → logs only that endpoint returns (a lying RPC)
+  world.extraHead = {}; // host → blocks that endpoint adds to the head
   world.fetch = async (url, init) => {
     world.calls.push(url);
-    if (url.startsWith('https://rpc.test')) {
+    if (init?.method === 'POST' && /^https:\/\/(rpc\.test|eth\.drpc\.org|eth-mainnet\.public\.blastapi\.io|eth-pokt\.nodies\.app|rpc\.mevblocker\.io|eth\.rpc\.blxrbdn\.com|ethereum-rpc\.publicnode\.com)/.test(url)) {
+      const host = new URL(url).host;
+      if (world.rpcDown.has(host)) return new Response('down', { status: 503 });
       const { method, params } = JSON.parse(init.body);
       const ok = (result) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }));
-      if (method === 'eth_blockNumber') return ok('0x' + world.head.toString(16));
+      if (method === 'eth_blockNumber') return ok('0x' + (world.head + (world.extraHead[host] || 0)).toString(16));
       if (method === 'eth_getBlockByNumber') return ok({ timestamp: '0x' + world.timestamp(Number(params[0])).toString(16) });
       if (method === 'eth_getLogs') {
         const [{ fromBlock, toBlock }] = params;
-        return ok(world.logs.filter((l) => Number(l.blockNumber) >= Number(fromBlock) && Number(l.blockNumber) <= Number(toBlock)));
+        const all = [...world.logs, ...(world.extraLogs[host] || [])];
+        return ok(all.filter((l) => Number(l.blockNumber) >= Number(fromBlock) && Number(l.blockNumber) <= Number(toBlock)));
       }
       if (method === 'eth_call') return ok(answerMulticall(params[0].data, world));
       throw new Error('unexpected RPC ' + method);
@@ -207,7 +213,7 @@ function fakeWorld() {
     }
     const beacon = /^https:\/\/beacon\.test\/eth\/v1\/beacon\/blobs\/(\d+)\?versioned_hashes=(0x[0-9a-f]+)$/.exec(url);
     if (beacon) {
-      const blob = world.blobs[beacon[2]];
+      const blob = (world.beaconBlobs || {})[beacon[2]] || world.blobs[beacon[2]];
       if (world.beaconDown || !blob) return new Response(JSON.stringify({ data: [] }));
       world.beaconSlot = Number(beacon[1]);
       return new Response(JSON.stringify({ data: ['0x' + toHex(blob)] }));
@@ -372,7 +378,12 @@ test('a PostPublished claim for a blob that lacks the post is ignored', async ()
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(510, 0, a.hash, vh));
   await store.sync();
   assert.equal(store.forToken(TOKEN, ALICE)[0].onchain, null);
-  assert.deepEqual(store.forToken(TOKEN, ALICE).map((p) => p.title), ['Real'], 'the unauthorized post in the blob never shows');
+  assert.equal(store.raw(other.hash), null, 'entries nobody claimed are not stored');
+  assert.equal(store.blobBytes(vh), null, 'a blob none of whose claims hold is not kept');
+  const calls = world.calls.length;
+  store.advance(7200);
+  await store.sync();
+  assert.equal(world.calls.slice(calls).filter((u) => u.includes(vh)).length, 0, 'and it is not fetched again');
 });
 
 test('a self-published post needs no upload: its bytes come from the blob', async () => {
@@ -506,4 +517,175 @@ test('uploads nobody authorizes are pruned after a day', async () => {
   await store.sync();
   assert.ok(store.raw(kept.hash));
   assert.equal(store.raw(dropped.hash), null);
+});
+
+// --- the review's attack cases ------------------------------------------------------------------
+test('a claimed blob stuffed with junk only records the claimed entries', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const real = postBytes('Real');
+  const junk = Array.from({ length: 500 }, (_, i) => postBytes('j' + i, '', 1).bytes);
+  const vh = versionedHash(20);
+  world.blobs[vh] = encodeBlob([...junk, real.bytes]);
+  world.logs.push(authorized(500, 0, TOKEN, real.hash, ALICE, ALICE, 0n), published(501, 0, real.hash, vh, BOB));
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.blob, vh);
+  assert.equal(store.rows('SELECT COUNT(*) AS n FROM carried')[0].n, 1);
+  assert.equal(store.rows('SELECT COUNT(*) AS n FROM content')[0].n, 1);
+});
+
+test('blob sources must agree when both answer', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Agreed');
+  const vh = versionedHash(21);
+  world.blobs[vh] = encodeBlob([a.bytes]);
+  world.beaconBlobs = { [vh]: encodeBlob([postBytes('forged').bytes]) };
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
+  const error = console.error;
+  const logged = [];
+  console.error = (line) => logged.push(line);
+  try { await store.sync(); } finally { console.error = error; }
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain, null);
+  assert.match(logged.join(), /posts_blob_mismatch/);
+  world.beaconBlobs = {};
+  store.advance(120);
+  await store.sync();
+  assert.ok(store.forToken(TOKEN, ALICE)[0].onchain);
+});
+
+test('blobs from the publisher the author named are fetched before anyone else’s claims', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Paid post');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE)); // publisher: PUBLISHER
+  for (let i = 0; i < 20; i++) {
+    const junkVh = versionedHash(100 + i);
+    world.blobs[junkVh] = encodeBlob([postBytes('junk' + i).bytes]);
+    world.logs.push(published(501 + i, 0, a.hash, junkVh, BOB)); // BOB's blobs claim ALICE's post
+  }
+  const vh = versionedHash(99);
+  world.blobs[vh] = encodeBlob([a.bytes]);
+  world.logs.push(published(600, 0, a.hash, vh, PUBLISHER));
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain?.blob, vh, 'the named publisher’s blob is in the first batch');
+});
+
+test('a token without a full name never holds up the others', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Named');
+  const vh = versionedHash(22);
+  world.blobs[vh] = encodeBlob([a.bytes]);
+  for (let i = 0; i < 40; i++) {
+    const token = '0x' + pad32((0xdead00 + i).toString(16));
+    world.owners[token] = BOB;
+    world.logs.push(authorized(400, i, token, postBytes('x' + i).hash, BOB, BOB, 0n)); // no names
+  }
+  world.owners[TOKEN] = ALICE;
+  world.names[TOKEN] = 'alice.gwei';
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
+  await store.sync();
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.recent(5)).map((p) => p.name), ['alice.gwei']);
+});
+
+test('recent shows at most two posts per name', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  world.owners = { [TOKEN]: ALICE, [TOKEN2]: BOB };
+  world.names = { [TOKEN]: 'alice.gwei', [TOKEN2]: 'bob.gwei' };
+  const posts = Array.from({ length: 5 }, (_, i) => postBytes('alice ' + i, 'b', 1_700_000_000 + i));
+  const bob = postBytes('bob post', 'b', 1_600_000_000);
+  const vh = versionedHash(23);
+  world.blobs[vh] = encodeBlob([...posts.map((p) => p.bytes), bob.bytes]);
+  world.logs.push(authorized(400, 0, TOKEN2, bob.hash, BOB), published(400, 1, bob.hash, vh));
+  posts.forEach((p, i) => world.logs.push(authorized(500 + i, 0, TOKEN, p.hash, ALICE), published(500 + i, 1, p.hash, vh)));
+  await store.sync();
+  assert.deepEqual((await store.recent(10)).map((p) => p.title), ['alice 4', 'alice 3', 'bob post']);
+});
+
+test('with the owner’s node down, events need two public endpoints to agree', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const real = postBytes('Real');
+  const fake = postBytes('Injected');
+  store.upload(real.bytes, 'ip');
+  store.upload(fake.bytes, 'ip');
+  world.owners[TOKEN] = ALICE;
+  world.logs.push(authorized(500, 0, TOKEN, real.hash, ALICE));
+  world.extraLogs['eth.drpc.org'] = [authorized(500, 1, TOKEN, fake.hash, ALICE)];
+  world.extraHead['eth.drpc.org'] = 1_000_000; // and a head far in the future
+  const result = await store.sync();
+  assert.equal(result.cursor, world.head - 2, 'the lower head wins');
+  assert.deepEqual(store.forToken(TOKEN, ALICE).map((p) => p.title), ['Real']);
+});
+
+test('authorized bytes that never reach a blob expire; blob bytes are kept for thirty days', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const stuck = postBytes('Never published');
+  const done = postBytes('Published');
+  const vh = versionedHash(24);
+  world.blobs[vh] = encodeBlob([done.bytes]);
+  store.upload(stuck.bytes, 'ip');
+  store.upload(done.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, stuck.hash, ALICE), authorized(500, 1, TOKEN, done.hash, ALICE), published(501, 0, done.hash, vh));
+  await store.sync();
+  store.advance(3 * 86400 + 60);
+  await store.sync();
+  assert.equal(store.raw(stuck.hash), null);
+  assert.ok(store.raw(done.hash), 'posts carried by a blob stay');
+  assert.ok(store.blobBytes(vh));
+  store.advance(30 * 86400);
+  await store.sync();
+  assert.equal(store.blobBytes(vh), null);
+  assert.ok(store.raw(done.hash));
+  assert.ok(store.forToken(TOKEN, ALICE)[0].onchain, 'the post stays on Ethereum in the index');
+});
+
+test('the post list query stays bounded however many posts a name has', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  for (let i = 0; i < 300; i++) {
+    const p = postBytes('p' + i);
+    store.storeContent(p.hash, p.bytes, parsePost(p.bytes));
+    world.logs.push(authorized(500 + Math.floor(i / 100), i % 100, TOKEN, p.hash, ALICE));
+  }
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE, 10_000).length, 200);
+  assert.equal(store.postForToken(TOKEN, ALICE, postBytes('p7').hash.slice(2, 14)).title, 'p7');
+});
+
+test('fuzz: rendered posts only ever contain the renderer’s own tags and attributes', () => {
+  const TAGS = new Set(['p', 'a', 'img', 'code', 'pre', 'em', 'strong', 'del', 'br', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'blockquote', 'hr',
+    'math', 'mi', 'mo', 'mn', 'mtext', 'mrow', 'msub', 'msup', 'msubsup', 'mfrac', 'msqrt', 'mroot', 'mspace']);
+  const ATTRS = {
+    href: (v) => /^(https?:\/\/|mailto:|\/(?!\/)|#)/.test(v), src: (v) => /^(https:\/\/|data:image\/)/.test(v),
+    alt: () => true, loading: (v) => v === 'lazy', referrerpolicy: (v) => v === 'no-referrer', rel: (v) => v === 'nofollow ugc noopener',
+    id: (v) => /^[\p{L}\p{N}-]+$/u.test(v), start: (v) => /^\d+$/.test(v), display: (v) => v === 'block',
+    mathvariant: (v) => /^[a-z-]+$/.test(v), width: (v) => /^-?[\d.]+em$/.test(v), linethickness: (v) => v === '0', linebreak: (v) => v === 'newline',
+  };
+  const pieces = ['<', '>', '"', "'", '&', '=', '/', '\\', ':', '*', '**', '_', '~~', '`', '```', '[', ']', '(', ')', '![', '](', '#', '## ', '- ', '1. ',
+    '> ', '$', '$$', '{', '}', '^', '\n', '\n\n', ' ', 'javascript:', 'data:text/html,', 'https://a.example/', 'http://b', '//c.example', 'mailto:x@y.z',
+    'ipfs://bafkreigw36dmko6bpsp355lk5k6u35zbhu3egeaxkm42wfczvfrbcimsnq', '<script>', '<img src=x onerror=alert(1)>', 'onerror=', '\\frac', '\\text{',
+    '\\sqrt[', '\\left(', '\\right)', 'x_', 'y^', '&quot;', '&#39;', '\u0000', ' ', 'é', '🦄', '|', '-->', '<!--', '<math>', '</p>'];
+  let seed = 0x5eed;
+  const rand = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  for (let round = 0; round < 3000; round++) {
+    const input = Array.from({ length: 1 + rand(40) }, () => pieces[rand(pieces.length)]).join('');
+    const html = renderMarkdown(input);
+    const text = html.replace(/<\/?([a-z0-9]+)((?:\s+[a-z-]+="[^"]*")*)\s*>/g, (tag, name, attrs) => {
+      assert.ok(TAGS.has(name), `<${name}> from ${JSON.stringify(input)}`);
+      for (const [, attr, value] of attrs.matchAll(/\s([a-z-]+)="([^"]*)"/g)) {
+        assert.ok(ATTRS[attr]?.(value.replace(/&amp;/g, '&')), `${attr}="${value}" from ${JSON.stringify(input)}`);
+      }
+      return '';
+    });
+    assert.doesNotMatch(text, /[<>"]/, `stray markup ${JSON.stringify(text)} from ${JSON.stringify(input)}`);
+  }
 });

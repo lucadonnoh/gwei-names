@@ -476,6 +476,19 @@ async function ethCall(chainId, to, data, route, options) {
 // trigger. Name pages read it directly; gwei.domains/api/* exposes it to the dapp and to anyone else.
 const POSTS_CRON = '* * * * *';
 const postIndex = (env) => (env?.POST_INDEX?.getByName ? env.POST_INDEX.getByName('posts') : null);
+// A name's posts for its page and feed, cached at the edge for half a minute.
+async function cachedPosts(index, token, owner, limit, cache, ctx) {
+  const key = new Request(`${CACHE_BASE}/posts/${token}/${owner}/${limit}`);
+  const hit = await cache.match(key);
+  if (hit) {
+    try { return await hit.json(); } catch (_) {}
+  }
+  const posts = await index.forToken(token, owner, limit);
+  ctx.waitUntil(cache.put(key, new Response(JSON.stringify(posts), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=30' },
+  })).catch(() => {}));
+  return posts;
+}
 // A broken index must never take a profile page down with it.
 async function fromIndex(read, fallback) {
   try {
@@ -530,7 +543,23 @@ async function readBody(request, max) {
   return bytes;
 }
 
-async function handleApi(request, url, env) {
+// GET answers are cached at the edge (for as long as their cache-control says), so a burst of reads
+// never queues up in the single index object.
+async function handleApi(request, url, env, ctx) {
+  if (request.method === 'GET' && typeof caches !== 'undefined') {
+    const key = new Request(`${CACHE_BASE}/api${url.pathname}${url.search}`);
+    const hit = await caches.default.match(key);
+    if (hit) return hit;
+    const response = await answerApi(request, url, env);
+    if (response.status === 200 && /max-age=[1-9]/.test(response.headers.get('cache-control') || '')) {
+      ctx?.waitUntil(caches.default.put(key, response.clone()).catch(() => {}));
+    }
+    return response;
+  }
+  return answerApi(request, url, env);
+}
+
+async function answerApi(request, url, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: API_HEADERS });
   const index = postIndex(env);
   if (!index) return apiJson({ error: 'Posts are not enabled on this gateway.' }, 503);
@@ -562,7 +591,8 @@ async function handleApi(request, url, env) {
     }
     if ((m = hashIn(/^\/api\/posts\/(0x[0-9a-fA-F]{64})$/))) {
       const detail = await index.detail(m);
-      return detail ? apiJson(detail, 200, 'public, max-age=30') : apiJson({ error: 'Unknown post.' }, 404, 'public, max-age=10');
+      // Clients poll a fresh post until its authorization and blob show up, so only settled answers are cached.
+      return detail ? apiJson(detail, 200, detail.onchain ? 'public, max-age=30' : 'no-store') : apiJson({ error: 'Unknown post.' }, 404, 'no-store');
     }
     if ((m = hashIn(/^\/api\/names\/(0x[0-9a-fA-F]{64})\/posts$/))) {
       return apiJson({ posts: await index.forCurrentOwner(m, 100) }, 200, 'public, max-age=30');
@@ -981,7 +1011,7 @@ export default {
     }
 
     // The apex is the dapp; only its /api/* routes reach this Worker.
-    if (host === 'gwei.domains' && url.pathname.startsWith('/api/')) return handleApi(request, url, env);
+    if (host === 'gwei.domains' && url.pathname.startsWith('/api/')) return handleApi(request, url, env, ctx);
     // Otherwise only subdomains of gwei.domains.
     if (!host.endsWith('.gwei.domains')) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
     const sub = host.slice(0, -'.gwei.domains'.length); // "donnoh", "diff", "a.b", …
@@ -1029,7 +1059,7 @@ export default {
         }
       }
       if (index && token && url.pathname === '/feed.xml') {
-        const posts = await fromIndex(() => index.forToken(token, r.profile.owner, 20), []);
+        const posts = await fromIndex(() => cachedPosts(index, token, r.profile.owner, 20, cache, ctx), []);
         const bodies = posts.length ? await fromIndex(() => index.bodies(posts.map((p) => p.hash)), []) : [];
         const feed = renderFeed({ name, pageUrl, posts: posts.map((p, i) => ({ ...p, body: bodies[i] || '' })) });
         const headers = harden(new Headers({ 'content-type': 'application/atom+xml; charset=utf-8', 'cache-control': 'public, max-age=300' }));
@@ -1039,7 +1069,7 @@ export default {
         return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
       }
       if (r.profile) {
-        const posts = index && token ? await fromIndex(() => index.forToken(token, r.profile.owner, 50), []) : [];
+        const posts = index && token ? await fromIndex(() => cachedPosts(index, token, r.profile.owner, 50, cache, ctx), []) : [];
         const postsHtml = postListHtml(posts, postPath);
         return htmlResponse(renderProfile({ name, dappHash, pageUrl, profile: r.profile, postsHtml }), 200, undefined, PROFILE_CSP);
       }

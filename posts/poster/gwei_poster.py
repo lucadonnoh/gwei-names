@@ -58,8 +58,11 @@ MIN_HEADROOM = 1.125  # fee caps must survive at least one block of base-fee gro
 REPLACE_AFTER_BLOCKS = 3  # priced out for this long: replace (within what was paid)
 REPLACE_STALE_BLOCKS = 25  # includable but ignored for this long: replace too
 REBROADCAST_AFTER_BLOCKS = 10
-MAX_REVERTS = 2
+MAX_REVERTS = 1  # publish() can't revert in practice; if it does, never pay for it twice
 FETCHES_PER_STEP = 20  # post-byte downloads per pass, so a flood of jobs can't stall the loop
+FETCH_TIMEOUT = 8
+FETCH_BUDGET_SECONDS = 30
+DROPPED_AFTER_BLOCKS = 3  # a used nonce with no receipt of ours: wait this long before requeueing
 MIRRORS_PER_STEP = 3
 BYTES_GIVE_UP_SECONDS = 3 * 86400
 MIRROR_GIVE_UP_SECONDS = 30 * 86400
@@ -236,8 +239,9 @@ class Rpc:
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
--- Every event processed once, even if a pass is retried.
-CREATE TABLE IF NOT EXISTS seen (block INTEGER NOT NULL, idx INTEGER NOT NULL, PRIMARY KEY (block, idx));
+-- Every event processed once, even if a pass is retried or a reorg moves its transaction to
+-- another block: keyed by transaction and content, not position.
+CREATE TABLE IF NOT EXISTS seen (key TEXT PRIMARY KEY);
 -- Posts authorized with this publisher. fee is the total paid to us for the hash (wei, as text);
 -- fee_gwei is its floor in gwei, for filtering in SQL.
 CREATE TABLE IF NOT EXISTS jobs (hash TEXT PRIMARY KEY, token TEXT NOT NULL, block INTEGER NOT NULL, fee TEXT NOT NULL,
@@ -278,6 +282,7 @@ class Poster:
         self.now = lambda: int(now())
         self.notified = {}
         self.rebroadcasts = {}
+        self.used_nonces = {}
         db.executescript(SCHEMA)
 
     # state helpers
@@ -318,10 +323,11 @@ class Poster:
             for entry in logs:
                 if entry.get("removed") or len(entry["topics"]) != 4 or entry.get("address", "").lower() != self.contract:
                     continue
-                block, idx = int(entry["blockNumber"], 16), int(entry["logIndex"], 16)
-                if self.db.execute("SELECT 1 FROM seen WHERE block = ? AND idx = ?", (block, idx)).fetchone():
+                block = int(entry["blockNumber"], 16)
+                key = "|".join([entry["transactionHash"].lower(), *(t.lower() for t in entry["topics"]), entry["data"].lower()])
+                if self.db.execute("SELECT 1 FROM seen WHERE key = ?", (key,)).fetchone():
                     continue
-                self.db.execute("INSERT INTO seen (block, idx) VALUES (?, ?)", (block, idx))
+                self.db.execute("INSERT INTO seen (key) VALUES (?)", (key,))
                 topic, a, b, _ = (t.lower() for t in entry["topics"])
                 if topic == T_AUTHORIZED:
                     self.db.execute("INSERT OR IGNORE INTO authorized (hash) VALUES (?)", (b,))
@@ -348,7 +354,7 @@ class Poster:
 
     def post_bytes(self, job_hash):
         try:
-            status, raw = http(f"{self.api}/posts/{job_hash}/raw", timeout=20)
+            status, raw = http(f"{self.api}/posts/{job_hash}/raw", timeout=FETCH_TIMEOUT)
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 return None
@@ -368,15 +374,18 @@ class Poster:
         """Jobs whose own fee covers publishing them alone, with their bytes, oldest first. Underpaid
         jobs are left alone (not even fetched) until prices fall."""
         now = self.now()
+        started = time.monotonic()
         ready, fetches = [], 0
+        # Jobs with bytes first, then the ones that failed fewest fetches, so paid jobs whose bytes
+        # never show up can't crowd out the rest.
         rows = self.db.execute(
             "SELECT hash, created, tries, bytes, fee FROM jobs WHERE status = 'new' AND next_try <= ? AND fee_gwei >= ? "
-            "ORDER BY block LIMIT ?", (now, floor // GWEI, MAX_BATCH * 4)).fetchall()
+            "ORDER BY bytes IS NULL, tries, block LIMIT ?", (now, floor // GWEI, MAX_BATCH * 4)).fetchall()
         for job_hash, created, tries, raw, fee in rows:
             if int(fee) < floor:
                 continue
             if raw is None:
-                if fetches >= FETCHES_PER_STEP:
+                if fetches >= FETCHES_PER_STEP or time.monotonic() - started > FETCH_BUDGET_SECONDS:
                     continue
                 fetches += 1
                 try:
@@ -418,7 +427,7 @@ class Poster:
             self.alert("balance", "gwei poster needs ETH",
                        f"{self.signer.address} has {balance} wei, a batch needs {worst_case(gas, max_fee, max_blob_fee)} up front")
             return None
-        nonce = int(self.rpc("eth_getTransactionCount", self.signer.address, "pending"), 16)
+        nonce = int(self.rpc("eth_getTransactionCount", self.signer.address, "latest"), 16)
         hashes = [bytes.fromhex(h[2:]) for h, _, _ in batch]
         blob = encode_blob([p for _, p, _ in batch])
         return self.send(nonce=nonce, hashes=hashes, blob=blob, tip=tip, max_fee=max_fee, max_blob_fee=max_blob_fee,
@@ -435,7 +444,8 @@ class Poster:
             raise AssertionError("fee caps exceed what the batch paid")
         raw, tx_hash, vh = self.build(nonce=nonce, hashes=hashes, blob=blob, tip=tip, max_fee=max_fee,
                                       max_blob_fee=max_blob_fee, gas=gas)
-        self.rpc("eth_sendRawTransaction", raw)
+        # Recorded (and committed) before it is broadcast: if the broadcast times out after the node
+        # took it, the transaction is still tracked and its posts are never sent a second time.
         names = json.dumps(["0x" + h.hex() for h in hashes])
         self.db.execute("INSERT OR REPLACE INTO blobs (vh, bytes) VALUES (?, ?)", (vh, blob))
         self.db.execute("INSERT INTO txs (hash, nonce, hashes, vh, tip, max_fee, max_blob_fee, gas, paid, sent_block, replacements, status) "
@@ -444,6 +454,22 @@ class Poster:
         for h in json.loads(names):
             self.db.execute("UPDATE jobs SET status = 'sent', tx = ? WHERE hash = ?", (tx_hash, h))
         self.db.commit()
+        try:
+            self.rpc("eth_sendRawTransaction", raw)
+        except RpcError as error:
+            if "known" not in str(error).lower():
+                # The node answered and refused it, so it can't be mined. A first send gives the
+                # posts back to the queue; a refused replacement leaves the original pending.
+                self.db.execute("UPDATE txs SET status = 'refused' WHERE hash = ?", (tx_hash,))
+                if replacements == 0:
+                    for h in json.loads(names):
+                        self.db.execute("UPDATE jobs SET status = 'new', tries = tries + 1 WHERE hash = ? AND tx = ?", (h, tx_hash))
+                self.db.commit()
+                raise
+        except Exception:
+            # No answer (timeout, connection reset): it may have gone out. Keep tracking it; reconcile
+            # rebroadcasts it or notices its nonce was used.
+            log.warning("broadcasting %s got no answer; tracking it anyway", tx_hash)
         log.info("sent %s (nonce %s, %s posts, blob %s, at most %s of %s wei paid)", tx_hash, nonce, len(hashes), vh,
                  worst_case(gas, max_fee, max_blob_fee), paid)
         return tx_hash
@@ -478,12 +504,22 @@ class Poster:
             if receipt:
                 self.settle(tx_hash, nonce, names, vh, receipt)
                 return False
-        # Nothing with this nonce was mined. If the nonce was used anyway, the batch goes back to the queue.
+        # No receipt yet. If the nonce was used anyway, look again (a block may have landed in between),
+        # and only after a few more blocks give the batch back to the queue.
         if int(self.rpc("eth_getTransactionCount", self.signer.address, "latest"), 16) > nonce:
+            for tx_hash, _, names, vh, *_ in same_nonce:
+                receipt = self.rpc("eth_getTransactionReceipt", tx_hash)
+                if receipt:
+                    self.settle(tx_hash, nonce, names, vh, receipt)
+                    return False
+            seen_used = self.used_nonces.setdefault(nonce, head)
+            if head - seen_used < DROPPED_AFTER_BLOCKS:
+                return True
             for tx_hash, _, names, *_ in same_nonce:
                 self.db.execute("UPDATE txs SET status = 'dropped' WHERE hash = ?", (tx_hash,))
                 for h in json.loads(names):
                     self.db.execute("UPDATE jobs SET status = 'new' WHERE hash = ? AND status = 'sent'", (h,))
+            self.alert("dropped", "gwei poster nonce used elsewhere", f"nonce {nonce} was used by a transaction it did not send")
             return False
         tx_hash, _, names, vh, tip, max_fee, max_blob_fee, gas, paid, sent_block, replacements = same_nonce[-1]
         tip, max_fee, max_blob_fee, paid = int(tip), int(max_fee), int(max_blob_fee), int(paid)

@@ -104,13 +104,16 @@ that authorized posts point at well before then and keep them. Blob archives suc
 | `GET /api/posts/<hash>/raw` | the exact post bytes |
 | `GET /api/names/<tokenId>/posts` | posts shown for a name, newest first |
 | `GET /api/posts/recent` | newest posts across all names |
-| `GET /api/blobs/<versionedHash>` | a blob the index fetched |
+| `GET /api/blobs/<versionedHash>` | a blob the index fetched, for 30 days after it did |
 | `POST /api/posts/preview` (body: post bytes) | `{ "title", "html" }` rendered by the gateway |
 | `POST /api/sync` | asks the index to catch up now (at most every 10 seconds) |
 
-The index reads events every minute, fetches blobs from Blobscan and then a public beacon API, and
-keeps every blob an authorized post points at. Posts show on a name's page when it has no website
-set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
+The index reads events every minute from the owner's node, or, when it's down, only events two
+public RPCs agree on. It fetches the blobs that claim an authorized post (those sent by the
+publisher the author named first) from Blobscan and a public beacon API, requiring the two to agree
+when both have the blob, and records only the claimed entries a blob really contains. A post
+carried by a blob is kept for good; blob bytes for 30 days. Posts show on a name's page when it has
+no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
 
 **Publisher.** The gwei.domains publisher (`posts/poster/`) carries any post authorized with its
 address as `publisher` whose fee covers publishing that post alone at current prices, with some
@@ -118,4 +121,5 @@ headroom. Posts that pay that much are batched into shared blobs; posts that pay
 prices fall, and never ride on other posts' fees. No transaction it sends can spend more than its
 posts paid, replacements included. The dapp pays three times the current cost of a one-post
 transaction. The publisher reads post bytes from `GET /api/posts/<hash>/raw`, waits three blocks
-before acting on a payment, and pins every blob that carries an authorized post to IPFS.
+before acting on a payment, and pins every blob that carries an authorized post to IPFS after
+checking it against its versioned hash with KZG.

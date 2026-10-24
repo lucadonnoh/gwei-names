@@ -15,7 +15,7 @@ export class PostIndex extends DurableObject {
   detail(hash) { return this.store.detail(hash); }
   forToken(token, owner, limit) { return this.store.forToken(token, owner, limit); }
   postForToken(token, owner, prefix) { return this.store.postForToken(token, owner, prefix); }
-  bodies(hashes) { return hashes.map((hash) => this.store.detail(hash)?.body ?? null); }
+  bodies(hashes) { return hashes.map((hash) => this.store.body(hash)); }
   recent(limit) { return this.store.recent(limit); }
   async forCurrentOwner(token, limit) {
     const owner = (await this.store.currentOwners([token])).get(token);
