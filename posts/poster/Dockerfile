@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir -r /opt/gwei-poster/requirements.txt
 
 # The mainnet KZG trusted setup (c-kzg-4844), pinned by hash. test_poster.py checks it reproduces
 # real mainnet blob commitments.
-ADD --checksum=sha256:d39b9f2d047cc9dca2de58f264b6a09448ccd34db967881a6713eacacf0f26b7 \
+ADD --chmod=644 --checksum=sha256:d39b9f2d047cc9dca2de58f264b6a09448ccd34db967881a6713eacacf0f26b7 \
     https://raw.githubusercontent.com/ethereum/c-kzg-4844/main/src/trusted_setup.txt /opt/gwei-poster/trusted_setup.txt
 COPY gwei_poster.py /opt/gwei-poster/
 
