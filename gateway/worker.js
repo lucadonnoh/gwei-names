@@ -600,11 +600,14 @@ async function lookupName(name, route) {
           if (profile.registered) {
             profile.seed = tokenIdHex; // generative avatar
             const ref = nftAvatarRef(profile.text.avatar);
-            const [image, primary] = await Promise.all([
+            const bannerRef = nftAvatarRef(profile.text.header);
+            const [image, banner, primary] = await Promise.all([
               ref ? nftImage(ref, route) : null,
+              bannerRef ? nftImage(bannerRef, route) : null,
               ethCall(1, NAMENFT, '0x' + SEL_REVERSE + pad32(profile.address.slice(2)), route).catch(() => null),
             ]);
             if (image) profile.avatarImage = image;
+            if (banner) profile.bannerImage = banner;
             if (primary) profile.primary = readText(primary.slice(2), word(primary.slice(2), 0))?.toLowerCase() === name.toLowerCase();
             result.profile = profile;
           }
@@ -898,9 +901,9 @@ export default {
       const dappHash = encodeURIComponent(decodedSub);
       if (r.registered === false) return htmlResponse(renderUnregistered({ name, dappHash }), 404, undefined, PROFILE_CSP);
       if (url.pathname === AVATAR_PNG_PATH && r.profile?.seed) {
-        // The generated avatar never changes for a name, so it can be cached for a long time.
-        const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=604800' }));
-        return new Response(await avatarPng(r.profile.seed), { status: 200, headers });
+        // Only an accent-colour change alters the generated avatar, so a day of caching is fine.
+        const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }));
+        return new Response(await avatarPng(r.profile.seed, 256, r.profile.page?.color), { status: 200, headers });
       }
       if (url.pathname !== '/') {
         return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);

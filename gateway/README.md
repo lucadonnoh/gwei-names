@@ -41,8 +41,11 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **Name profiles.** A registered name with no `contenthash` and no usable `contentcontract` record
   gets a profile page at its root (`profile-page.js`, styled like gwei.domains): address, owner,
   expiry and its `display`, `description`, `avatar`, `url`, `com.twitter`, `com.github`,
-  `org.telegram` and `email` records, read in one Multicall3 call, plus Open Graph tags for link
-  previews. ENSIP-12 NFT avatars are resolved through `tokenURI`/`uri` (64 KB metadata, 4 s). Record
+  `org.telegram`, `email` and `header` (banner) records, read in one Multicall3 call, plus Open Graph
+  tags for link previews. The `gwei-page` record (JSON, written by the dapp's Edit Profile form) adds
+  an accent `color` and a `links` list. Names without an avatar get a generated one (SVG on the page,
+  PNG at `/.well-known/gwei-avatar.png` for previews). ENSIP-12 NFT avatars and banners are resolved
+  through `tokenURI`/`uri` (64 KB metadata, 4 s). Record
   values are escaped, links are limited to http(s)/mailto, and the page has no scripts under a strict
   CSP. Other paths on such a name are a 404; an unregistered (or expired) name gets a page linking to
   its registration in the dapp (`https://gwei.domains/#<name>`).

@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { checkEndpoints } from './worker.js';
+import { PROFILE_TEXT_KEYS } from './profile-page.js';
 import {
   RPCS,
   RPC_PAGE_TIMEOUT_MS,
@@ -1165,7 +1166,7 @@ test('transient error pages retry themselves and are never cached', async () => 
 function abiProfile({ address = '0', owner = address, expires = '0', text = {} } = {}) {
   const str = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return pad32('20') + pad32((utf8(v).length).toString(16)) + d; };
   const items = [[true, pad32(address)], [true, pad32(owner)], [true, pad32(expires)],
-    ...['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email'].map((k) => [true, str(text[k] || '')])];
+    ...PROFILE_TEXT_KEYS.map((k) => [true, str(text[k] || '')])];
   const elements = items.map(([ok, data]) => pad32(ok ? '1' : '0') + pad32('40') + pad32((data.length / 2).toString(16)) + data);
   let cursor = items.length * 32;
   const offsets = elements.map((e) => { const o = pad32(cursor.toString(16)); cursor += e.length / 2; return o; });

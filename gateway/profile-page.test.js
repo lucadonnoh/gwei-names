@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { inflateSync } from 'node:zlib';
 import {
-  PROFILE_TEXT_KEYS, avatarPng, avatarSvg, avatarUrl, decodeAggregate3, encodeAggregate3, nftAvatarRef, profileFromResults,
-  renderProfile, renderUnregistered,
+  PROFILE_TEXT_KEYS, avatarPng, avatarSvg, avatarUrl, decodeAggregate3, encodeAggregate3, nftAvatarRef, parseGweiPage,
+  profileFromResults, renderProfile, renderUnregistered,
 } from './profile-page.js';
 
 const NFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
@@ -137,4 +137,32 @@ test('badges mark proof-of-humanity and free names, short, number and emoji name
   assert.deepEqual(badges('4242.gwei'), ['Number']);
   assert.deepEqual(badges('🦄.gwei', { primary: true }), ['Primary name', 'Emoji', 'Short name']);
   assert.deepEqual(badges('vitalik.gwei'), []);
+});
+
+test('gwei-page: accent colour and links are parsed defensively', () => {
+  assert.deepEqual(parseGweiPage('{"color":"#175640","links":["https://a.example"," b.example ",""]}'),
+    { color: '#175640', links: ['https://a.example', 'b.example'] });
+  assert.deepEqual(parseGweiPage('{"color":"red","links":"nope","extra":1}'), null);
+  assert.equal(parseGweiPage('not json'), null);
+  assert.equal(parseGweiPage('[1,2]'), null);
+  assert.equal(parseGweiPage(JSON.stringify({ links: Array.from({ length: 20 }, (_, i) => `https://${i}.example`) })).links.length, 8);
+});
+
+test('gwei-page shapes the profile: accent button and avatar, link list, banner, edit link', () => {
+  const profile = profileFromResults(results({ text: {
+    'gwei-page': JSON.stringify({ color: '#f0e68c', links: ['warpcast.com/alice', 'javascript:alert(1)', 'https://alice.blog/'] }),
+    header: 'https://img.example/banner.png',
+  } }));
+  profile.seed = 'ab'.repeat(32);
+  assert.equal(profile.text['gwei-page'], undefined, 'the raw record is not rendered as text');
+  const html = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: 'https://alice.gwei.domains/', profile });
+  assert.match(html, /class="btn" style="background:#f0e68c;border-color:#f0e68c;color:#000"/, 'dark text on a light accent');
+  assert.match(html, /<rect width="160" height="160" fill="#f0e68c"\/>/, 'generated avatar uses the accent');
+  assert.match(html, /<div class="links"><a href="https:\/\/warpcast\.com\/alice" [^>]*>warpcast\.com\/alice<\/a><a href="https:\/\/alice\.blog\/" [^>]*>alice\.blog<\/a><\/div>/);
+  assert.doesNotMatch(html, /javascript:/);
+  assert.match(html, /<img class="banner" src="https:\/\/img\.example\/banner\.png"/);
+  assert.match(html, /<a href="https:\/\/gwei\.domains\/#alice">edit this profile<\/a>/);
+
+  const dark = profileFromResults(results({ text: { 'gwei-page': '{"color":"#402370"}' } }));
+  assert.match(renderProfile({ name: 'x.gwei', dappHash: 'x', pageUrl: 'https://x.gwei.domains/', profile: dark }), /color:#fff"/);
 });

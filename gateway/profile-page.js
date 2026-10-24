@@ -7,7 +7,9 @@ import { hexToBytes } from './web3-auto.js';
 export const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const SEL_AGGREGATE3 = '82ad56cb'; // aggregate3((address,bool,bytes)[])
 // ENS text-record keys shown on the page, in display order after the name.
-export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email'];
+// `header` is the ENS banner-image key; `gwei-page` is this page's own record: a small JSON object
+// with an accent `color` and a `links` list (set from the dapp's profile editor).
+export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email', 'header', 'gwei-page'];
 
 const pad32 = (h) => h.padStart(64, '0');
 const escapeHtml = (s) =>
@@ -83,13 +85,36 @@ export function profileFromResults(results) {
     if (value) text[key] = clip(value, key === 'description' ? 500 : 300);
   });
   const expires = decodeUint(results[2]);
+  const page = parseGweiPage(text['gwei-page']);
+  delete text['gwei-page'];
   return {
     registered: true,
     address,
     owner: decodeAddress(results[1]),
     expiresAt: expires && expires > 0n && expires < 1n << 40n ? Number(expires) : null,
     text,
+    ...(page ? { page } : {}),
   };
+}
+
+// The `gwei-page` record: { "color": "#rrggbb", "links": ["https://…", …] }. Anything else in it, or
+// anything malformed, is ignored; links are validated again when rendered.
+export const PAGE_MAX_LINKS = 8;
+export function parseGweiPage(value) {
+  let raw;
+  try {
+    raw = JSON.parse(value || '');
+  } catch (_) {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const page = {};
+  if (typeof raw.color === 'string' && /^#[0-9a-f]{6}$/i.test(raw.color.trim())) page.color = raw.color.trim().toLowerCase();
+  if (Array.isArray(raw.links)) {
+    const links = raw.links.filter((l) => typeof l === 'string' && l.trim()).map((l) => l.trim().slice(0, 300)).slice(0, PAGE_MAX_LINKS);
+    if (links.length) page.links = links;
+  }
+  return Object.keys(page).length ? page : null;
 }
 
 function webLink(value) {
@@ -154,9 +179,10 @@ function profileRows(profile) {
 // since X and others don't render SVG.
 const AVATAR_COLORS = ['#161616', '#244577', '#175640', '#402370', '#732430']; // SHARE_BGS in dapp/gweiNS.html
 const AVATAR_GRID = 7, AVATAR_CELL = 16, AVATAR_SIZE = 160, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
-function avatarModel(seedHex) {
+function avatarModel(seedHex, accent) {
   const bytes = hexToBytes(String(seedHex).replace(/^0x/, '').padStart(64, '0').slice(-64));
-  const color = AVATAR_COLORS[bytes[0] % AVATAR_COLORS.length];
+  // The owner's accent colour, when set, replaces the seeded background.
+  const color = /^#[0-9a-f]{6}$/i.test(accent || '') ? accent : AVATAR_COLORS[bytes[0] % AVATAR_COLORS.length];
   const cells = [];
   for (let y = 0; y < AVATAR_GRID; y++) {
     for (let x = 0; x < 4; x++) {
@@ -165,8 +191,9 @@ function avatarModel(seedHex) {
       if (x < 3) cells.push([AVATAR_GRID - 1 - x, y]);
     }
   }
-  // Hash outputs are almost never this sparse, but a nearly blank avatar shouldn't happen at all.
-  if (cells.length < 10) {
+  // Hash outputs are almost never this sparse or dense, but a nearly blank or solid avatar shouldn't
+  // happen at all; the inverse of a symmetric pattern is symmetric too.
+  if (cells.length < 10 || cells.length > AVATAR_GRID * AVATAR_GRID - 10) {
     const lit = new Set(cells.map(([x, y]) => `${x},${y}`));
     const inverse = [];
     for (let y = 0; y < AVATAR_GRID; y++) for (let x = 0; x < AVATAR_GRID; x++) if (!lit.has(`${x},${y}`)) inverse.push([x, y]);
@@ -175,8 +202,8 @@ function avatarModel(seedHex) {
   return { color, cells };
 }
 
-export function avatarSvg(seedHex) {
-  const { color, cells } = avatarModel(seedHex);
+export function avatarSvg(seedHex, accent) {
+  const { color, cells } = avatarModel(seedHex, accent);
   return `<svg class="avatar" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${AVATAR_SIZE} ${AVATAR_SIZE}" shape-rendering="crispEdges" role="img" aria-label="generated avatar">` +
     '<defs><pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="${color}"/>` +
@@ -211,8 +238,8 @@ function pngChunk(type, data) {
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
 // The same avatar rasterized to a PNG (RGB, zlib via CompressionStream; no dependencies).
-export async function avatarPng(seedHex, size = 256) {
-  const { color, cells } = avatarModel(seedHex);
+export async function avatarPng(seedHex, size = 256, accent) {
+  const { color, cells } = avatarModel(seedHex, accent);
   const base = rgb(color);
   const filled = new Set(cells.map(([x, y]) => y * AVATAR_GRID + x));
   const scale = size / AVATAR_SIZE;
@@ -275,6 +302,9 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.name{font-size:24px;font-weight:600;overflow-wrap:anywhere;margin-bottom:8px}' +
   '.lead{font-size:14px;overflow-wrap:anywhere;margin-bottom:6px}.lead.muted{color:var(--muted)}' +
   '.avatar{display:block;width:96px;height:96px;object-fit:cover;margin-bottom:16px;background:var(--panel)}' +
+  '.banner{display:block;width:100%;aspect-ratio:3/1;object-fit:cover;margin-bottom:20px;background:var(--panel)}' +
+  '.links{margin-top:24px}.links a{display:block;padding:12px 14px;margin-bottom:8px;border:1px solid var(--fg);color:var(--fg);text-decoration:none;font-size:13px;overflow-wrap:anywhere}' +
+  '.links a:hover{background:var(--panel);opacity:1}' +
   '.badges{margin:2px 0 10px}.badge{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);border:1px solid var(--muted);padding:2px 7px;margin:0 6px 6px 0}' +
   '.panel{font-size:13px;margin-top:24px;padding:12px;background:var(--panel);overflow-wrap:anywhere}' +
   '.panel div{margin-bottom:6px}.panel div:last-child{margin-bottom:0}' +
@@ -303,8 +333,21 @@ function metaTags({ title, description, url, image, imageSize }) {
 }
 
 // `name` is the full name ("alice.gwei"), `dappHash` its gwei.domains link fragment, `pageUrl` this page.
+// Readable text on an accent background: black or white, by relative luminance.
+function textOn(hex) {
+  const [r, g, b] = rgb(hex).map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#000' : '#fff';
+}
+
 export function renderProfile({ name, dappHash, pageUrl, profile }) {
   const t = profile.text || {};
+  const page = profile.page || {};
+  const accent = page.color || null;
+  const banner = avatarUrl(profile.bannerImage || t.header);
+  const links = (page.links || []).map(webLink).filter(Boolean);
   const display = t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '';
   const avatar = avatarUrl(profile.avatarImage || t.avatar);
   const description = t.description || `${name} on the Gwei Name Service, an ownerless namespace on Ethereum.`;
@@ -313,18 +356,23 @@ export function renderProfile({ name, dappHash, pageUrl, profile }) {
   const badges = nameBadges(name, profile);
   const share = `https://x.com/intent/post?text=${encodeURIComponent(name)}&url=${encodeURIComponent(pageUrl)}`;
   const body =
+    (banner ? `<img class="banner" src="${escapeHtml(banner)}" alt="" referrerpolicy="no-referrer">` : '') +
     (avatar
       ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">`
-      : profile.seed ? avatarSvg(profile.seed) : '') +
+      : profile.seed ? avatarSvg(profile.seed, accent) : '') +
     `<div class="name">${escapeHtml(name)}</div>` +
     (badges.length ? `<div class="badges">${badges.map((b) => `<span class="badge">${b}</span>`).join('')}</div>` : '') +
     (display ? `<div class="lead">${escapeHtml(display)}</div>` : '') +
     (t.description ? `<div class="lead muted">${escapeHtml(t.description)}</div>` : '') +
+    (links.length
+      ? `<div class="links">${links.map((href) => `<a href="${escapeHtml(href)}" rel="nofollow ugc noopener">${escapeHtml(href.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</a>`).join('')}</div>`
+      : '') +
     `<div class="panel">${rows}</div>` +
-    `<div class="actions"><a class="btn" href="${dapp}">View on gwei.domains</a>` +
+    `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="${dapp}">View on gwei.domains</a>` +
     `<a class="btn secondary" href="${escapeHtml(share)}" rel="noopener">Share</a></div>` +
-    `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can replace it with a website ` +
-    'stored on IPFS, Swarm or a contract: <a href="https://gwei.domains/guide/">host a website →</a></p>';
+    `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
+    `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
+    '<a href="https://gwei.domains/guide/">host a website →</a></p>';
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
