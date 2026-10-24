@@ -1,13 +1,16 @@
 # gwei-poster
 
-The gwei.domains publisher for GNS posts ([../SPEC.md](../SPEC.md)). It carries posts whose owners
-authorized them with its address as `publisher` and paid enough, in blob transactions to `GnsPosts`.
-Anyone can run a publisher like it; this one has no special standing.
+The gwei.domains publisher for GNS posts ([../SPEC.md](../SPEC.md)). Authors put a fee in escrow on
+`GnsPosts` for the exact blob their post makes; this publisher rebuilds that blob from the post,
+checks its versioned hash, delivers it and is paid in the same transaction. Anyone can run a publisher
+like it; this one has no special standing.
 
-**Money rules.** A post is only included if its own fee covers publishing it alone at current prices
-(`min_fee`), so cheap posts never ride on others' fees. No transaction may spend more than its posts
-paid, replacements included (`fee_caps`, checked again in `send`). Payments count after 3
-confirmations and exactly once. `test_poster.py` has a test for each griefing case.
+**Money rules.** A blob is only sent if its deposits that can't be refunded within six hours
+(`SAFETY_MARGIN`) cover sending it alone at current prices (`min_fee`), so cheap posts never ride on
+others' fees. No transaction may spend more than those deposits, replacements included (`fee_caps`,
+checked again in `send`). Payments count after 3 confirmations and exactly once. `test_poster.py` has a
+test for each griefing case, and its end-to-end tests check on anvil that the publisher's balance
+never ends lower than it started.
 
 **Run it** (eth-node): `/opt/gwei-poster` holds this directory, with an `.env` setting
 `POSTER_CONTRACT`, `POSTER_FROM_BLOCK` and optionally `POSTER_NTFY_URL` and

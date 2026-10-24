@@ -10,7 +10,7 @@ import {
 } from './posts-format.js';
 import { excerpt, linkUrl, renderMarkdown } from './markdown.js';
 import { texToMathml } from './math.js';
-import { PostStore, T_AUTHORIZED, T_PUBLISHED, T_REMOVED, clientKey } from './posts-store.js';
+import { PostStore, T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED, clientKey } from './posts-store.js';
 import { keccak256 } from './web3-auto.js';
 
 const utf8 = (s) => new TextEncoder().encode(s);
@@ -20,8 +20,8 @@ const pad32 = (h) => h.padStart(64, '0');
 // --- formats -----------------------------------------------------------------------------------
 test('event topics are the keccak of the GnsPosts event signatures', () => {
   const topic = (sig) => '0x' + toHex(keccak256(utf8(sig)));
-  assert.equal(T_AUTHORIZED, topic('PostAuthorized(uint256,bytes32,address,address,uint256)'));
-  assert.equal(T_PUBLISHED, topic('PostPublished(bytes32,bytes32,address)'));
+  assert.equal(T_AUTHORIZED, topic('PostAuthorized(uint256,bytes32,address,bytes32,address,uint256)'));
+  assert.equal(T_BLOB_PUBLISHED, topic('BlobPublished(bytes32,address,uint256)'));
   assert.equal(T_REMOVED, topic('PostRemoved(uint256,bytes32,address)'));
 });
 
@@ -261,9 +261,19 @@ const logOf = (block, idx, topics, data = '0x') => ({
   address: CONTRACT, blockNumber: '0x' + block.toString(16), logIndex: '0x' + idx.toString(16),
   transactionHash: '0x' + pad32(`${block}${idx}`), topics, data, removed: false,
 });
-const authorized = (block, idx, token, hash, author, publisher = PUBLISHER, fee = 10n ** 13n) =>
-  logOf(block, idx, [T_AUTHORIZED, token, hash, topicAddr(author)], '0x' + pad32(publisher.slice(2)) + word(fee));
-const published = (block, idx, hash, vh, publisher = PUBLISHER) => logOf(block, idx, [T_PUBLISHED, hash, vh, topicAddr(publisher)]);
+// PostAuthorized names the blob the author built for the post. Tests say which blob that was when
+// they publish it: published(…, hash, vh) points the post's authorizations at vh, then emits
+// BlobPublished(vh).
+const authLogs = new Map();
+const authorized = (block, idx, token, hash, author, publisher = PUBLISHER, fee = 10n ** 13n, vh = '0x01' + hash.slice(4)) => {
+  const log = logOf(block, idx, [T_AUTHORIZED, token, hash, topicAddr(author)], '0x' + vh.slice(2) + pad32(publisher.slice(2)) + word(fee));
+  authLogs.set(hash, [...(authLogs.get(hash) || []), log]);
+  return log;
+};
+const published = (block, idx, hash, vh, publisher = PUBLISHER) => {
+  for (const log of authLogs.get(hash) || []) log.data = '0x' + vh.slice(2) + log.data.slice(66);
+  return logOf(block, idx, [T_BLOB_PUBLISHED, vh, topicAddr(publisher)], '0x' + word(0));
+};
 const removed = (block, idx, token, hash, author) => logOf(block, idx, [T_REMOVED, token, hash, topicAddr(author)]);
 const versionedHash = (n) => '0x01' + pad32(n.toString(16)).slice(2);
 
@@ -556,22 +566,40 @@ test('blob sources must agree when both answer', async () => {
   assert.ok(store.forToken(TOKEN, ALICE)[0].onchain);
 });
 
-test('blobs from the publisher the author named are fetched before anyone else’s claims', async () => {
+test('blobs nobody named for a post are never fetched, however many there are', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Paid post');
-  store.upload(a.bytes, 'ip');
-  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE)); // publisher: PUBLISHER
-  for (let i = 0; i < 20; i++) {
-    const junkVh = versionedHash(100 + i);
-    world.blobs[junkVh] = encodeBlob([postBytes('junk' + i).bytes]);
-    world.logs.push(published(501 + i, 0, a.hash, junkVh, BOB)); // BOB's blobs claim ALICE's post
-  }
   const vh = versionedHash(99);
   world.blobs[vh] = encodeBlob([a.bytes]);
-  world.logs.push(published(600, 0, a.hash, vh, PUBLISHER));
+  store.upload(a.bytes, 'ip');
+  for (let i = 0; i < 20; i++) {
+    const junkVh = versionedHash(100 + i);
+    world.blobs[junkVh] = encodeBlob([a.bytes]); // even ones that happen to contain the post
+    world.logs.push(logOf(400 + i, 0, [T_BLOB_PUBLISHED, junkVh, topicAddr(BOB)], '0x' + word(0)));
+  }
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, PUBLISHER, 10n ** 13n, vh), logOf(600, 0, [T_BLOB_PUBLISHED, vh, topicAddr(PUBLISHER)], '0x' + word(0)));
   await store.sync();
-  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain?.blob, vh, 'the named publisher’s blob is in the first batch');
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain?.blob, vh);
+  assert.equal(world.calls.filter((u) => /0x01[0-9a-f]+/.test(u) && !u.includes(vh)).length, 0, 'no junk blob was fetched');
+});
+
+test('the blob the author named counts only once it is published, whoever publishes it', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Named');
+  const vh = versionedHash(98);
+  world.blobs[vh] = encodeBlob([a.bytes]);
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, PUBLISHER, 10n ** 13n, vh));
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain, null, 'authorized, not yet published');
+  world.head = 1100;
+  world.logs.push(logOf(1050, 0, [T_BLOB_PUBLISHED, vh, topicAddr(BOB)], '0x' + word(0))); // someone else delivered it
+  store.advance(60);
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.publisher, BOB);
+  assert.equal(store.detail(a.hash).authorizations[0].blob, vh);
 });
 
 test('a token without a full name never holds up the others', async () => {
@@ -715,4 +743,25 @@ test('a post is dated by the block of the blob that carries it, else by its auth
   ]);
   assert.equal(store.detail(early.hash).time, world.timestamp(600));
   assert.equal(store.detail(pending.hash).time, world.timestamp(700));
+});
+
+test('pointing the index at a new contract starts it over', async () => {
+  const world = fakeWorld();
+  const sql = memorySql();
+  const env = { POSTS_CONTRACT: CONTRACT, POSTS_FROM_BLOCK: '100', RPC_URL: 'https://rpc.test/', BLOB_SOURCES: '{"blobscan":"https://blobscan.test","beacons":[]}' };
+  const old = new PostStore(sql, env, { fetchImpl: world.fetch, now: () => world.timestamp(world.head) });
+  const a = postBytes('From the old contract');
+  old.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  await old.sync();
+  assert.ok(old.raw(a.hash));
+  assert.ok(old.meta('cursor'));
+
+  const same = new PostStore(sql, env, { fetchImpl: world.fetch, now: () => world.timestamp(world.head) });
+  assert.ok(same.raw(a.hash), 'a restart keeps the index');
+
+  const fresh = new PostStore(sql, { ...env, POSTS_CONTRACT: '0x' + 'd0'.repeat(20) }, { fetchImpl: world.fetch, now: () => world.timestamp(world.head) });
+  assert.equal(fresh.raw(a.hash), null);
+  assert.equal(fresh.meta('cursor'), null);
+  assert.equal(fresh.rows('SELECT COUNT(*) AS n FROM auth')[0].n, 0);
 });

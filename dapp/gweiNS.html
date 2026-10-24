@@ -2054,8 +2054,11 @@ const POSTS_CONTRACT = NET.posts || '';
 const POSTS_PUBLISHER = NET.postsPublisher || '';
 const POSTS_API = 'https://gwei.domains/api'; // the gateway's post index, readable from any origin
 const POSTS_ABI = [
-  'function authorize(uint256 tokenId, bytes32 postHash, address publisher) payable',
+  'function authorize(uint256 tokenId, bytes32 postHash, bytes32 blobHash, address publisher) payable',
   'function remove(uint256 tokenId, bytes32 postHash)',
+  'function refund(bytes32 blobHash, address publisher)',
+  'function deposits(bytes32 key, address payer) view returns (uint128 amount, uint64 refundableAt)',
+  'function delivered(bytes32 key) view returns (bool)',
 ];
 function postsEnabled() {
   return CHAIN_ID === 1 && /^0x[0-9a-fA-F]{40}$/.test(POSTS_CONTRACT) && /^0x[0-9a-fA-F]{40}$/.test(POSTS_PUBLISHER);
@@ -6262,11 +6265,23 @@ function profileFormHtml() {
     `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>`;
 }
 
-// ── Posts (posts/SPEC.md): a post is JSON bytes named by their keccak-256 hash. The owner authorizes
-// the hash on GnsPosts and pays the gwei.domains publisher, which puts the bytes in a blob. ──
+// ── Posts (posts/SPEC.md): a post is JSON bytes named by their keccak-256 hash, carried in its own
+// blob. The dapp builds that blob, computes its versioned hash with KZG (vendor/kzg.bundle.mjs) and
+// authorizes the post against it, putting the fee in escrow; GnsPosts pays the gwei.domains publisher
+// only when it delivers exactly that blob, and the owner can take the fee back if nobody does. ──
 const POST_MAX_BYTES = 126968;
-const POST_FEE_GAS = 25600n; // the publisher's expected gas for a one-post blob transaction
+const POST_FEE_GAS = 54500n; // the publisher's expected gas for a one-blob publish() (gwei_poster.expected_gas(1))
 const BLOB_GAS = 131072n;
+// A post's own blob, byte for byte as the gateway and publisher build it (gateway/posts-format.js):
+// "gwei", version 1, a 3-byte length and the post, zero-padded, 31 bytes per 32-byte field element.
+function postBlobFrom(bytes) {
+  const payload = new Uint8Array(4096 * 31);
+  payload.set([0x67, 0x77, 0x65, 0x69, 1, bytes.length >> 16, (bytes.length >> 8) & 0xff, bytes.length & 0xff], 0);
+  payload.set(bytes, 8);
+  const blob = new Uint8Array(131072);
+  for (let i = 0; i < 4096; i++) blob.set(payload.subarray(i * 31, i * 31 + 31), i * 32 + 1);
+  return blob;
+}
 // The bytes the gateway and publisher expect: v, title, body, in that order, no whitespace. A post
 // has no date of its own: it is dated by the block of the blob that carries it.
 function postBytesFrom(title, body) {
@@ -6321,7 +6336,7 @@ function updatePostCost() {
   if (bytes.length > POST_MAX_BYTES) { el.textContent = `Too long: ${size}.`; return; }
   el.textContent = currentPostFee == null
     ? `${size}. Checking the publishing fee…`
-    : `${size}. Publishing costs ${ethers.formatEther(currentPostFee)} ETH, paid to the gwei.domains publisher, plus gas for one transaction.`;
+    : `${size}. Publishing costs ${ethers.formatEther(currentPostFee)} ETH plus gas for one transaction. The fee is held by the contract and goes to the gwei.domains publisher only when it puts this exact post in a blob; if it doesn't within a day, you can take it back.`;
 }
 
 function postsFormHtml() {
@@ -6342,6 +6357,17 @@ function postsFormHtml() {
     '<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"></iframe>';
 }
 
+// Posts this browser paid to publish and that may not have been delivered yet, so their fee can be
+// taken back after the refund delay: { hash, blob, publisher, title } per name and chain.
+const paidPostsKey = (tokenId) => `gwei_paid_posts_${CHAIN_ID}_${tokenHexOf(tokenId)}`;
+function paidPosts(tokenId) {
+  try { return JSON.parse(localStorage.getItem(paidPostsKey(tokenId)) || '[]'); } catch (e) { return []; }
+}
+function savePaidPosts(tokenId, list) {
+  try { localStorage.setItem(paidPostsKey(tokenId), JSON.stringify(list)); } catch (e) {}
+}
+const escrowKeyOf = (blob, publisher) => ethers.keccak256(ethers.concat([blob, ethers.zeroPadValue(publisher, 32)]));
+
 async function loadOwnPosts() {
   const el = $('ppList');
   if (!el || !currentTokenId) return;
@@ -6350,15 +6376,44 @@ async function loadOwnPosts() {
     const res = await fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`, { cache: 'no-store' });
     const { posts } = await res.json();
     if (tokenId !== currentTokenId || !$('ppList')) return;
-    if (!posts?.length) { el.innerHTML = '<div class="profile-hint" style="margin:0;">No posts yet.</div>'; return; }
     const base = `https://${currentTokenName}.${GWEI_GATEWAY}`;
-    el.innerHTML = posts.map((p) => `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
+    let html = (posts || []).map((p) => `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
       `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
       `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
       `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`).join('');
+    html += await refundRows(tokenId, posts || []);
+    if (tokenId !== currentTokenId || !$('ppList')) return;
+    el.innerHTML = html || '<div class="profile-hint" style="margin:0;">No posts yet.</div>';
   } catch (e) {
     el.innerHTML = '<div class="profile-hint" style="margin:0;">Couldn’t load your posts right now.</div>';
   }
+}
+
+// Paid posts whose blob wasn't delivered: once the refund delay has passed, a Refund button.
+async function refundRows(tokenId, shown) {
+  const list = paidPosts(tokenId);
+  if (!list.length || !connectedAddress) return '';
+  const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, await getRpc());
+  const keep = [];
+  let html = '';
+  for (const p of list) {
+    try {
+      const key = escrowKeyOf(p.blob, p.publisher);
+      const [delivered, deposit] = await Promise.all([posts.delivered(key), posts.deposits(key, connectedAddress)]);
+      if (delivered || deposit.amount === 0n) continue; // published (and paid), or already refunded
+      keep.push(p);
+      if (shown.some((s) => s.hash === p.hash && s.onchain)) continue;
+      const due = Number(deposit.refundableAt) * 1000 <= Date.now();
+      html += `<div class="post-row"><span class="post-date">unpublished</span><span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(p.title)}</span>` +
+        (due
+          ? `<button class="secondary" onclick="doRefundPost('${p.hash}')">Refund ${ethers.formatEther(deposit.amount)} ETH</button>`
+          : `<span class="post-state">refundable ${new Date(Number(deposit.refundableAt) * 1000).toLocaleString()}</span>`) + '</div>';
+    } catch (e) {
+      keep.push(p);
+    }
+  }
+  savePaidPosts(tokenId, keep);
+  return html;
 }
 
 async function previewPost() {
@@ -6414,18 +6469,24 @@ async function doPublishPost() {
   if (bytes.length > POST_MAX_BYTES) { showStatus(`The post is too long: ${bytes.length} bytes, the most is ${POST_MAX_BYTES}`, 'error'); return; }
   const hash = ethers.keccak256(bytes);
   const name = currentTokenName;
+  const tokenId = currentTokenId;
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
+    showStatus('Preparing the blob...', '');
+    // The publisher is only paid for exactly this blob, so its hash is computed here, not taken from anyone.
+    const { blobVersionedHash } = await import('/vendor/kzg.bundle.mjs');
+    const blob = blobVersionedHash(postBlobFrom(bytes));
     showStatus('Uploading the post...', '');
     const uploaded = await uploadPost(bytes, hash);
     await refreshPostQuote();
     if (currentPostFee == null) throw new Error('Couldn’t read current gas prices to price the post');
     const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
-    showStatus(`Approve the post: ${ethers.formatEther(currentPostFee)} ETH to the publisher`, '');
-    const tx = await wcTransaction(posts.authorize(currentTokenId, hash, POSTS_PUBLISHER, { value: currentPostFee }), 'Approve the post');
+    showStatus(`Approve the post: ${ethers.formatEther(currentPostFee)} ETH, held until the publisher delivers its blob`, '');
+    const tx = await wcTransaction(posts.authorize(tokenId, hash, blob, POSTS_PUBLISHER, { value: currentPostFee }), 'Approve the post');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
+    savePaidPosts(tokenId, [...paidPosts(tokenId).filter((p) => p.hash !== hash), { hash, blob, publisher: POSTS_PUBLISHER, title }]);
     showStatus('Confirmed. Adding it to your page...', '', tx.hash);
     const indexed = await waitForPostIndexed(hash);
     if (!uploaded) {
@@ -6442,6 +6503,26 @@ async function doPublishPost() {
   } finally {
     isProcessing = false;
     if (btn) btn.disabled = false;
+  }
+}
+
+async function doRefundPost(hash) {
+  if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
+  const p = paidPosts(currentTokenId).find((x) => x.hash === hash);
+  if (!p) return;
+  isProcessing = true;
+  try {
+    const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
+    const tx = await wcTransaction(posts.refund(p.blob, p.publisher), 'Approve the refund');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    savePaidPosts(currentTokenId, paidPosts(currentTokenId).filter((x) => x.hash !== hash));
+    showStatus('Refunded. The fee is back in your wallet.', 'success', tx.hash);
+    loadOwnPosts();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
   }
 }
 

@@ -9,25 +9,35 @@ gwei.domains runs one publisher and one index, described at the end. Neither is 
 
 ## Contract
 
-`GnsPosts` ([src/GnsPosts.sol](../src/GnsPosts.sol)) has no owner, admin, storage or upgrades. It
-checks name ownership against NameNFT (`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`) and emits
-events. Clients rebuild everything from these events, with no archive state needed.
+`GnsPosts` ([src/GnsPosts.sol](../src/GnsPosts.sol)) has no owner, admin or upgrades; its only balance
+is fees in escrow. It checks name ownership against NameNFT
+(`0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6`) and emits events, from which clients rebuild
+everything with no archive state needed.
+
+A blob's versioned hash depends only on its bytes, and a post's blob is fixed by the post (see
+[Blob format](#blob-format)). So the author computes the versioned hash before anyone publishes and
+authorizes the post against it. A fee for a publisher sits in escrow until that publisher sends a blob
+transaction carrying a blob with exactly that versioned hash (read on-chain with `BLOBHASH`) and calls
+`publish`, which pays it out in the same transaction. No other blob matches, so delivery needs no
+trust, challenge or proof. A fee nobody delivered for within a day can be taken back.
 
 | Function | Who | Effect |
 |---|---|---|
-| `authorize(tokenId, postHash, publisher)` payable | owner of an active name | `PostAuthorized`; forwards `msg.value` to `publisher` |
-| `publish(bytes32[][] postHashes)` | anyone, in a blob transaction | `PostPublished` for each hash, with `postHashes[i]` in blob `i` |
-| `post(tokenId, postHash, blobIndex)` | owner, in a blob transaction | both events at once (self-publishing) |
+| `authorize(tokenId, postHash, blobHash, publisher)` payable | owner of an active name | `PostAuthorized`; any fee goes into escrow for (`blobHash`, `publisher`) |
+| `publish()` | anyone, in a blob transaction | `BlobPublished` for each attached blob; pays the caller the escrow held for it for those blobs |
+| `post(tokenId, postHash, blobIndex)` | owner, in a blob transaction | authorize and publish at once (self-publishing) |
+| `refund(blobHash, publisher)` | a payer | after `REFUND_DELAY` (1 day), returns their undelivered fee; `FeeRefunded` |
 | `remove(tokenId, postHash)` | owner | `PostRemoved` |
 
 ```
-event PostAuthorized(uint256 indexed tokenId, bytes32 indexed postHash, address indexed author, address publisher, uint256 fee);
-event PostPublished(bytes32 indexed postHash, bytes32 indexed blobHash, address indexed publisher);
+event PostAuthorized(uint256 indexed tokenId, bytes32 indexed postHash, address indexed author, bytes32 blobHash, address publisher, uint256 fee);
+event BlobPublished(bytes32 indexed blobHash, address indexed publisher, uint256 paid);
+event FeeRefunded(bytes32 indexed blobHash, address indexed publisher, address indexed payer, uint256 amount);
 event PostRemoved(uint256 indexed tokenId, bytes32 indexed postHash, address indexed author);
 ```
 
-`blobHash` is the blob's versioned hash, read on-chain with `BLOBHASH`, so it always names a blob
-attached to the same transaction. Contract wallets, which can't send blobs, can still `authorize`.
+Contract wallets, which can't send blobs, can still `authorize`. Paying a publisher for a blob it
+already delivered reverts, so a fee is never paid for work already done.
 
 ## Post format
 
@@ -65,7 +75,9 @@ A blob is 4096 field elements of 32 bytes. The first byte of each field element 
 "gwei" (4 bytes) | version 0x01 | length (3 bytes, big-endian) | post bytes | length | post bytes | … | 0x000000 or end
 ```
 
-One blob can carry many posts. A post must fit in a single blob.
+**A post's blob** is the container holding just that post, zero-padded: this is the blob an
+authorization names, so its bytes, and therefore its versioned hash, follow from the post alone. The
+container can hold several posts, for self-publishers who want to; a post must fit in a single blob.
 
 ## Validity
 
@@ -77,8 +89,8 @@ A client shows a post under name `N` (token `T`) when all of these hold:
    doesn't matter: a blob, an upload, a friend.
 3. There is no `PostRemoved(T, h, author)` after `author`'s latest `PostAuthorized(T, h, …)`.
 
-A post is **on Ethereum** when, additionally, a `PostPublished(h, blobHash, …)` names a blob whose
-payload contains bytes hashing to `h`. A claim for a blob that doesn't contain the post is ignored.
+A post is **on Ethereum** when, additionally, the blob its authorization names was published
+(`BlobPublished(blobHash, …)`, by anyone) and that blob's payload contains bytes hashing to `h`.
 Clients may show authorized posts that aren't on Ethereum yet, marked as pending. The gateway does
 so for one day.
 
@@ -88,11 +100,13 @@ that authorized posts point at well before then and keep them. Blob archives suc
 
 ## Publishing
 
-- **Yourself:** send a blob transaction from the name's owner calling `post(tokenId, postHash, 0)`
-  with the post in blob 0. One transaction, no one else involved.
-- **Through a publisher:** upload the bytes where publishers can read them, then call
-  `authorize(tokenId, postHash, publisher)` with the publisher's fee. The publisher sends the blob
-  and calls `publish`. If it doesn't, anyone else can: the bytes and the authorization are public.
+- **Yourself:** send a blob transaction from the name's owner, with the post's blob attached, calling
+  `post(tokenId, postHash, 0)`. One transaction, no one else involved.
+- **Through a publisher:** build the post's blob, compute its versioned hash, and call
+  `authorize(tokenId, postHash, blobHash, publisher)` with the publisher's fee. Upload the post's
+  bytes where the publisher can read them. It rebuilds the blob, checks the hash, sends it and is paid
+  by `publish`. If it doesn't within a day, call `refund`. Anyone else can also deliver the blob (the
+  bytes and the authorization are public); the escrow only ever pays the publisher you named.
 
 ## gwei.domains
 
@@ -116,11 +130,11 @@ when both have the blob, and records only the claimed entries a blob really cont
 carried by a blob is kept for good; blob bytes for 30 days. Posts show on a name's page when it has
 no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
 
-**Publisher.** The gwei.domains publisher (`posts/poster/`) carries any post authorized with its
-address as `publisher` whose fee covers publishing that post alone at current prices, with some
-headroom. Posts that pay that much are batched into shared blobs; posts that pay less wait until
-prices fall, and never ride on other posts' fees. No transaction it sends can spend more than its
-posts paid, replacements included. The dapp pays three times the current cost of a one-post
-transaction. The publisher reads post bytes from `GET /api/posts/<hash>/raw`, waits three blocks
-before acting on a payment, and pins every blob that carries an authorized post to IPFS after
-checking it against its versioned hash with KZG.
+**Publisher.** The gwei.domains publisher (`posts/poster/`) delivers blobs authors paid it for. It
+rebuilds each blob from the post's bytes (`GET /api/posts/<hash>/raw`) and checks its versioned hash
+is the one the author named. It counts as paid only the deposits for a blob that can't be refunded for
+at least six more hours, sends a blob only if those cover sending it alone at current prices with some
+headroom, packs up to six blobs into one transaction, and never lets a transaction spend more than its
+blobs' safe deposits, replacements included. The dapp pays three times the current cost of a one-blob
+transaction. The publisher waits three blocks before acting on a payment and pins every published blob
+that carries an authorized post to IPFS after checking it against its versioned hash with KZG.

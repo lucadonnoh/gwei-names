@@ -2532,7 +2532,7 @@ function postsHarness() {
   assert.notEqual(start, -1, 'post helpers must exist');
   const context = vm.createContext({ TextEncoder });
   vm.runInContext(html.slice(start, end) + `
-    globalThis.api = { POST_MAX_BYTES, postBytesFrom, postPathFor, postFeeFrom, tokenHexOf };`, context);
+    globalThis.api = { POST_MAX_BYTES, postBytesFrom, postPathFor, postFeeFrom, tokenHexOf, postBlobFrom };`, context);
   return context.api;
 }
 
@@ -2548,8 +2548,8 @@ test('posts: the dapp builds the bytes, paths and fees the gateway and publisher
     assert.equal(api.postPathFor(hash, title), gateway.postPath(hash, title));
   }
   // gwei_poster.quote(base=0.1 gwei, tip=0.05 gwei (raised to the minimum), blob=0.006 gwei), rounded up to a gwei.
-  assert.equal(api.postFeeFrom(100000000n, 100000n, 6000000n), 13880000000000n);
-  const capped = 3n * (25600n * (100000000n + 2000000000n) + 131072n * 6000000n);
+  assert.equal(api.postFeeFrom(100000000n, 100000n, 6000000n), (3n * (54500n * 150000000n + 131072n * 6000000n) + 999999999n) / 10n ** 9n * 10n ** 9n);
+  const capped = 3n * (54500n * (100000000n + 2000000000n) + 131072n * 6000000n);
   assert.equal(api.postFeeFrom(100000000n, 10n ** 12n, 6000000n), (capped + 999999999n) / 10n ** 9n * 10n ** 9n, 'tip capped at 2 gwei');
   assert.equal(api.tokenHexOf(0x1234n), '0x' + '1234'.padStart(64, '0'));
 });
@@ -2608,4 +2608,24 @@ test('posts: editing the form clears a stale form error', () => {
   const context = vm.createContext({ $: (id) => (id === 'status' ? status : null) });
   vm.runInContext(html.slice(start, end) + '\nupdatePostCost();', context);
   assert.equal(classes.has('show'), false);
+});
+
+test('posts: the dapp builds the same blob as the gateway, and the vendored KZG gives the hash c-kzg does', async () => {
+  const api = postsHarness();
+  const gateway = await import('../gateway/posts-format.js');
+  for (const bytes of [api.postBytesFrom('Hello', 'First **post**'), api.postBytesFrom('Ü', 'x'.repeat(100000))]) {
+    assert.deepEqual([...api.postBlobFrom(bytes)], [...gateway.encodeBlob([bytes])]);
+  }
+  const { blobVersionedHash } = await import('./vendor/kzg.bundle.mjs');
+  // c-kzg (posts/poster): blob_hash(encode_blob([b'{"v":1,"title":"Hello","body":"First **post**"}']))
+  assert.equal(blobVersionedHash(api.postBlobFrom(api.postBytesFrom('Hello', 'First **post**'))),
+    '0x01ae02694140d76f1cbf0ed33d43812b488d10206a410c513760f05a8d00d274');
+  assert.throws(() => blobVersionedHash(new Uint8Array(10)), /131072/);
+});
+
+test('posts: the dapp authorizes against the blob hash and offers refunds for undelivered posts', () => {
+  assert.match(html, /posts\.authorize\(tokenId, hash, blob, POSTS_PUBLISHER, \{ value: currentPostFee \}\)/);
+  assert.match(html, /const blob = blobVersionedHash\(postBlobFrom\(bytes\)\);/);
+  assert.match(html, /posts\.refund\(p\.blob, p\.publisher\)/);
+  assert.match(html, /'function authorize\(uint256 tokenId, bytes32 postHash, bytes32 blobHash, address publisher\) payable'/);
 });

@@ -17,8 +17,8 @@ import { readRpcJson } from './rpc-pool.js';
 import { rpcEndpointConfig } from './rpc-config.js';
 import { hexToBytes } from './web3-auto.js';
 
-export const T_AUTHORIZED = '0x60bb4b36f4267731c8172311f0cc8b8b570684bb18146de3eecd621a3d2d6b99'; // PostAuthorized(uint256,bytes32,address,address,uint256)
-export const T_PUBLISHED = '0xb6a6d902d5e84c31e56c5494561be47a4365c35aa01be024ce175b76f1e1312e'; // PostPublished(bytes32,bytes32,address)
+export const T_AUTHORIZED = '0x521590a9cca024d1ff93e37c9ee8f521cee9c2da79903939763c3c34bdb7eb28'; // PostAuthorized(uint256,bytes32,address,bytes32,address,uint256)
+export const T_BLOB_PUBLISHED = '0xb51cc50f0049ae8836824f5ee55fbae269ff6cf4ff8fc6390b721310d5ade99b'; // BlobPublished(bytes32,address,uint256)
 export const T_REMOVED = '0xb436f9efc5db52a352858f3e68c0e4cf41e7c50b0ef72366bd2f05e7263df3ee'; // PostRemoved(uint256,bytes32,address)
 const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
 const SEL_GETFULLNAME = '465411c1'; // getFullName(uint256)
@@ -52,13 +52,22 @@ export const DEFAULT_BLOB_SOURCES = {
   beacons: ['https://ethereum-beacon-api.publicnode.com'],
 };
 
+// Bumped whenever the tables change shape; a different version (or a different contract) starts the
+// index over from the contract's deployment block.
+const SCHEMA_VERSION = '2';
+const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'names'];
 const SCHEMA = [
-  'CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS content (hash TEXT PRIMARY KEY, bytes BLOB NOT NULL, title TEXT NOT NULL, time INTEGER, received INTEGER NOT NULL)',
-  'CREATE TABLE IF NOT EXISTS auth (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, token TEXT NOT NULL, hash TEXT NOT NULL, author TEXT NOT NULL, publisher TEXT NOT NULL, fee TEXT NOT NULL, PRIMARY KEY (block, idx))',
+  // PostAuthorized: `blob` is the blob the author built for the post (its versioned hash).
+  'CREATE TABLE IF NOT EXISTS auth (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, token TEXT NOT NULL, hash TEXT NOT NULL, author TEXT NOT NULL, blob TEXT NOT NULL, publisher TEXT NOT NULL, fee TEXT NOT NULL, PRIMARY KEY (block, idx))',
+  'CREATE INDEX IF NOT EXISTS auth_blob ON auth (blob)',
   'CREATE INDEX IF NOT EXISTS auth_token ON auth (token, author)',
   'CREATE INDEX IF NOT EXISTS auth_hash ON auth (hash)',
-  'CREATE TABLE IF NOT EXISTS pub (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, hash TEXT NOT NULL, blob TEXT NOT NULL, publisher TEXT NOT NULL, PRIMARY KEY (block, idx))',
+  // BlobPublished, and from it a claim per post an author named that blob for: `pub` says "this blob,
+  // published here, should carry this post", which fetching the blob then checks.
+  'CREATE TABLE IF NOT EXISTS blobpub (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, vh TEXT NOT NULL, publisher TEXT NOT NULL, PRIMARY KEY (block, idx))',
+  'CREATE INDEX IF NOT EXISTS blobpub_vh ON blobpub (vh)',
+  'CREATE TABLE IF NOT EXISTS pub (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, hash TEXT NOT NULL, blob TEXT NOT NULL, publisher TEXT NOT NULL, PRIMARY KEY (block, idx, hash))',
   'CREATE INDEX IF NOT EXISTS pub_hash ON pub (hash)',
   'CREATE INDEX IF NOT EXISTS pub_blob ON pub (blob)',
   'CREATE TABLE IF NOT EXISTS removal (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, token TEXT NOT NULL, hash TEXT NOT NULL, author TEXT NOT NULL, PRIMARY KEY (block, idx))',
@@ -101,6 +110,13 @@ export class PostStore {
     this.owners = new Map();
     this.recentCache = null;
     this.syncing = null;
+    sql.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
+    const version = `${SCHEMA_VERSION}:${this.contract || ''}`;
+    if (this.meta('schema') !== version) {
+      for (const table of TABLES) sql.exec(`DROP TABLE IF EXISTS ${table}`);
+      sql.exec("DELETE FROM meta WHERE k = 'cursor'");
+      this.setMeta('schema', version);
+    }
     for (const statement of SCHEMA) sql.exec(statement);
   }
 
@@ -189,9 +205,9 @@ export class PostStore {
     const post = parsePost(toBytes(row.bytes));
     // Anyone can authorize anyone's hash for their own name, so the list is capped.
     const authorizations = this.rows(
-      'SELECT a.token, a.author, a.publisher, a.fee, a.tx, a.block, a.ts, n.name FROM auth a LEFT JOIN names n ON n.token = a.token ' +
+      'SELECT a.token, a.author, a.blob, a.publisher, a.fee, a.tx, a.block, a.ts, n.name FROM auth a LEFT JOIN names n ON n.token = a.token ' +
       'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
-    ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
+    ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, blob: a.blob, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
     const onchain = this.onchain(hash);
     return { hash, title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
   }
@@ -307,7 +323,7 @@ export class PostStore {
         address: contract,
         fromBlock: '0x' + from.toString(16),
         toBlock: '0x' + to.toString(16),
-        topics: [[T_AUTHORIZED, T_PUBLISHED, T_REMOVED]],
+        topics: [[T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED]],
       });
       events += await this.ingest(logs);
       cursor = to;
@@ -321,7 +337,7 @@ export class PostStore {
   }
 
   async ingest(logs) {
-    const live = logs.filter((log) => !log.removed && log.address?.toLowerCase() === this.contract && log.topics?.length === 4);
+    const live = logs.filter((log) => !log.removed && log.address?.toLowerCase() === this.contract && log.topics?.length >= 3);
     // Logs don't always carry the block time; fetch it once per block when they don't.
     const times = new Map();
     for (const log of live) {
@@ -339,18 +355,28 @@ export class PostStore {
       const idx = Number(BigInt(log.logIndex));
       const ts = times.get(block);
       const [topic, a, b, c] = log.topics.map((t) => t.toLowerCase());
-      if (topic === T_AUTHORIZED && /^0x[0-9a-fA-F]{128}$/.test(log.data || '')) {
+      if (topic === T_AUTHORIZED && log.topics.length === 4 && /^0x[0-9a-fA-F]{192}$/.test(log.data || '')) {
+        const vh = word(log.data, 0).toLowerCase();
         this.sql.exec(
-          'INSERT OR IGNORE INTO auth (block, idx, tx, ts, token, hash, author, publisher, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          block, idx, log.transactionHash, ts, a, b, topicAddress(c), topicAddress(word(log.data, 0)), BigInt(word(log.data, 1)).toString(),
+          'INSERT OR IGNORE INTO auth (block, idx, tx, ts, token, hash, author, blob, publisher, fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          block, idx, log.transactionHash, ts, a, b, topicAddress(c), vh, topicAddress(word(log.data, 1)), BigInt(word(log.data, 2)).toString(),
         );
-      } else if (topic === T_PUBLISHED) {
+        // A blob may have been published before the author named it (post() does both at once).
         this.sql.exec(
-          'INSERT OR IGNORE INTO pub (block, idx, tx, ts, hash, blob, publisher) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          block, idx, log.transactionHash, ts, a, b, topicAddress(c),
+          'INSERT OR IGNORE INTO pub (block, idx, tx, ts, hash, blob, publisher) SELECT block, idx, tx, ts, ?, vh, publisher FROM blobpub WHERE vh = ?',
+          b, vh,
         );
-        this.sql.exec('INSERT OR IGNORE INTO blob (vh, block, ts) VALUES (?, ?, ?)', b, block, ts);
-      } else if (topic === T_REMOVED) {
+      } else if (topic === T_BLOB_PUBLISHED && log.topics.length === 3) {
+        this.sql.exec(
+          'INSERT OR IGNORE INTO blobpub (block, idx, tx, ts, vh, publisher) VALUES (?, ?, ?, ?, ?, ?)',
+          block, idx, log.transactionHash, ts, a, topicAddress(b),
+        );
+        this.sql.exec(
+          'INSERT OR IGNORE INTO pub (block, idx, tx, ts, hash, blob, publisher) SELECT DISTINCT ?, ?, ?, ?, hash, blob, ? FROM auth WHERE blob = ?',
+          block, idx, log.transactionHash, ts, topicAddress(b), a,
+        );
+        this.sql.exec('INSERT OR IGNORE INTO blob (vh, block, ts) VALUES (?, ?, ?)', a, block, ts);
+      } else if (topic === T_REMOVED && log.topics.length === 4) {
         this.sql.exec(
           'INSERT OR IGNORE INTO removal (block, idx, tx, token, hash, author) VALUES (?, ?, ?, ?, ?, ?)',
           block, idx, log.transactionHash, a, b, topicAddress(c),
