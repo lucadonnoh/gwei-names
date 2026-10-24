@@ -2080,3 +2080,402 @@ test('the stats scan reads contentcontract records alongside contenthashes', () 
   // A cache from before contentcontract was scanned has to be discarded, not resumed from.
   assert.match(statsSource, /c\.names && c\.ch && c\.cc &&/);
 });
+
+// --- read RPC failover ---------------------------------------------------------
+
+function rpcHarness(fetchImpl) {
+  const start = html.indexOf('const RPC_TIMEOUT_MS');
+  const end = html.indexOf('function getRpc()', start);
+  assert.notEqual(start, -1, 'read RPC helpers must exist');
+  assert.notEqual(end, -1, 'read RPC helpers must be bounded');
+  const timers = [];
+  const context = vm.createContext({
+    console: { warn() {}, log() {}, error() {} },
+    AbortController,
+    fetch: fetchImpl,
+    setTimeout(fn) { timers.push(fn); return timers.length; },
+    clearTimeout() {},
+    ethers: { JsonRpcProvider: class { constructor() {} } }
+  });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.rpcApi = { FailoverRpcProvider, isRpcCapacityError, isRpcUnavailable, RPC_UNAVAILABLE_MESSAGE };',
+    context
+  );
+  return { api: context.rpcApi, timers };
+}
+
+function jsonResponse(body, status = 200) {
+  return { ok: status >= 200 && status < 300, status, async json() { return body; } };
+}
+
+test('read RPC fails over on a rate limit and sticks with the endpoint that answered', async () => {
+  const calls = [];
+  const { api } = rpcHarness(async url => {
+    calls.push(url);
+    if (url === 'https://a') return jsonResponse({ jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'rate limited' } }, 429);
+    return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x1' });
+  });
+  const provider = new api.FailoverRpcProvider(['https://a', 'https://b'], {});
+  const first = await provider._send({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] });
+  assert.equal(first[0].result, '0x1');
+  assert.deepEqual(calls, ['https://a', 'https://b']);
+  assert.equal(provider.rpcIndex, 1);
+  await provider._send({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] });
+  assert.deepEqual(calls, ['https://a', 'https://b', 'https://b'], 'the throttled endpoint is not retried first');
+});
+
+test('read RPC treats a 200 rate-limit reply as a failure but passes reverts through', async () => {
+  const calls = [];
+  const { api } = rpcHarness(async url => {
+    calls.push(url);
+    if (url === 'https://a') return jsonResponse([{ jsonrpc: '2.0', id: 1, error: { code: 429, message: 'Too many requests' } }]);
+    return jsonResponse([{ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted', data: '0xceea21b6' } }]);
+  });
+  const provider = new api.FailoverRpcProvider(['https://a', 'https://b'], {});
+  const reply = await provider._send([{ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] }]);
+  assert.equal(reply[0].error.message, 'execution reverted', 'a revert is an answer, not an outage');
+  assert.deepEqual(calls, ['https://a', 'https://b']);
+
+  assert.equal(api.isRpcCapacityError({ error: { code: -32005, message: 'limit exceeded' } }), true);
+  assert.equal(api.isRpcCapacityError({ error: { code: -32000, message: 'header not found, try again later' } }), true);
+  assert.equal(api.isRpcCapacityError({ error: { code: -32000, message: 'execution reverted' } }), false);
+  assert.equal(api.isRpcCapacityError({ error: { code: 3, message: 'execution reverted: rate' } }), false);
+  assert.equal(api.isRpcCapacityError({ error: { code: -32603, message: 'internal error', data: '0x08c379a0' } }), false, 'revert data is an answer');
+  assert.equal(api.isRpcCapacityError({ error: { code: -32000, message: 'out of gas: gas limit reached' } }), false);
+  assert.equal(api.isRpcCapacityError({ result: '0x' }), false);
+});
+
+test('read RPC moves on from a hanging endpoint after its timeout', async () => {
+  const calls = [];
+  const { api, timers } = rpcHarness((url, init) => {
+    calls.push(url);
+    if (url === 'https://a') {
+      return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    }
+    return Promise.resolve(jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x2' }));
+  });
+  const provider = new api.FailoverRpcProvider(['https://a', 'https://b'], {});
+  const pending = provider._send({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(timers.length, 1, 'each attempt arms a timeout');
+  timers[0]();
+  const reply = await pending;
+  assert.equal(reply[0].result, '0x2');
+  assert.deepEqual(calls, ['https://a', 'https://b']);
+});
+
+test('read RPC reports a clear error when every endpoint fails', async () => {
+  const { api } = rpcHarness(async () => jsonResponse({}, 503));
+  const provider = new api.FailoverRpcProvider(['https://a', 'https://b'], {});
+  await assert.rejects(provider._send({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] }), error => {
+    assert.equal(error.code, 'RPC_UNAVAILABLE');
+    assert.equal(error.message, api.RPC_UNAVAILABLE_MESSAGE);
+    assert.equal(api.isRpcUnavailable(error), true);
+    return true;
+  });
+  assert.equal(api.isRpcUnavailable(new Error('execution reverted')), false);
+});
+
+test('lookups surface an unreachable RPC with a retry instead of hanging or saying "not found"', () => {
+  const lookup = html.slice(html.indexOf('function showLookupError(e)'), html.indexOf('// reveal() mints with safeMint'));
+  assert.match(lookup, /isRpcUnavailable\(e\) \? RPC_UNAVAILABLE_MESSAGE/);
+  assert.match(lookup, /class="retry-btn" onclick="checkName\(\)"/);
+  const resolve = html.slice(html.indexOf('async function resolveRecipient'), html.indexOf('let transferPreviewDebounce'));
+  assert.match(resolve, /if \(isRpcUnavailable\(e\)\) throw e;/);
+  const manage = html.slice(html.indexOf('async function showManage('), html.indexOf('function websiteSwitchNote()'));
+  assert.match(manage, /retry\.onclick = \(\) => showManage\(tokenId, name\);/);
+});
+
+// --- name validation -------------------------------------------------------------
+
+function labelHarness({ library = true } = {}) {
+  const start = html.indexOf('// Contract-compatible normalization (matches on-chain validation)');
+  const end = html.indexOf('let checkDebounce = null;', start);
+  assert.notEqual(start, -1, 'label helpers must exist');
+  assert.notEqual(end, -1, 'label helpers must be bounded');
+  // A small stand-in for @adraffy/ens-normalize with the behaviours these tests rely on.
+  function ensNormalize(s) {
+    if (/[^_]_/.test(s)) throw new Error('underscore allowed only at start');
+    if (/[Ѐ-ӿ]/.test(s) && /[a-z]/i.test(s)) throw new Error('illegal mixture: Cyrillic + Latin "p"‎ {70}');
+    if (/\s/.test(s)) throw new Error('disallowed character: " "‎ {20}');
+    return s.toLowerCase();
+  }
+  const context = vm.createContext({ textEncoder: new TextEncoder(), ...(library ? { ens_normalize: ensNormalize } : {}) });
+  vm.runInContext(
+    html.slice(start, end) +
+      '\nglobalThis.labelApi = { normalizeLabel, normalizeLabelForLookup, normalizeLabelContract, normalizeFullName, getNormalizationError, contractLabelError, stripGweiSuffix };',
+    context
+  );
+  return context.labelApi;
+}
+
+test('registration labels apply ENSIP-15 and then the registry rules', () => {
+  const api = labelHarness();
+  assert.equal(api.normalizeLabel('Donnoh'), 'donnoh');
+  // ENSIP-15 accepts a leading/trailing hyphen; the contract does not (isAvailable() would say "taken").
+  assert.equal(api.normalizeLabel('-abc'), null);
+  assert.equal(api.normalizeLabel('abc-'), null);
+  assert.equal(api.getNormalizationError('-abc'), 'Name cannot start or end with a hyphen');
+  assert.equal(api.contractLabelError('x'.repeat(256)), 'Name too long (max 255 bytes)');
+  // Names ENSIP-15 rejects are invalid for registration, with its reason...
+  assert.equal(api.normalizeLabel('a_b'), null);
+  assert.equal(api.getNormalizationError('a_b'), 'Underscores are only allowed at the start');
+  assert.equal(api.normalizeLabel('аpple'), null);
+  assert.match(api.getNormalizationError('аpple'), /^Mixes scripts \(Cyrillic \+ Latin "p"\), possible look-alike$/);
+  // ...but existing on-chain names with such labels can still be looked up.
+  assert.equal(api.normalizeLabelForLookup('Lex_Node'), 'lex_node');
+  assert.equal(api.normalizeLabelForLookup('-abc'), null, 'the registry can never hold a hyphen-edged label');
+  assert.equal(api.normalizeFullName('Sub.lex_node.gwei'), 'sub.lex_node');
+});
+
+test('the contract-only fallback is used only when the ENSIP-15 library is missing', () => {
+  const api = labelHarness({ library: false });
+  assert.equal(api.normalizeLabel('A_b'), 'a_b');
+  assert.equal(api.normalizeLabel('-abc'), null);
+  assert.ok(html.includes('const ENS_LIBRARY_WARNING ='), 'the lookup shows a visible warning then');
+});
+
+test('a trailing .gwei is stripped case-insensitively before validation', () => {
+  const api = labelHarness();
+  assert.equal(api.stripGweiSuffix('donnoh.gwei'), 'donnoh');
+  assert.equal(api.stripGweiSuffix(' Donnoh.GWEI '), 'Donnoh');
+  assert.equal(api.stripGweiSuffix('gwei'), 'gwei');
+  assert.equal(api.normalizeLabel(api.stripGweiSuffix('donnoh.gwei')), 'donnoh');
+  const lookup = html.slice(html.indexOf('async function doCheckName()'), html.indexOf('// reveal() mints with safeMint'));
+  assert.match(lookup, /const label = stripGweiSuffix\(raw\);/);
+  assert.match(html, /const name = normalizeLabel\(stripGweiSuffix\(\$\('nameInput'\)\.value\)\);/, 'Commit strips it too');
+});
+
+test('a lookup supersedes stale responses and never offers an invalid name', () => {
+  const check = html.slice(html.indexOf('function showCheckingState()'), html.indexOf('function setCommitButton('));
+  assert.match(check, /checkVersion\+\+;/);
+  assert.match(check, /hideManage\(\);/);
+  assert.match(check, /showCheckingState\(\);\s*checkDebounce = setTimeout/);
+  const lookup = html.slice(html.indexOf('async function doCheckName()'), html.indexOf('// reveal() mints with safeMint'));
+  const firstAwait = lookup.indexOf('await ');
+  assert.ok(lookup.indexOf('const thisVersion = ++checkVersion;') < firstAwait, 'every run bumps the version before awaiting');
+  assert.match(lookup, /if \(available && invalidReason\) \{[\s\S]*?commitBtn\.style\.display = 'none';/);
+  assert.match(html, /function hideManage\(\) \{\s*manageVersion\+\+;/, 'hiding Manage cancels an in-flight load');
+});
+
+// --- commit / pending -------------------------------------------------------------
+
+function commitButtonHarness({ signer = null, pending = null } = {}) {
+  const start = html.indexOf('function setCommitButton(name)');
+  const end = html.indexOf('function showLookupError(e)', start);
+  const elements = { commitBtn: { style: {}, textContent: '', disabled: false }, commitHint: { textContent: '' } };
+  const context = vm.createContext({ $: id => elements[id], loadPending: () => pending, signer });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.setCommitButton = setCommitButton;', context);
+  return { set: context.setCommitButton, elements };
+}
+
+test('Commit asks for a wallet instead of sitting disabled, and explains a pending commit', () => {
+  let h = commitButtonHarness();
+  h.set('donnoh');
+  assert.equal(h.elements.commitBtn.textContent, 'Connect wallet to register');
+  assert.equal(h.elements.commitBtn.disabled, false);
+  assert.equal(h.elements.commitHint.textContent, 'Registering takes two transactions about a minute apart: Commit, then Register.');
+
+  h = commitButtonHarness({ signer: {} });
+  h.set('donnoh');
+  assert.equal(h.elements.commitBtn.textContent, 'Commit');
+  assert.equal(h.elements.commitBtn.disabled, false);
+
+  h = commitButtonHarness({ signer: {}, pending: { name: 'other' } });
+  h.set('donnoh');
+  assert.equal(h.elements.commitBtn.disabled, true);
+  assert.match(h.elements.commitHint.textContent, /other\.gwei is pending \(one registration at a time\)/);
+
+  h = commitButtonHarness();
+  h.set(null);
+  assert.equal(h.elements.commitBtn.textContent, 'Commit');
+  assert.equal(h.elements.commitBtn.disabled, true);
+
+  assert.match(html, /async function doCommit\(\) \{\s*if \(!signer\) \{ showStatus\('Connect your wallet to register', ''\); toggleWallet\(\); return; \}/);
+  assert.doesNotMatch(html, /[Rr]eady to reveal|then reveal|able to reveal/, 'user-facing copy says register, not reveal');
+});
+
+test('the fee is shown per year, matching the one-year registration period', () => {
+  const contract = fs.readFileSync(path.join(__dirname, '..', 'src', 'NameNFT.sol'), 'utf8');
+  assert.match(contract, /uint256 constant REGISTRATION_PERIOD = 365 days;/);
+  assert.match(contract, /expiresAt: parentId == 0 \? uint64\(block\.timestamp \+ REGISTRATION_PERIOD\) : 0/);
+  assert.match(html, /let feeText = ethers\.formatEther\(fee\) \+ ' ETH \/ year';/);
+});
+
+function migrationHarness(entries) {
+  const start = html.indexOf('function migrateLegacyPending(');
+  const end = html.indexOf('try { migrateLegacyPending(', start);
+  const storage = new Map(Object.entries(entries));
+  const context = vm.createContext({ LEGACY_STORAGE_KEY: 'gwei_pending_commits' });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.migrate = migrateLegacyPending;', context);
+  const api = {
+    getItem: key => storage.has(key) ? storage.get(key) : null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: key => storage.delete(key)
+  };
+  return { run: (chainId) => context.migrate(api, chainId, 'gwei_pending_commits_' + chainId), storage };
+}
+
+test('pending commits are kept per chain and old entries move to mainnet without losing a secret', () => {
+  assert.match(html, /const STORAGE_KEY = LEGACY_STORAGE_KEY \+ '_' \+ CHAIN_ID;/);
+
+  let h = migrationHarness({ gwei_pending_commits: '{"name":"a"}' });
+  h.run(11155111);
+  assert.equal(h.storage.get('gwei_pending_commits'), '{"name":"a"}', 'Sepolia leaves the unlabelled entry alone');
+  assert.equal(h.storage.has('gwei_pending_commits_11155111'), false);
+  h.run(1);
+  assert.equal(h.storage.get('gwei_pending_commits_1'), '{"name":"a"}');
+  assert.equal(h.storage.has('gwei_pending_commits'), false);
+
+  h = migrationHarness({ gwei_pending_commits: '{"name":"old"}', gwei_pending_commits_1: '{"name":"new"}' });
+  h.run(1);
+  assert.equal(h.storage.get('gwei_pending_commits_1'), '{"name":"new"}');
+  assert.equal(h.storage.get('gwei_pending_commits'), '{"name":"old"}', 'a conflicting secret is never deleted');
+});
+
+test('cancelling a commitment that was already sent asks first', () => {
+  const start = html.indexOf('function pendingCommitSent(pending)');
+  const end = html.indexOf('// A background tab', start);
+  let asked = 0, cleared = 0, answer = false, pending = null;
+  const context = vm.createContext({
+    loadPending: () => pending,
+    confirm: message => { asked++; assert.match(message, /gas paid for the commit is lost/); return answer; },
+    clearPending: () => { cleared++; }
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.cancelPending = cancelPending;', context);
+
+  pending = { name: 'x', confirmed: false };
+  context.cancelPending();
+  assert.deepEqual([asked, cleared], [0, 1], 'nothing was sent yet: cancel straight away');
+
+  pending = { name: 'x', confirmed: false, txHash: '0xabc' };
+  context.cancelPending();
+  assert.deepEqual([asked, cleared], [1, 1], 'declining keeps the secret');
+
+  pending = { name: 'x', confirmed: true };
+  answer = true;
+  context.cancelPending();
+  assert.deepEqual([asked, cleared], [2, 2]);
+  assert.match(html, /<button class="secondary" onclick="cancelPending\(\)">Cancel<\/button>/);
+});
+
+test('the tab title says when a commitment is ready to register and is restored afterwards', () => {
+  const start = html.indexOf("const PAGE_TITLE = ");
+  const end = html.indexOf('// The countdown pauses while the tab is hidden', start);
+  const document = { title: '' };
+  const context = vm.createContext({ document, clearTimeout() {} });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.api = { setPendingReadyTitle, applyPageTitle, setPage: t => { pageTitle = t; } };', context);
+  context.api.setPage('donnoh.gwei - GNS');
+  context.api.applyPageTitle();
+  assert.equal(document.title, 'donnoh.gwei - GNS');
+  context.api.setPendingReadyTitle({ name: 'donnoh' });
+  assert.equal(document.title, 'ready to register · donnoh.gwei');
+  assert.doesNotMatch(document.title, /—/);
+  context.api.setPendingReadyTitle(null);
+  assert.equal(document.title, 'donnoh.gwei - GNS');
+});
+
+test('a malformed URL hash is treated as no name', () => {
+  const strip = html.slice(html.indexOf('function stripGweiSuffix(input)'), html.indexOf('// Normalize a label for registration'));
+  const start = html.indexOf('function initFromHash()');
+  const end = html.indexOf('// Update URL hash and page title', start);
+  let checks = 0;
+  const input = { value: '' };
+  const location = { hash: '#%E0%A4%A' };
+  const context = vm.createContext({ window: { location }, decodeURIComponent, $: () => input, checkName: () => { checks++; } });
+  vm.runInContext(strip + html.slice(start, end) + '\nglobalThis.initFromHash = initFromHash;', context);
+  assert.doesNotThrow(() => context.initFromHash());
+  assert.equal(checks, 0);
+  location.hash = '#Donnoh.GWEI';
+  context.initFromHash();
+  assert.equal(input.value, 'Donnoh');
+  assert.equal(checks, 1);
+});
+
+// --- page shell -------------------------------------------------------------------
+
+test('icons and the manifest exist and are copied by the Dockerfile', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'Dockerfile'), 'utf8');
+  for (const file of ['favicon.ico', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'manifest.json']) {
+    assert.ok(fs.existsSync(path.join(__dirname, file)), `dapp/${file} must exist`);
+    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /www/${file.replace('.', '\\.')}$`, 'm'));
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'));
+  for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(__dirname, icon.src.slice(1))), icon.src);
+  assert.match(html, /<link rel="icon" href="\/favicon\.ico" sizes="32x32">/);
+  assert.match(html, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png">/);
+  assert.match(html, /<link rel="manifest" href="\/manifest\.json">/);
+  assert.match(html, /<meta property="og:image" content="https:\/\/gwei\.domains\/icon-512\.png">/);
+  assert.match(html, /<meta name="twitter:card" content="summary">/);
+  assert.match(html, /<meta name="description" content="[^"]+">/);
+  assert.doesNotMatch(html.match(/<title>([^<]*)<\/title>/)[1], /^GNS$|—/);
+});
+
+test('heavy libraries load on demand and ethers no longer blocks rendering', () => {
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.doesNotMatch(head, /<script[^>]+src=/, 'no external script blocks the first paint');
+  assert.doesNotMatch(html, /<script[^>]+walletconnect/i, 'WalletConnect is not a page script');
+  assert.match(html, /const WALLETCONNECT_SRI = 'sha384-ACTo60vL1\/AfeYkCCXRvB1G0ugjHF0\/SHU9YN7e4\/KH\/mitAIYpLcw5PKXW\/\+ekM';/);
+  assert.match(html, /script\.integrity = WALLETCONNECT_SRI;/);
+  assert.doesNotMatch(html, /^import .* from "\/vendor\/entry\.js";/m, 'the ZKPassport SDK is not imported up front');
+  assert.match(html, /import\("\/vendor\/entry\.js"\)/);
+  // ethers still loads before the main script that needs it synchronously.
+  assert.ok(html.indexOf('ethers.umd.min.js') < html.indexOf('// Global error handler for debugging on mobile'));
+});
+
+test('analytics uses the standard manual Cloudflare snippet', () => {
+  assert.match(html, /<script defer src="https:\/\/static\.cloudflareinsights\.com\/beacon\.min\.js" data-cf-beacon='\{"token": "be57eb6251e840a591ab66afaffe7d83"\}'><\/script>/);
+  assert.doesNotMatch(html, /beacon\.min\.js\/v/);
+});
+
+test('integration and OpenSea links point at live URLs', () => {
+  const integrations = JSON.parse(html.match(/<script type="application\/json" id="integrationData">([\s\S]*?)<\/script>/)[1]);
+  assert.equal(integrations.some(i => i.id === 'cleave'), false, 'cleave.market is disabled');
+  const walletchan = integrations.find(i => i.id === 'walletchan');
+  assert.ok(walletchan.links.some(l => l.url === 'https://github.com/walletchan/walletchan'));
+  assert.doesNotMatch(html, /github\.com\/apoorvlathey\/walletchan|opensea\.io\/assets/);
+  assert.match(html, /asset: 'https:\/\/opensea\.io\/item\/ethereum', collection: 'https:\/\/opensea\.io\/contract\/ethereum'/);
+});
+
+test('dialogs and controls are keyboard accessible', () => {
+  assert.equal((html.match(/role="dialog" aria-modal="true"/g) || []).length, 2);
+  assert.match(html, /if \(event\.key === 'Escape'\)/);
+  assert.match(html, /<label for="nameInput">Name<\/label>/);
+  assert.match(html, /id="nameInput"[^>]*autocapitalize="off" autocorrect="off" spellcheck="false"/);
+  assert.match(html, /id="sendAmount"[^>]*inputmode="decimal"/);
+  assert.match(html, /<div id="availability" class="availability" aria-live="polite">/);
+  assert.match(html, /<div id="status" class="status" aria-live="polite">/);
+  assert.doesNotMatch(html, /<(?:div|span)[^>]*onclick="toggle(?:Free|Zk)Panel\(\)"/, 'panel toggles are buttons');
+  assert.match(html, /:root\.dark \.dark-toggle, :root\.dark \.dark-toggle:hover \{ background-color:#fff; \}/, 'dark mode keeps background-clip');
+  assert.match(html, /\.dark-toggle:hover \{[^}]*background-clip:content-box;/, 'hover keeps background-clip despite button:hover');
+});
+
+test('verify name takes the token ID, not the contract address, from marketplace and explorer URLs', () => {
+  const start = html.indexOf('function parseTokenId(input) {');
+  const end = html.indexOf('\n}\n', start) + 2;
+  assert.notEqual(start, -1, 'parseTokenId must exist');
+  const context = vm.createContext({ URL });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.parseTokenId = parseTokenId;', context);
+  const id = '84108560248320321058182615469218441650470417229077422920202485267551307868599';
+  const nft = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
+  for (const input of [
+    `https://opensea.io/item/ethereum/${nft}/${id}`,
+    `https://opensea.io/assets/ethereum/${nft}/${id}`,
+    `https://etherscan.io/nft/${nft}/${id}`,
+    `https://etherscan.io/token/${nft}?a=${id}`,
+    id,
+  ]) {
+    assert.equal(String(context.parseTokenId(input)), id, input);
+  }
+  assert.equal(String(context.parseTokenId('0x2a')), '42');
+});
+
+test('mainnet reads have three independent RPC endpoints to fail over between', () => {
+  const start = html.indexOf('const NETWORKS = {');
+  const end = html.indexOf('const NET_STORAGE_KEY', start);
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.networks = NETWORKS;', context);
+  const hosts = context.networks.ethereum.rpc.map((url) => new URL(url).host);
+  assert.equal(new Set(hosts).size, 3);
+});

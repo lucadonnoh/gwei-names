@@ -3,21 +3,37 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>GNS</title>
+<title>Gwei Name Service · .gwei names on Ethereum</title>
+<meta name="description" content="Register and manage .gwei names on Ethereum. An ownerless fork of wei-names: a simple namespace named after gwei, the unit Ethereum gas is priced in.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Gwei Name Service">
+<meta property="og:title" content="Gwei Name Service · .gwei names on Ethereum">
+<meta property="og:description" content="Register and manage .gwei names on Ethereum. An ownerless fork of wei-names.">
+<meta property="og:url" content="https://gwei.domains/">
+<meta property="og:image" content="https://gwei.domains/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="GNS logo">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Gwei Name Service · .gwei names on Ethereum">
+<meta name="twitter:description" content="Register and manage .gwei names on Ethereum. An ownerless fork of wei-names.">
+<meta name="twitter:image" content="https://gwei.domains/icon-512.png">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
 <script>
 // Dark mode: apply saved/system preference before first paint to avoid FOUC
 try{var d=localStorage.getItem('dark');if(d==='1'||(d===null&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark')}catch(_){}
 function toggleDark(){var on=document.documentElement.classList.toggle('dark');try{localStorage.setItem('dark',on?'1':'0')}catch(_){}}
 </script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js" integrity="sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM" crossorigin="anonymous"></script>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs" integrity="sha384-wslUpfrOpXCfaW/3TssDzpULPqQK2igO/CDwvXIes3zxHdwdj+kzqbP7dWuA4G13" crossorigin="anonymous">
 <script>
 // Preload the package's published module with SRI. If the primary CDN is blocked,
 // fetch the same published bytes from a mirror and verify them before importing.
 // Avoid the CDN-generated +esm build: its bytes can change at a pinned version.
-(async () => {
+// Name checks await this promise so a slow CDN can't let a name skip the ENSIP-15 check.
+window.ensNormalizeLoaded = (async () => {
   const PRIMARY = 'https://cdn.jsdelivr.net/npm/@adraffy/ens-normalize@1.11.0/dist/index.mjs';
   const MIRRORS = [
     'https://unpkg.com/@adraffy/ens-normalize@1.11.0/dist/index.mjs'
@@ -57,14 +73,16 @@ function toggleDark(){var on=document.documentElement.classList.toggle('dark');t
     // Fallback: contract-compatible normalization only
     window.ens_normalize = null;
     window.ensNormalizeReady = false;
-    // Show warning after DOM loads
-    window.addEventListener('DOMContentLoaded', () => {
+    // Show the warning once the page exists (the import can fail before or after DOMContentLoaded)
+    const warn = () => {
       const status = document.getElementById('status');
       if (status) {
         status.innerHTML = '⚠️ Anti-spoof protection unavailable (normalization library failed to load)';
         status.className = 'status show';
       }
-    });
+    };
+    if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', warn);
+    else warn();
   }
 })();
 </script>
@@ -150,10 +168,16 @@ button.secondary:hover { background: var(--surface-hover); }
   font-size: 18px;
   margin-top: 16px;
   display: none;
+  overflow-wrap: anywhere;
 }
 .availability.show { display: block; }
 .availability .available { color: var(--fg); }
-.availability .taken { color: var(--fg-dim); }
+.availability .taken { color: var(--fg-muted); }
+.availability .checking { color: var(--fg-muted); }
+.availability .error { color: var(--error-fg); }
+.availability .name-note { font-size: 12px; margin-top: 8px; line-height: 1.5; color: var(--error-fg); }
+.availability .retry-btn { width: auto; margin: 0 0 0 4px; padding: 0; min-height: 24px; background: none; border: 0; color: var(--fg); font-size: 12px; text-transform: none; letter-spacing: 0; text-decoration: underline; text-underline-offset: 2px; }
+.availability .retry-btn:hover { background: none; opacity: 0.6; }
 /* Subdomain live availability (free / zkpassport panels) — mirrors .availability */
 .sub-avail { font-size: 13px; margin-top: 10px; display: none; letter-spacing: 0.02em; }
 .sub-avail.show { display: block; }
@@ -175,6 +199,8 @@ button.secondary:hover { background: var(--surface-hover); }
   color: var(--fg-muted);
   margin-top: 8px;
 }
+.commit-hint { font-size: 12px; color: var(--fg-muted); margin-top: 10px; line-height: 1.5; }
+.commit-hint:empty { display: none; }
 .pending {
   margin-top: 24px;
   padding: 20px;
@@ -194,6 +220,7 @@ button.secondary:hover { background: var(--surface-hover); }
   font-size: 24px;
   font-weight: 600;
   margin-bottom: 8px;
+  overflow-wrap: anywhere;
 }
 .pending .timer {
   font-size: 14px;
@@ -246,7 +273,7 @@ button.secondary:hover { background: var(--surface-hover); }
 .pay-option svg { display: block; }
 .suffix {
   font-size: 24px;
-  color: var(--fg-dim);
+  color: var(--fg-muted);
   position: absolute;
   right: 0;
   bottom: 12px;
@@ -255,6 +282,7 @@ button.secondary:hover { background: var(--surface-hover); }
 .input-wrap {
   position: relative;
 }
+.input-wrap input { padding-right: 2.7em; }
 
 /* Modal */
 .modal-overlay {
@@ -305,11 +333,17 @@ body.modal-open { overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   padding: 12px;
   background: var(--bg);
+  color: var(--fg);
   border: 1px solid var(--border);
   cursor: pointer;
-  margin-bottom: 8px;
+  margin: 0 0 8px;
+  font-size: inherit;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
   transition: all 0.15s;
 }
 .wallet-option:hover { background: var(--btn-bg); color: var(--btn-fg); }
@@ -345,6 +379,7 @@ body.modal-open { overflow: hidden; }
   margin-bottom: 16px;
   padding: 12px;
   background: var(--manage-bg);
+  overflow-wrap: anywhere;
 }
 .manage-info div {
   margin-bottom: 6px;
@@ -353,7 +388,7 @@ body.modal-open { overflow: hidden; }
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  opacity: 0.5;
+  color: var(--fg-muted);
   margin-right: 8px;
 }
 .manage-actions {
@@ -416,10 +451,9 @@ body.modal-open { overflow: hidden; }
   margin-top: 8px;
 }
 .view-link a {
-  color: var(--fg);
-  opacity: 0.5;
+  color: var(--fg-muted);
 }
-.view-link a:hover { opacity: 1; }
+.view-link a:hover { color: var(--fg); }
 
 /* Scrolling names */
 .scroll-names {
@@ -487,13 +521,15 @@ body.modal-open { overflow: hidden; }
   border-top: 1px solid var(--send-border);
 }
 .send-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   font-size: 11px;
-  color: var(--fg);
-  opacity: 0.4;
+  color: var(--fg-muted);
   text-decoration: none;
   letter-spacing: 0.05em;
 }
-.send-toggle:hover { opacity: 0.7; }
+.send-toggle:hover { color: var(--fg); }
 .send-form {
   display: none;
   margin-top: 16px;
@@ -616,10 +652,12 @@ body.modal-open { overflow: hidden; }
   text-align: center;
   padding: 40px 20px;
   font-size: 11px;
-  opacity: 0.4;
+  color: var(--fg-muted);
   letter-spacing: 0.5px;
 }
 .site-footer a {
+  display: inline-block;
+  line-height: 24px;
   color: inherit;
   text-decoration: underline;
 }
@@ -637,11 +675,11 @@ body.modal-open { overflow: hidden; }
 .hbar-track { flex: 1; height: 12px; background: var(--surface); border: 1px solid var(--border-muted); }
 .hbar-fill { display: block; height: 100%; background: var(--fg-dim); min-width: 0; transition: width 0.5s ease; }
 .hbar-ct { width: 26px; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.stats-note { font-size: 10px; color: var(--fg-muted); text-align: center; margin-top: 14px; opacity: 0.75; }
+.stats-note { font-size: 10px; color: var(--fg-muted); text-align: center; margin-top: 14px; }
 .stats-sites { margin-top: 30px; }
 .sites-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 14px; }
-.sites-list { display: flex; flex-direction: column; gap: 7px; }
-.sites-list a { font-size: 13px; color: var(--fg); text-decoration: none; text-align: center; letter-spacing: 0.01em; }
+.sites-list { display: flex; flex-direction: column; }
+.sites-list a { font-size: 13px; line-height: 24px; color: var(--fg); text-decoration: none; text-align: center; letter-spacing: 0.01em; }
 .sites-list a:hover { text-decoration: underline; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
@@ -678,7 +716,7 @@ body.modal-open { overflow: hidden; }
 .int-desc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
 .int-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 34px; }
 .int-links { display: flex; min-width: 0; gap: 2px 14px; flex-wrap: wrap; }
-.int-links a { font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
+.int-links a { display: inline-flex; align-items: center; min-height: 24px; font-size: 12px; color: var(--fg); text-decoration: none; letter-spacing: 0.01em; }
 .int-links a:hover { text-decoration: underline; }
 .int-vote { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; white-space: nowrap; }
 .int-vote-total { font-size: 10px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
@@ -718,7 +756,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 .stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
 @keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 .net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
-.net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
+.net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; min-height: 24px; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
 .net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
 .net-pill.disabled { opacity: 0.35; cursor: not-allowed; }
 :root {
@@ -732,11 +770,12 @@ body.vote-dock-open { padding-bottom: 104px; }
   --input-ph:#ccc;
   --btn-dis-bg:#ccc;--btn-dis-border:#ccc;--btn-dis-fg:#999;
   --sec-bg:#fff;--sec-border:#000;
-  --free-accent:#1a8917;--free-bg:#f6fff6;--free-border:#c3e6cb;--free-status-bg:#eaffea;
+  --free-accent:#188414;--free-bg:#f6fff6;--free-border:#c3e6cb;--free-status-bg:#eaffea;
   --pending-bg:#f5f5f5;--pending-border:#000;
   --send-bg:#fafafa;--send-border:#eee;
   --manage-border:#ddd;--manage-bg:#f5f5f5;
   --link-dim:0.5;
+  --error-fg:#c0392b;
 }
 .dark {
   --bg:#0a0a0a;--fg:#e8e8e0;--fg-muted:#888;--fg-dim:#666;
@@ -754,16 +793,20 @@ body.vote-dock-open { padding-bottom: 104px; }
   --send-bg:#111;--send-border:#222;
   --manage-border:#333;--manage-bg:#151515;
   --link-dim:0.5;
+  --error-fg:#f85149;
 }
-.free-cta { margin-top: 10px; font-size: 12px; color: var(--free-accent); cursor: pointer; letter-spacing: 0.03em; }
-.free-cta:hover { text-decoration: underline; }
+.free-cta, .zk-cta { display: block; width: auto; min-height: 24px; margin: 6px 0 0; padding: 0; background: none; border: 0; font-size: 12px; text-align: left; text-transform: none; letter-spacing: 0.03em; cursor: pointer; transition: none; }
+.free-cta { color: var(--free-accent); }
+.free-cta:hover, .zk-cta:hover { background: none; text-decoration: underline; }
+.free-panel .panel-close, .zk-panel .panel-close { width: 24px; min-width: 24px; height: 24px; margin: 0; padding: 0; background: none; border: 0; color: var(--fg-muted); font-size: 18px; line-height: 1; text-transform: none; letter-spacing: 0; }
+.free-panel .panel-close:hover, .zk-panel .panel-close:hover { background: none; color: var(--fg); opacity: 1; }
 .free-panel { display: none; margin-top: 16px; padding: 16px; border: 1px solid var(--free-border); background: var(--free-bg); }
 .free-panel.show { display: block; }
 .free-panel label { color: var(--free-accent); }
 .free-panel .free-input-wrap { display: flex; align-items: baseline; gap: 0; margin-bottom: 12px; }
 .free-panel .free-input-wrap input { flex: 1; font-size: 20px; border-bottom: 1px solid var(--free-accent); min-width: 0; }
 .free-panel .free-input-wrap input:focus { border-bottom-width: 2.5px; margin-bottom: -1px; }
-.free-panel .free-suffix { font-size: 20px; color: var(--fg-dim); white-space: nowrap; }
+.free-panel .free-suffix { font-size: 20px; color: var(--fg-muted); white-space: nowrap; }
 .free-panel button { background: var(--free-accent); border-color: var(--free-accent); }
 .free-panel button:hover { background: var(--free-accent); opacity: 0.85; }
 .free-panel button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); }
@@ -790,9 +833,8 @@ body.vote-dock-open { padding-bottom: 104px; }
 .free-panel .free-status.success { background: var(--free-status-bg); }
 
 /* ZKPassport claim — mirrors .free-cta / .free-panel, brand color #2039a3 */
-.zk-cta { margin-top: 10px; font-size: 12px; color: #2039a3; cursor: pointer; letter-spacing: 0.03em; }
+.zk-cta { color: #2039a3; }
 :root.dark .zk-cta { color: #6f86e0; }
-.zk-cta:hover { text-decoration: underline; }
 .zk-panel { display: none; margin-top: 16px; padding: 16px; border: 1px solid #c3cbec; background: #f4f6fd; }
 :root.dark .zk-panel { border-color: #26305c; background: #0b0f1f; }
 .zk-panel.show { display: block; }
@@ -803,7 +845,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 .zk-panel .zk-input-wrap { display: flex; align-items: baseline; gap: 0; margin-bottom: 12px; }
 .zk-panel .zk-input-wrap input { flex: 1; font-size: 20px; border-bottom: 1px solid #2039a3; min-width: 0; }
 .zk-panel .zk-input-wrap input:focus { border-bottom-width: 2.5px; margin-bottom: -1px; }
-.zk-panel .zk-suffix { font-size: 20px; color: var(--fg-dim); white-space: nowrap; }
+.zk-panel .zk-suffix { font-size: 20px; color: var(--fg-muted); white-space: nowrap; }
 .zk-panel button { background: #2039a3; border-color: #2039a3; color: #fff; }
 .zk-panel button:hover { background: #2039a3; opacity: 0.85; }
 .zk-panel button:disabled { background: var(--btn-dis-bg); border-color: var(--btn-dis-border); color: var(--btn-dis-fg); }
@@ -856,15 +898,17 @@ body.vote-dock-open { padding-bottom: 104px; }
   opacity:0.5; transition:opacity 0.2s; z-index:100;
   background:#000; border-radius:50%; width:40px; height:40px; background-clip:content-box;
 }
-:root.dark .dark-toggle { background:#fff; }
-.dark-toggle:hover { opacity:1; }
+/* The generic button:hover rule uses the background shorthand, which resets the clip and turns the
+   dot into a 40px disc while hovered (on phones, until the next tap elsewhere). */
+.dark-toggle:hover { opacity:1; background:#000; background-clip:content-box; }
+:root.dark .dark-toggle, :root.dark .dark-toggle:hover { background-color:#fff; }
 </style>
 </head>
 <body>
 
 <button class="dark-toggle" onclick="toggleDark()" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
 
-<div class="scroll-names">
+<div class="scroll-names" aria-hidden="true">
   <div class="scroll-names-inner">
     <span>satoshi.gwei</span>
     <span>vitalik.gwei</span>
@@ -937,18 +981,19 @@ body.vote-dock-open { padding-bottom: 104px; }
 <div id="netBar" class="net-bar"></div>
 
 <div class="section">
-  <label>Name</label>
+  <label for="nameInput">Name</label>
   <div class="input-wrap">
-    <input type="text" id="nameInput" placeholder="yourname" oninput="checkName()">
+    <input type="text" id="nameInput" placeholder="yourname" oninput="checkName()" autocapitalize="off" autocorrect="off" spellcheck="false">
     <span class="suffix">.gwei</span>
   </div>
-  <div id="availability" class="availability"></div>
+  <div id="availability" class="availability" aria-live="polite"></div>
   <div id="feeDisplay" class="fee"></div>
-  <div class="free-cta" id="freeCta" onclick="toggleFreePanel()" style="display:none;">free names available</div>
+  <div id="commitHint" class="commit-hint"></div>
+  <button type="button" class="free-cta" id="freeCta" onclick="toggleFreePanel()" aria-expanded="false" aria-controls="freePanel" style="display:none;">free names available</button>
   <div id="freePanel" class="free-panel">
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <label style="margin-bottom:0;">Claim your free name</label>
-      <span onclick="toggleFreePanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
+      <label for="freeLabelInput" style="margin-bottom:0;">Claim your free name</label>
+      <button type="button" class="panel-close" onclick="toggleFreePanel()" aria-label="Close">×</button>
     </div>
     <div class="free-input-wrap">
       <input type="text" id="freeLabelInput" placeholder="yourname" oninput="onFreeLabelInput()">
@@ -958,11 +1003,11 @@ body.vote-dock-open { padding-bottom: 104px; }
     <button id="freeMintBtn" onclick="doFreeMint()">Mint</button>
     <div id="freeStatus" class="free-status"></div>
   </div>
-  <div class="zk-cta" id="zkCta" onclick="toggleZkPanel()" style="display:none;">[new] free zkpassport names available</div>
+  <button type="button" class="zk-cta" id="zkCta" onclick="toggleZkPanel()" aria-expanded="false" aria-controls="zkPanel" style="display:none;">[new] free zkpassport names available</button>
   <div id="zkPanel" class="zk-panel">
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <label style="margin-bottom:0;">Claim your free zkpassport name</label>
-      <span onclick="toggleZkPanel()" style="cursor:pointer;font-size:18px;line-height:1;opacity:0.4;">×</span>
+      <label for="zkLabelInput" style="margin-bottom:0;">Claim your free zkpassport name</label>
+      <button type="button" class="panel-close" onclick="toggleZkPanel()" aria-label="Close">×</button>
     </div>
     <div class="zk-intro">You'll scan your passport to prove you're a unique human, but the proof reveals nothing about you or your document. One free name per passport. <a href="https://x.com/ZKPassport" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Learn more about ZKPassport →</a></div>
     <div class="zk-devnote" id="zkDevNote">Sepolia · dev mode (mock passport).</div>
@@ -1005,14 +1050,15 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div class="timer" id="pendingTimer"></div>
   <div class="actions">
     <button id="revealBtn" onclick="doReveal()">Register</button>
-    <button class="secondary" onclick="clearPending()">Cancel</button>
+    <button class="secondary" onclick="cancelPending()">Cancel</button>
   </div>
-  <div style="font-size:10px;opacity:0.5;margin-top:12px;line-height:1.4;">Your secret is stored locally. Don't clear site data or you won't be able to reveal.</div>
+  <div style="font-size:10px;color:var(--fg-muted);margin-top:12px;line-height:1.4;">Your secret is stored locally. Don't clear site data or you won't be able to register.</div>
 </div>
 
-<div class="section">
+<div class="section" id="commitSection">
   <button id="commitBtn" onclick="doCommit()" disabled>Commit</button>
-  <div style="font-size:11px;opacity:0.4;margin-top:16px;letter-spacing:0.05em;">a simple namespace on ethereum named after gwei, the unit ethereum gas is priced in</div>
+  <div id="status" class="status" aria-live="polite"></div>
+  <div style="font-size:11px;color:var(--fg-muted);margin-top:16px;letter-spacing:0.05em;">a simple namespace on ethereum named after gwei, the unit ethereum gas is priced in</div>
 </div>
 
 <!-- Send ETH -->
@@ -1023,7 +1069,7 @@ body.vote-dock-open { padding-bottom: 104px; }
     <input type="text" id="sendTo" placeholder="0x... or name.gwei" oninput="previewSendRecipient()">
     <div id="sendPreview" style="font-size:12px;margin-bottom:12px;display:none;"></div>
     <label>Amount (ETH)</label>
-    <input type="text" id="sendAmount" placeholder="0.01">
+    <input type="text" id="sendAmount" placeholder="0.01" inputmode="decimal">
     <div id="sendDest">
     <label>Send mode · Ethereum</label>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
@@ -1065,7 +1111,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 <div id="verifySection" class="send-section">
   <a href="#" onclick="toggleVerify(event)" class="send-toggle" id="verifyToggle">verify name →</a>
   <div id="verifyForm" class="send-form">
-    <div style="font-size:11px;opacity:0.5;margin-bottom:12px;">Check if a tokenId matches the name you expect. Protects against lookalike spoofs using invisible characters.</div>
+    <div style="font-size:11px;color:var(--fg-muted);margin-bottom:12px;">Check if a tokenId matches the name you expect. Protects against lookalike spoofs using invisible characters.</div>
     <label>Token ID</label>
     <input type="text" id="verifyTokenId" placeholder="From OpenSea URL or NFT" oninput="doVerify()">
     <label>Expected Name (optional)</label>
@@ -1082,14 +1128,12 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div class="manage-form" id="manageForm"></div>
 </div>
 
-<div id="status" class="status"></div>
-
 <!-- Wallet Modal -->
 <div class="modal-overlay" id="walletModal" onclick="if(event.target===this)closeWalletModal()">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="walletModalTitle">
     <div class="modal-header">
-      <div class="modal-title">Connect Wallet</div>
-      <button class="modal-close" onclick="closeWalletModal()">&times;</button>
+      <div class="modal-title" id="walletModalTitle">Connect Wallet</div>
+      <button class="modal-close" onclick="closeWalletModal()" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body" id="walletOptions"></div>
   </div>
@@ -1097,10 +1141,10 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Share Card Modal -->
 <div class="modal-overlay" id="shareModal" onclick="if(event.target===this)closeShareModal()">
-  <div class="modal share-modal">
+  <div class="modal share-modal" role="dialog" aria-modal="true" aria-labelledby="shareModalTitle">
     <div class="modal-header">
-      <div class="modal-title">Share card</div>
-      <button class="modal-close" onclick="closeShareModal()">&times;</button>
+      <div class="modal-title" id="shareModalTitle">Share card</div>
+      <button class="modal-close" onclick="closeShareModal()" aria-label="Close">&times;</button>
     </div>
     <div class="share-modal-body">
       <div class="share-preview"><canvas id="shareCanvas" width="1200" height="630"></canvas></div>
@@ -1557,19 +1601,6 @@ body.vote-dock-open { padding-bottom: 104px; }
     ]
   },
   {
-    "id": "cleave",
-    "name": "Cleave",
-    "category": "defi",
-    "description": "A decentralized options exchange on Ethereum. Write and trade options that can't be liquidated, with no margin calls or forced closes. It resolves addresses to their `.gwei` name, preferring it over `.eth` when both are set.",
-    "logo": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PGNsaXBQYXRoIGlkPSJjbGVhdmVDbGlwIj48Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSIxNSIvPjwvY2xpcFBhdGg+PGcgY2xpcC1wYXRoPSJ1cmwoI2NsZWF2ZUNsaXApIiB0cmFuc2Zvcm09InJvdGF0ZSgxOCAxNiAxNikiPjxyZWN0IHg9Ii0yOSIgeT0iLTI5IiB3aWR0aD0iNDQuMjUiIGhlaWdodD0iOTAiIGZpbGw9IiMxNmEzNGEiLz48cmVjdCB4PSIxNi43NSIgeT0iLTI5IiB3aWR0aD0iNDUiIGhlaWdodD0iOTAiIGZpbGw9IiNmOTczMTYiLz48L2c+PC9zdmc+Cg==",
-    "links": [
-      {
-        "label": "Website",
-        "url": "https://cleave.market/"
-      }
-    ]
-  },
-  {
     "id": "freedom",
     "name": "Freedom",
     "category": "web access",
@@ -1624,7 +1655,7 @@ body.vote-dock-open { padding-bottom: 104px; }
       },
       {
         "label": "GitHub",
-        "url": "https://github.com/apoorvlathey/walletchan"
+        "url": "https://github.com/walletchan/walletchan"
       }
     ]
   },
@@ -1674,9 +1705,13 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/assets/ethereum" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/contract/ethereum/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
+<!-- ethers loads here, not in <head>: the main script below needs it synchronously (top-level
+     ethers.Interface calls, inline onclick handlers), so it can't be deferred, but placing it after
+     the markup lets the page paint while it downloads. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.15.0/ethers.umd.min.js" integrity="sha512-UXYETj+vXKSURF1UlgVRLzWRS9ZiQTv3lcL4rbeLyqTXCPNZC6PTLF/Ik3uxm2Zo+E109cUpJPZfLxJsCgKSng==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 // Global error handler for debugging on mobile
 window.onerror = function(msg, url, line) {
@@ -1913,11 +1948,11 @@ const NETWORKS = {
   ethereum: {
     key: 'ethereum', label: 'Ethereum', chainId: 1, chainIdHex: '0x1',
     contract: '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6',
-    rpc: ['https://ethereum-rpc.publicnode.com', 'https://1rpc.io/eth'],
+    rpc: ['https://ethereum-rpc.publicnode.com', 'https://eth.drpc.org', 'https://1rpc.io/eth'],
     logsRpcs: ['https://gateway.tenderly.co/public/mainnet', 'https://rpc.mevblocker.io'],
     deployBlock: 25403689,
     explorer: 'https://etherscan.io',
-    nft: { name: 'OpenSea', asset: 'https://opensea.io/assets/ethereum', collection: 'https://opensea.io/assets/ethereum' },
+    nft: { name: 'OpenSea', asset: 'https://opensea.io/item/ethereum', collection: 'https://opensea.io/contract/ethereum' },
     registrar: '0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c',
     freeRoot: 'id',
     humanRegistrar: '0xA4283D56f523d05bBd46e483f7861d6D10Cb330A', // HumanRegistrar (mainnet, domain=gwei.domains, allowDevMode=false)
@@ -2178,8 +2213,11 @@ function initFree() {
 function toggleFreePanel() {
   const panel = document.getElementById('freePanel'); if (!panel) return;
   panel.classList.toggle('show');
-  if (panel.classList.contains('show')) {
+  const open = panel.classList.contains('show');
+  document.getElementById('freeCta')?.setAttribute('aria-expanded', String(open));
+  if (open) {
     const other = document.getElementById('zkPanel'); if (other) other.classList.remove('show'); // accordion: one open at a time
+    document.getElementById('zkCta')?.setAttribute('aria-expanded', 'false');
     const fi = document.getElementById('freeLabelInput'); if (fi) fi.focus();
   }
   const st = document.getElementById('freeStatus'); if (st) { st.className = 'free-status'; st.textContent = ''; }
@@ -2277,9 +2315,13 @@ initZk();
 function toggleZkPanel() {
   const panel = document.getElementById('zkPanel'); if (!panel) return;
   panel.classList.toggle('show');
-  if (panel.classList.contains('show')) {
+  const open = panel.classList.contains('show');
+  document.getElementById('zkCta')?.setAttribute('aria-expanded', String(open));
+  if (open) {
     const other = document.getElementById('freePanel'); if (other) other.classList.remove('show'); // accordion: one open at a time
+    document.getElementById('freeCta')?.setAttribute('aria-expanded', 'false');
     const zi = document.getElementById('zkLabelInput'); if (zi) zi.focus();
+    if (window.zkLoadSdk) window.zkLoadSdk().catch(() => {}); // warm the SDK download; the claim awaits it
   }
   const st = document.getElementById('zkStatus'); if (st) { st.className = 'zk-status'; st.textContent = ''; }
 }
@@ -2519,38 +2561,131 @@ const ABI = [
 
 const MIN_COMMIT_AGE = 60;
 const MAX_COMMIT_AGE = 86400;
-const STORAGE_KEY = 'gwei_pending_commits';
+// Pending commitments are stored per chain, so a Sepolia commit never shows (or gets cancelled)
+// on mainnet. The unsuffixed key is where they lived before.
+const LEGACY_STORAGE_KEY = 'gwei_pending_commits';
+const STORAGE_KEY = LEGACY_STORAGE_KEY + '_' + CHAIN_ID;
+
+// Entries saved under the old key don't say which chain they belong to. Keep them under mainnet
+// (where they were most likely made) rather than drop a secret, and only delete the old copy once
+// it is safely stored under the new key.
+function migrateLegacyPending(storage, chainId, newKey) {
+  if (chainId !== 1) return;
+  try {
+    const legacy = storage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacy) return;
+    const current = storage.getItem(newKey);
+    if (!current) storage.setItem(newKey, legacy);
+    if (storage.getItem(newKey) === legacy) storage.removeItem(LEGACY_STORAGE_KEY);
+  } catch (e) {}
+}
+try { migrateLegacyPending(localStorage, CHAIN_ID, STORAGE_KEY); } catch (e) {}
 
 const $ = id => document.getElementById(id);
 const textEncoder = new TextEncoder();
 
-// RPC fallback for read-only calls
+// Read-only RPC with failover. Every read (name lookup, Manage, send/verify resolution, receipt
+// polling) goes through one provider whose transport sends to the current endpoint and, on an HTTP
+// error, a rate limit, a timeout or a malformed reply, moves on to the next endpoint and retries.
+// The endpoint that answered becomes the current one, so a provider that starts throttling is
+// dropped after one failed request instead of hanging every lookup behind ethers' 429 backoff.
 const RPC_ENDPOINTS = NET.rpc;
+const RPC_TIMEOUT_MS = 6000;
+const RPC_UNAVAILABLE_MESSAGE = 'Could not reach an Ethereum RPC (every endpoint failed). Check your connection and try again.';
 let rpcProvider = null;
 let readContract = null;
+let rpcReady = null;
 
-async function getRpc() {
-  if (rpcProvider) return rpcProvider;
+// A JSON-RPC error that means "this node can't serve you right now" rather than a real answer
+// (reverts and other call results pass through to ethers untouched).
+function isRpcCapacityError(item) {
+  const error = item && item.error;
+  if (!error) return false;
+  const message = String(error.message || '').toLowerCase();
+  if (message.includes('revert') || (typeof error.data === 'string' && /^0x[0-9a-f]{8}/i.test(error.data))) return false;
+  return error.code === 429 || error.code === -32005 || error.code === -32603 ||
+    /rate.?limit|too many requests|limit exceeded|request limit|capacity|throttl|try again later|temporarily unavailable|service unavailable|timed? ?out|overloaded|busy/.test(message);
+}
 
-  const NETWORK = ethers.Network.from(CHAIN_ID);
-
-  // Race all RPCs - first to respond wins
-  const racePromises = RPC_ENDPOINTS.map(async (rpc) => {
-    const p = new ethers.JsonRpcProvider(rpc, NETWORK, { staticNetwork: true });
-    await Promise.race([
-      p.getBlockNumber(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
-    ]);
-    return p;
-  });
-
+async function rpcPost(url, body, timeoutMs = RPC_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    rpcProvider = await Promise.any(racePromises);
-    readContract = new ethers.Contract(CONTRACT, ABI, rpcProvider);
-    return rpcProvider;
-  } catch (e) {
-    throw new Error('All RPC endpoints failed');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const json = await response.json();
+    const items = Array.isArray(json) ? json : [json];
+    if (!items.length || items.some(isRpcCapacityError)) throw new Error('RPC over capacity');
+    return items;
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+function rpcUnavailableError(cause) {
+  const error = new Error(RPC_UNAVAILABLE_MESSAGE);
+  error.code = 'RPC_UNAVAILABLE';
+  error.cause = cause;
+  return error;
+}
+
+function isRpcUnavailable(e) {
+  return !!e && (e.code === 'RPC_UNAVAILABLE' || e.error?.code === 'RPC_UNAVAILABLE');
+}
+
+class FailoverRpcProvider extends ethers.JsonRpcProvider {
+  constructor(urls, network) {
+    super(urls[0], network, { staticNetwork: network });
+    this.rpcUrls = urls;
+    this.rpcIndex = 0;
+  }
+
+  async _send(payload) {
+    const body = JSON.stringify(payload);
+    let lastError = null;
+    for (let attempt = 0; attempt < this.rpcUrls.length; attempt++) {
+      const index = (this.rpcIndex + attempt) % this.rpcUrls.length;
+      try {
+        const result = await rpcPost(this.rpcUrls[index], body);
+        if (index !== this.rpcIndex) {
+          console.warn('Read RPC failed over to', this.rpcUrls[index]);
+          this.rpcIndex = index;
+        }
+        return result;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw rpcUnavailableError(lastError);
+  }
+}
+
+function getRpc() {
+  if (rpcProvider) return Promise.resolve(rpcProvider);
+  if (!rpcReady) {
+    rpcReady = (async () => {
+      const p = new FailoverRpcProvider(RPC_ENDPOINTS, ethers.Network.from(CHAIN_ID));
+      // Start on whichever endpoint answers first; if none answers, start on the first and let
+      // the per-request failover keep trying.
+      const probe = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] });
+      try {
+        p.rpcIndex = await Promise.any(RPC_ENDPOINTS.map(async (url, index) => {
+          const [reply] = await rpcPost(url, probe, 5000);
+          if (reply.result === undefined) throw new Error('no result');
+          return index;
+        }));
+      } catch (e) {}
+      rpcProvider = p;
+      readContract = new ethers.Contract(CONTRACT, ABI, p);
+      return p;
+    })();
+  }
+  return rpcReady;
 }
 
 // Initialize RPC on load
@@ -4038,18 +4173,81 @@ function detectWallets() {
     detected.push({ key: 'injected', name: 'Browser Wallet', icon: '🔗', getProvider: () => window.ethereum });
   }
 
-  // 5. WalletConnect as mobile/cross-device option
-  const wcModule = (typeof globalThis !== 'undefined' ? globalThis : window)['@walletconnect/ethereum-provider'];
-  if (wcModule?.EthereumProvider) {
-    detected.push({ key: 'walletconnect', name: 'WalletConnect', icon: '📱' });
-  }
+  // 5. WalletConnect as mobile/cross-device option (its library loads when it is picked)
+  detected.push({ key: 'walletconnect', name: 'WalletConnect', icon: '📱' });
 
   return detected;
 }
 
-function showWalletModal() {
-  $('walletModal').classList.add('active');
+// WalletConnect's provider (~180 KB) is only fetched for a WalletConnect connection, pinned with SRI.
+const WALLETCONNECT_SRC = 'https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.10.0/dist/index.umd.js';
+const WALLETCONNECT_SRI = 'sha384-ACTo60vL1/AfeYkCCXRvB1G0ugjHF0/SHU9YN7e4/KH/mitAIYpLcw5PKXW/+ekM';
+let walletConnectLoad = null;
+function walletConnectModule() {
+  return (typeof globalThis !== 'undefined' ? globalThis : window)['@walletconnect/ethereum-provider'];
+}
+function loadWalletConnect() {
+  if (walletConnectModule()?.EthereumProvider) return Promise.resolve(walletConnectModule());
+  if (!walletConnectLoad) {
+    walletConnectLoad = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = WALLETCONNECT_SRC;
+      script.integrity = WALLETCONNECT_SRI;
+      script.crossOrigin = 'anonymous';
+      script.onload = () => resolve(walletConnectModule());
+      script.onerror = () => {
+        walletConnectLoad = null; // allow a retry
+        script.remove();
+        reject(new Error('WalletConnect failed to load. Check your connection and try again.'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return walletConnectLoad;
+}
+
+// Dialogs: focus moves in on open, Tab stays inside, Escape closes, focus returns to the opener.
+let modalReturnFocus = null;
+function modalFocusables(overlay) {
+  return [...overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(el => !el.disabled && el.offsetParent !== null);
+}
+function openModal(overlay) {
+  if (!overlay.classList.contains('active')) modalReturnFocus = document.activeElement;
+  overlay.classList.add('active');
   document.body.classList.add('modal-open');
+  const first = modalFocusables(overlay)[0];
+  if (first) first.focus();
+}
+function closeModal(overlay) {
+  const wasOpen = overlay.classList.contains('active');
+  overlay.classList.remove('active');
+  document.body.classList.remove('modal-open');
+  const target = modalReturnFocus;
+  modalReturnFocus = null;
+  if (wasOpen && target && typeof target.focus === 'function' && document.contains(target)) target.focus();
+}
+document.addEventListener('keydown', (event) => {
+  const overlay = document.querySelector('.modal-overlay.active');
+  if (!overlay) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    if (overlay.id === 'shareModal') closeShareModal();
+    else closeWalletModal();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const items = modalFocusables(overlay);
+  if (!items.length) { event.preventDefault(); return; }
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!overlay.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+  else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+});
+
+function showWalletModal() {
+  openModal($('walletModal'));
   $('walletOptions').innerHTML = '<div style="padding:12px;text-align:center;">Detecting wallets...</div>';
 
   window.dispatchEvent(new Event('eip6963:requestProvider'));
@@ -4079,23 +4277,22 @@ function renderWalletModal(wallets) {
         ${showName ? `<div style="font-size: 16px; margin-bottom: 4px;">${escapeHtml(displayName)}</div>` : ''}
         <div style="font-size: 12px; word-break: break-all; opacity: 0.6;">${connectedAddress}</div>
       </div>
-      <div class="wallet-option disconnect" onclick="disconnectWallet()">
+      <button type="button" class="wallet-option disconnect" onclick="disconnectWallet()">
         <span class="wallet-option-name">Disconnect</span>
-      </div>
+      </button>
     `;
   } else {
     container.innerHTML = wallets.length > 0 ? wallets.map(w => `
-      <div class="wallet-option" onclick='connectWithWallet(${JSON.stringify(w.key)})'>
+      <button type="button" class="wallet-option" onclick='connectWithWallet(${JSON.stringify(w.key)})'>
         <span class="wallet-option-icon">${w.icon}</span>
         <span class="wallet-option-name">${escapeHtml(w.name)}</span>
-      </div>
+      </button>
     `).join('') : '<div style="padding:12px;text-align:center;">No wallets detected.</div>';
   }
 }
 
 function closeWalletModal() {
-  $('walletModal').classList.remove('active');
-  document.body.classList.remove('modal-open');
+  closeModal($('walletModal'));
 }
 
 function toggleWallet() {
@@ -4111,7 +4308,7 @@ async function connectWithWallet(walletKey) {
     let walletProvider;
 
     if (walletKey === 'walletconnect') {
-      const wcModule = (typeof globalThis !== 'undefined' ? globalThis : window)['@walletconnect/ethereum-provider'];
+      const wcModule = await loadWalletConnect();
       const WCProvider = wcModule?.EthereumProvider;
 
       if (!WCProvider?.init) throw new Error('WalletConnect not available');
@@ -4482,8 +4679,9 @@ function handleError(e) {
   showStatus(cleanMsg, 'error');
 }
 
-// Contract-compatible normalization (matches on-chain validation)
-// Used as fallback when ENSIP-15 rejects a name that the contract allows
+// Contract-compatible normalization (matches on-chain validation). Registrations use it only when
+// the ENSIP-15 library failed to load (the page shows a warning then); lookups also use it to find
+// names ENSIP-15 rejects that already exist on-chain.
 function normalizeLabelContract(s) {
   s = s.trim();
   if (!s) return null;
@@ -4501,36 +4699,50 @@ function normalizeLabelContract(s) {
   return lowered;
 }
 
-// Normalize label using ENSIP-15 standard (via @adraffy/ens-normalize)
-// This handles: Unicode NFC, confusables, zero-width chars, emoji, bidirectional text
-// Falls back to contract-compatible normalization for edge cases
+// The registry's own label rules (NameNFT._validateAndNormalize / isAvailable), checked on the
+// ENSIP-15 output: ENSIP-15 allows a leading or trailing hyphen, the contract does not, and such a
+// name would otherwise look "taken" because isAvailable() returns false for it.
+function contractLabelError(label) {
+  const bytes = textEncoder.encode(label).length;
+  if (bytes < 1) return 'Name cannot be empty';
+  if (bytes > 255) return 'Name too long (max 255 bytes)';
+  if (/[\u0000-\u0020\u007f]/.test(label)) return 'Name cannot contain spaces or control characters';
+  if (label.includes('.')) return 'Name cannot contain a dot';
+  if (label.startsWith('-') || label.endsWith('-')) return 'Name cannot start or end with a hyphen';
+  return null;
+}
+
+// "donnoh.gwei" and "donnoh.GWEI" mean the name "donnoh".
+function stripGweiSuffix(input) {
+  return String(input || '').trim().replace(/\.gwei$/i, '');
+}
+
+// Normalize a label for registration: ENSIP-15 (Unicode NFC, confusables, invisible characters,
+// emoji, bidi) via @adraffy/ens-normalize, then the contract's rules. A name ENSIP-15 rejects is
+// invalid here; the contract-only rules are used solely when the library failed to load.
 function normalizeLabel(label) {
   const s = label.trim();
   if (!s || s.length > 255) return null;
 
-  try {
-    // Use ENSIP-15 normalization - this is the industry standard
-    // ens_normalize throws on invalid input (confusables, invisible chars, etc.)
-    if (typeof ens_normalize !== 'function') {
-      // Fallback if library not loaded yet
-      return normalizeLabelContract(s);
-    }
-
-    const normalized = ens_normalize(s);
-
-    // Our contract expects single label without dots
-    if (normalized.includes('.')) return null;
-
-    // Check byte length for contract compatibility
-    const bytes = textEncoder.encode(normalized);
-    if (bytes.length < 1 || bytes.length > 255) return null;
-
-    return normalized;
-  } catch (e) {
-    // ENSIP-15 rejected it, but contract might allow it
-    // Fall back to contract-compatible normalization for interoperability
+  if (typeof ens_normalize !== 'function') {
     return normalizeLabelContract(s);
   }
+
+  let normalized;
+  try {
+    normalized = ens_normalize(s);
+  } catch (e) {
+    return null;
+  }
+  if (contractLabelError(normalized)) return null;
+  return normalized;
+}
+
+// Look up an existing name. The registry only validates bytes, so names ENSIP-15 rejects exist
+// on-chain (e.g. "lex_node", "s&p500"); their owners still need to find and manage them. Never use
+// this to offer a registration.
+function normalizeLabelForLookup(label) {
+  return normalizeLabel(label) || normalizeLabelContract(label);
 }
 
 // Normalize a full name (can include dots for subdomains)
@@ -4548,7 +4760,7 @@ function normalizeFullName(input) {
   const normalized = [];
 
   for (const label of labels) {
-    const norm = normalizeLabel(label);
+    const norm = normalizeLabelForLookup(label);
     if (!norm) return null;
     normalized.push(norm);
   }
@@ -4572,54 +4784,114 @@ function getNormalizationError(label) {
   try {
     if (typeof ens_normalize !== 'function') {
       if (/[\s]/.test(s)) return 'Name cannot contain spaces';
-      if (s.startsWith('-') || s.endsWith('-')) return 'Name cannot start or end with hyphen';
+      if (s.startsWith('-') || s.endsWith('-')) return 'Name cannot start or end with a hyphen';
       return null;
     }
 
     const normalized = ens_normalize(s);
     // Don't error on dots here - handled by isSubdomainInput
-
-    const bytes = textEncoder.encode(normalized);
-    if (bytes.length > 255) return 'Name too long (max 255 bytes)';
-
-    return null; // Valid
+    return contractLabelError(normalized);
   } catch (e) {
-    // ENSIP-15 errors are descriptive
-    const msg = e.message || 'Invalid characters';
-    if (msg.includes('disallowed')) return 'Contains disallowed characters';
+    // ENSIP-15 errors are descriptive; drop the bidi marks and codepoint suffix they carry
+    const msg = String(e.message || 'Invalid characters').replace(/[\u200e\u200f]/g, '').replace(/\s*\{[0-9A-F]+\}/g, '').trim();
+    if (msg.includes('underscore')) return 'Underscores are only allowed at the start';
+    if (msg.includes('mixture')) return 'Mixes scripts (' + msg.replace(/^illegal mixture:\s*/, '') + '), possible look-alike';
+    if (msg.includes('confus')) return 'Contains look-alike (confusable) characters';
+    if (msg.includes('label extension')) return 'Cannot have "--" as the 3rd and 4th characters';
+    if (msg.includes('disallowed')) return 'Contains a disallowed character' + (/"(.+)"/.test(msg) ? ' (' + msg.match(/"(.+)"/)[0] + ')' : '');
     if (msg.includes('invisible')) return 'Contains invisible characters';
-    if (msg.includes('confus')) return 'Contains confusable characters';
     if (msg.includes('empty')) return 'Label cannot be empty';
-    if (msg.includes('underscore')) return 'Underscores not allowed';
     if (msg.includes('hyphen')) return 'Invalid hyphen placement';
-    return msg.length < 50 ? msg : 'Invalid name format';
+    return msg.length < 60 ? msg : 'Invalid name format';
   }
 }
 
 let checkDebounce = null;
 let checkVersion = 0;
 
+// As soon as the input changes, show that a lookup is pending: nothing from the previous name (its
+// verdict, fee, Commit button, or Manage panel with a Renew bound to its token) may stay on screen.
+function showCheckingState() {
+  checkVersion++; // anything still in flight for the previous input is now stale
+  if (!$('nameInput').value.trim()) return; // doCheckName clears everything for an empty input
+  $('availability').innerHTML = '<span class="checking">Checking…</span>';
+  $('availability').classList.add('show');
+  $('feeDisplay').textContent = '';
+  $('commitHint').textContent = '';
+  $('commitBtn').style.display = 'none';
+  hideManage();
+}
+
 function checkName() {
   clearTimeout(checkDebounce);
+  showCheckingState();
   checkDebounce = setTimeout(() => doCheckName(), 350);
 }
+
+// Commit button for an available name. Without a wallet it reads "Connect wallet to register" and
+// opens the wallet modal, the way Renew and free mint do.
+function setCommitButton(name) {
+  const btn = $('commitBtn');
+  const hint = $('commitHint');
+  const pending = loadPending();
+  btn.style.display = '';
+  if (!name) {
+    btn.textContent = 'Commit';
+    btn.disabled = true;
+    hint.textContent = '';
+    return;
+  }
+  btn.textContent = signer || pending ? 'Commit' : 'Connect wallet to register';
+  btn.disabled = !!pending;
+  if (pending) {
+    hint.textContent = pending.name === name
+      ? 'You already committed to ' + pending.name + '.gwei. Finish with Register in the pending box.'
+      : 'Commit is off while ' + pending.name + '.gwei is pending (one registration at a time). Register or cancel it first.';
+  } else {
+    hint.textContent = 'Registering takes two transactions about a minute apart: Commit, then Register.';
+  }
+}
+
+function showLookupError(e) {
+  const availEl = $('availability');
+  const detail = isRpcUnavailable(e) ? RPC_UNAVAILABLE_MESSAGE : 'The lookup failed.';
+  availEl.innerHTML = '<span class="error">Error checking name</span>' +
+    '<div class="name-note">' + escapeHtml(detail) +
+    ' <button type="button" class="retry-btn" onclick="checkName()">Retry</button></div>';
+  availEl.classList.add('show');
+  $('feeDisplay').textContent = '';
+  $('commitHint').textContent = '';
+  $('commitBtn').style.display = 'none';
+  hideManage();
+}
+
+const ENS_LIBRARY_WARNING = '<div class="name-note">Anti-spoof check unavailable: the ENSIP-15 library failed to load, so look-alike characters are not detected.</div>';
 
 async function doCheckName() {
   const raw = $('nameInput').value;
   const availEl = $('availability');
   const feeEl = $('feeDisplay');
   const commitBtn = $('commitBtn');
-  const hasPending = !!loadPending();
+  // Every run supersedes whatever is still in flight, including runs that end synchronously
+  // (empty or invalid input), so a slow stale response can never overwrite a newer verdict.
+  const thisVersion = ++checkVersion;
+  $('commitHint').textContent = '';
 
   if (!raw.trim()) {
     availEl.classList.remove('show');
     feeEl.textContent = '';
-    commitBtn.style.display = '';
-    commitBtn.disabled = true;
+    setCommitButton(null);
     hideManage();
     updateHash('');
     return;
   }
+
+  // Don't judge a name before the ENSIP-15 library has had a chance to load (bounded wait).
+  if (window.ensNormalizeReady === undefined && window.ensNormalizeLoaded) {
+    await Promise.race([window.ensNormalizeLoaded, new Promise(resolve => setTimeout(resolve, 8000))]);
+    if (thisVersion !== checkVersion) return;
+  }
+  const libraryWarning = typeof ens_normalize !== 'function' ? ENS_LIBRARY_WARNING : '';
 
   // Check if this is a subdomain lookup (e.g., "test.wns")
   const isSubdomain = isSubdomainInput(raw);
@@ -4628,7 +4900,7 @@ async function doCheckName() {
     // Subdomain lookup - different flow
     const fullName = normalizeFullName(raw);
     if (!fullName) {
-      availEl.innerHTML = '<span class="taken">Invalid name format</span>';
+      availEl.innerHTML = '<span class="error">Invalid name format</span>';
       availEl.classList.add('show');
       feeEl.textContent = '';
       commitBtn.style.display = 'none';
@@ -4636,27 +4908,22 @@ async function doCheckName() {
       return;
     }
 
-    const thisVersion = ++checkVersion;
-
     try {
-      if (!readContract) await getRpc();
-      if (!readContract) {
-        availEl.innerHTML = '<span class="taken">RPC unavailable</span>';
-        availEl.classList.add('show');
-        return;
-      }
+      const rc = readContract || (await getRpc(), readContract);
+      if (thisVersion !== checkVersion) return;
 
       // Use contract's computeId for full name (handles recursive namehash)
-      const tokenId = await readContract.computeId(fullName + '.gwei');
+      const tokenId = await rc.computeId(fullName + '.gwei');
 
       if (thisVersion !== checkVersion) return;
 
       // Check if it exists by trying to get owner
       let owner = null;
       try {
-        owner = await readContract.ownerOf(tokenId);
+        owner = await rc.ownerOf(tokenId);
       } catch (e) {
-        // Doesn't exist
+        // A revert means it doesn't exist; an unreachable RPC is a lookup failure
+        if (isRpcUnavailable(e)) throw e;
       }
 
       if (thisVersion !== checkVersion) return;
@@ -4664,15 +4931,17 @@ async function doCheckName() {
       const escaped = escapeHtml(fullName);
 
       if (!owner) {
-        availEl.innerHTML = '<span class="available">' + escaped + '.gwei is not registered</span>' +
+        availEl.innerHTML = '<span class="available">' + escaped + '.gwei is not registered</span>' + libraryWarning +
           '<div class="view-link"><a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
         feeEl.textContent = 'Subdomains are free (registered by parent owner)';
+        hideManage();
       } else {
         const osLink = `${NFT.asset}/${CONTRACT}/${tokenId}`;
-        availEl.innerHTML = '<span class="taken">' + escaped + '.gwei exists</span>' +
+        availEl.innerHTML = '<span class="taken">' + escaped + '.gwei exists</span>' + libraryWarning +
           '<div class="view-link"><a href="' + osLink + '" target="_blank" rel="noopener">View on ' + NFT.name + ' →</a> · <a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
         feeEl.textContent = '';
         await showManage(tokenId, fullName);
+        if (thisVersion !== checkVersion) return;
       }
 
       availEl.classList.add('show');
@@ -4680,47 +4949,40 @@ async function doCheckName() {
       updateHash(fullName);
     } catch (e) {
       if (thisVersion !== checkVersion) return;
-      availEl.innerHTML = '<span class="taken">Error checking subdomain</span>';
-      availEl.classList.add('show');
-      feeEl.textContent = '';
-      commitBtn.style.display = 'none';
-      hideManage();
+      showLookupError(e);
     }
     return;
   }
 
-  // Top-level name lookup
-  const name = normalizeLabel(raw);
+  // Top-level name lookup ("donnoh.gwei" is the name "donnoh")
+  const label = stripGweiSuffix(raw);
+  const name = normalizeLabel(label);
+  // A name ENSIP-15 (or the registry's hyphen rule) rejects is never offered for registration.
+  // If the registry itself would accept its bytes it may still exist on-chain, so look it up for
+  // its owner and flag it; otherwise there is nothing to look up.
+  const invalidReason = name ? null : (getNormalizationError(label) || 'Invalid name');
+  const lookupName = name || normalizeLabelContract(label);
 
-  if (!name) {
-    const reason = getNormalizationError(raw) || 'Invalid name';
-    availEl.innerHTML = '<span class="taken">' + escapeHtml(reason) + '</span>';
+  if (!lookupName) {
+    availEl.innerHTML = '<span class="error">' + escapeHtml(invalidReason) + '</span>';
     availEl.classList.add('show');
     feeEl.textContent = '';
-    commitBtn.style.display = '';
-    commitBtn.disabled = true;
+    commitBtn.style.display = 'none';
     hideManage();
     updateHash('');
     return;
   }
 
-  // Track this request version to ignore stale responses
-  const thisVersion = ++checkVersion;
-
   try {
     // Use read contract (public RPC) - no wallet needed
     if (!readContract) await getRpc();
-    if (!readContract) {
-      availEl.innerHTML = '<span class="taken">RPC unavailable</span>';
-      availEl.classList.add('show');
-      return;
-    }
+    if (thisVersion !== checkVersion) return;
 
     // Compute tokenId locally to batch all 4 calls into 1 RPC call
-    const tokenId = localComputeId(name);
+    const tokenId = localComputeId(lookupName);
     const results = await multicall([
-      { fn: 'isAvailable', args: [name, 0] },
-      { fn: 'getFee', args: [byteLength(name)] },
+      { fn: 'isAvailable', args: [lookupName, 0] },
+      { fn: 'getFee', args: [byteLength(lookupName)] },
       { fn: 'getPremium', args: [tokenId] }
     ]);
     if (!results[0] || !results[1] || !results[2]) {
@@ -4731,42 +4993,51 @@ async function doCheckName() {
     // Ignore if a newer check has started
     if (thisVersion !== checkVersion) return;
 
-    const escaped = escapeHtml(name);
+    const escaped = escapeHtml(lookupName);
+
+    if (available && invalidReason) {
+      // Free on-chain, but not a name this page will register.
+      availEl.innerHTML = '<span class="error">' + escapeHtml(invalidReason) + '</span>';
+      availEl.classList.add('show');
+      feeEl.textContent = '';
+      commitBtn.style.display = 'none';
+      hideManage();
+      updateHash('');
+      return;
+    }
 
     if (available) {
-      availEl.innerHTML = '<span class="available">' + escaped + '.gwei is available</span>' +
+      availEl.innerHTML = '<span class="available">' + escaped + '.gwei is available</span>' + libraryWarning +
         '<div class="view-link"><a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
-      // Enable commit only if: available + no pending + wallet connected
-      commitBtn.style.display = '';
-      commitBtn.disabled = hasPending || !signer;
       hideManage();
+      setCommitButton(lookupName);
 
-      let feeText = ethers.formatEther(fee) + ' ETH';
+      // reveal() registers for one REGISTRATION_PERIOD (365 days); the premium is a one-time charge
+      let feeText = ethers.formatEther(fee) + ' ETH / year';
       if (premium > 0n) {
         feeText += ' + ' + ethers.formatEther(premium) + ' ETH premium';
       }
       feeEl.textContent = 'Fee: ' + feeText;
     } else {
       const osLink = `${NFT.asset}/${CONTRACT}/${tokenId}`;
-      availEl.innerHTML = '<span class="taken">' + escaped + '.gwei is taken</span>' +
+      const spoofNote = invalidReason
+        ? '<div class="name-note">Not a valid ENSIP-15 name (' + escapeHtml(invalidReason) + '). It may imitate another name.</div>'
+        : '';
+      availEl.innerHTML = '<span class="taken">' + escaped + '.gwei is taken</span>' + spoofNote + libraryWarning +
         '<div class="view-link"><a href="' + osLink + '" target="_blank" rel="noopener">View on ' + NFT.name + ' →</a> · <a href="#" onclick="copyShareLink();return false;">Copy link →</a></div>';
       commitBtn.style.display = 'none';
       feeEl.textContent = '';
 
       // Show manage section with owner info
-      await showManage(tokenId, name);
+      await showManage(tokenId, lookupName);
+      if (thisVersion !== checkVersion) return;
     }
     availEl.classList.add('show');
-    updateHash(name);
+    updateHash(lookupName);
   } catch (e) {
     // Ignore errors from stale requests
     if (thisVersion !== checkVersion) return;
-    availEl.innerHTML = '<span class="taken">Error checking name</span>';
-    availEl.classList.add('show');
-    feeEl.textContent = '';
-    commitBtn.style.display = '';
-    commitBtn.disabled = true;
-    hideManage();
+    showLookupError(e);
     updateHash('');
   }
 }
@@ -4793,8 +5064,9 @@ async function canReceiveNfts(addr) {
 }
 
 async function doCommit() {
-  const name = normalizeLabel($('nameInput').value);
-  if (!name || !signer) return;
+  if (!signer) { showStatus('Connect your wallet to register', ''); toggleWallet(); return; }
+  const name = normalizeLabel(stripGweiSuffix($('nameInput').value));
+  if (!name || loadPending()) return;
 
   // Disable immediately to prevent double-clicks
   $('commitBtn').disabled = true;
@@ -4819,6 +5091,7 @@ async function doCommit() {
       secret,
       owner: userAddr,
       commitment,
+      chainId: CHAIN_ID,
       timestamp: Math.floor(Date.now() / 1000),
       confirmed: false
     };
@@ -4869,7 +5142,8 @@ async function doCommit() {
           savePending(currentPending);
         }
       }
-      showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', tx.hash);
+      showStatus('Commitment confirmed! Wait 60 seconds, then register.', 'success', tx.hash);
+      if (document.hidden) schedulePendingReadyTitle();
     }
   } catch (e) {
     // Clear pending if tx failed (only if we saved one)
@@ -4885,7 +5159,8 @@ async function doCommit() {
 
 async function doReveal() {
   const pending = loadPending();
-  if (!pending || !signer) return;
+  if (!pending) return;
+  if (!signer) { showStatus('Connect your wallet to register', ''); toggleWallet(); return; }
 
   try {
     // Verify same wallet that committed
@@ -5038,8 +5313,57 @@ function clearPending() {
   const oldBtn = $('manualCheckBtn'); if (oldBtn) oldBtn.remove();
   pendingTimerId++; // Invalidate any running timer callbacks
   if (pendingTimeoutId) { clearTimeout(pendingTimeoutId); pendingTimeoutId = null; }
-  // Re-enable commit if there was a name entered
-  if ($('nameInput').value.trim() && contract) doCheckName();
+  setPendingReadyTitle(null);
+  // Re-enable commit (and drop the "one registration at a time" hint) if a name is entered
+  if ($('nameInput').value.trim()) doCheckName();
+}
+
+// Cancel deletes the commit secret. Once the commit transaction has been sent, that also throws
+// away the gas paid for it (and the minute already waited), so ask first.
+function pendingCommitSent(pending) {
+  return !!pending && (!!pending.txHash || pending.confirmed !== false);
+}
+
+function cancelPending() {
+  const pending = loadPending();
+  if (pendingCommitSent(pending)) {
+    const ok = confirm(
+      'Cancel the pending registration of ' + pending.name + '.gwei?\n\n' +
+      'Your commit transaction was already sent. Cancelling deletes its secret from this browser: ' +
+      'the gas paid for the commit is lost, and registering this name means committing again.'
+    );
+    if (!ok) return;
+  }
+  clearPending();
+}
+
+// A background tab can't show the countdown, so when a commitment is ready to register the tab
+// title says so; the normal title comes back when the commitment is used, cancelled or expires.
+const PAGE_TITLE = 'Gwei Name Service · .gwei names on Ethereum';
+let pageTitle = PAGE_TITLE; // the title for the current lookup; set by updateHash()
+let pendingReadyTitle = null;
+let pendingTitleTimeoutId = null;
+function applyPageTitle() {
+  document.title = pendingReadyTitle || pageTitle;
+}
+function setPendingReadyTitle(pending) {
+  clearTimeout(pendingTitleTimeoutId);
+  pendingTitleTimeoutId = null;
+  pendingReadyTitle = pending ? 'ready to register · ' + pending.name + '.gwei' : null;
+  applyPageTitle();
+}
+
+// The countdown pauses while the tab is hidden; one timer still flips the title on time.
+function schedulePendingReadyTitle() {
+  clearTimeout(pendingTitleTimeoutId);
+  const pending = loadPending();
+  if (!pending || pending.confirmed === false) return;
+  const remaining = pending.timestamp + MIN_COMMIT_AGE - Math.floor(Date.now() / 1000);
+  if (pending.timestamp + MAX_COMMIT_AGE - Math.floor(Date.now() / 1000) <= 0) return;
+  pendingTitleTimeoutId = setTimeout(() => {
+    const current = loadPending();
+    if (current && current.name === pending.name) setPendingReadyTitle(current);
+  }, Math.max(0, remaining) * 1000 + 250);
 }
 
 let pendingTimerId = 0; // Unique ID to prevent stale timer callbacks
@@ -5084,7 +5408,7 @@ async function updateTimer(timerId) {
 
       try {
         if (await recoverPendingConfirmation(pending)) {
-          showStatus('Commitment confirmed! Wait 60 seconds then reveal.', 'success', pending.txHash);
+          showStatus('Commitment confirmed! Wait 60 seconds, then register.', 'success', pending.txHash);
           return updateTimer(timerId);
         }
       } catch (e) {
@@ -5135,11 +5459,13 @@ async function updateTimer(timerId) {
     const expires = MAX_COMMIT_AGE - elapsed;
     const hrs = Math.floor(expires / 3600);
     const mins = Math.floor((expires % 3600) / 60);
-    timerEl.textContent = 'Ready to reveal. Expires in ' + hrs + 'h ' + mins + 'm';
-    revealBtn.disabled = !signer;
+    timerEl.textContent = 'Ready to register. Expires in ' + hrs + 'h ' + mins + 'm';
+    revealBtn.disabled = false; // without a wallet it opens the wallet modal
+    if (!pendingReadyTitle) setPendingReadyTitle(pending);
   } else {
     timerEl.textContent = 'Expired';
     revealBtn.disabled = true;
+    if (pendingReadyTitle) setPendingReadyTitle(null);
   }
 
   if (elapsed < MAX_COMMIT_AGE) {
@@ -5151,6 +5477,7 @@ async function updateTimer(timerId) {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (pendingTimeoutId) { clearTimeout(pendingTimeoutId); pendingTimeoutId = null; }
+    schedulePendingReadyTitle();
   } else {
     // Resume timer if there's a pending commitment
     const pending = loadPending();
@@ -5161,6 +5488,31 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// The status line sits next to the part of the page the user last acted in (pending box, Commit
+// button, Manage panel, send form) instead of below every section, where it landed off-screen on
+// phones. By default it follows the Commit button.
+const STATUS_REGIONS = '#pending, #commitSection, #manage, #sendSection';
+let statusRegion = null;
+function trackStatusRegion(event) {
+  const region = event.target && event.target.closest && event.target.closest(STATUS_REGIONS);
+  if (region) statusRegion = region;
+}
+document.addEventListener('pointerdown', trackStatusRegion, true);
+document.addEventListener('keydown', trackStatusRegion, true);
+
+function placeStatus(el) {
+  let region = statusRegion;
+  if (region && region.offsetParent === null) region = null; // hidden now (e.g. Manage closed)
+  if (!region || region.id === 'commitSection') {
+    const commitBtn = $('commitBtn');
+    if (el.previousElementSibling !== commitBtn) commitBtn.after(el);
+  } else if (region.id === 'sendSection') {
+    if (el.parentNode !== region) region.append(el);
+  } else if (el.previousElementSibling !== region) {
+    region.after(el);
+  }
+}
+
 function showStatus(msg, type, txHash) {
   const el = $('status');
   if (txHash) {
@@ -5170,6 +5522,12 @@ function showStatus(msg, type, txHash) {
     el.textContent = msg;
   }
   el.className = 'status show' + (type ? ' ' + type : '');
+  placeStatus(el);
+  // An outcome the user must see still gets scrolled to if it is off-screen.
+  if (type === 'error' || type === 'success') {
+    const rect = el.getBoundingClientRect();
+    if (rect.top < 0 || rect.bottom > window.innerHeight) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
 // Current managed token
@@ -5184,6 +5542,7 @@ let currentContentContract = null; // { chainId, address } from the ERC-6821 con
 let isProcessing = false; // Prevent double-click on manage actions
 
 function hideManage() {
+  manageVersion++; // a Manage load still in flight must not bring the panel back
   $('manage').classList.remove('show');
   $('manageForm').classList.remove('show');
   currentTokenId = null;
@@ -5401,14 +5760,12 @@ function openShareModal(name) {
     drawPatternSwatch(c, pat.pattern);
   }, selectSharePattern);
   renderShareCard();
-  document.getElementById('shareModal').classList.add('active');
-  document.body.classList.add('modal-open');
+  openModal(document.getElementById('shareModal'));
 }
 // entry point used by the result row + mint-success panels
 function shareName(name) { openShareModal(name); }
 function closeShareModal() {
-  document.getElementById('shareModal').classList.remove('active');
-  document.body.classList.remove('modal-open');
+  closeModal(document.getElementById('shareModal'));
 }
 function shareCardBlob() { return new Promise((res) => document.getElementById('shareCanvas').toBlob(res, 'image/png')); }
 function shareCardFilename() { return (shareState.name || 'gwei').replace(/\./g, '-') + '.png'; }
@@ -5595,7 +5952,7 @@ async function showManage(tokenId, name) {
       $('manageActions').innerHTML = actionsHtml;
     } else {
       // renew() is permissionless — anyone can extend any name (incl. ones held by the registrar)
-      let nonOwnerHtml = '<span style="font-size:12px;opacity:0.5;">Connect as owner to manage</span>';
+      let nonOwnerHtml = '<span style="font-size:12px;color:var(--fg-muted);">Connect as owner to manage</span>';
       if (isTopLevel) {
         nonOwnerHtml += `<button onclick="showManageForm('renew')" style="margin-top:8px;">Renew (anyone)</button>`;
       }
@@ -5605,7 +5962,19 @@ async function showManage(tokenId, name) {
     $('manage').classList.add('show');
     $('manageForm').classList.remove('show');
   } catch (e) {
-    hideManage();
+    if (thisManageVersion !== manageVersion) return;
+    if (!isRpcUnavailable(e)) { hideManage(); return; }
+    // Every read RPC failed: say so (with a retry) instead of silently dropping the panel.
+    $('manageInfo').innerHTML = '<span style="color:var(--error-fg);font-size:12px;text-transform:none;letter-spacing:0;">' + escapeHtml(RPC_UNAVAILABLE_MESSAGE) + '</span>';
+    $('manageActions').innerHTML = '';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'secondary';
+    retry.textContent = 'Retry';
+    retry.onclick = () => showManage(tokenId, name);
+    $('manageActions').append(retry);
+    $('manage').classList.add('show');
+    $('manageForm').classList.remove('show');
   }
 }
 
@@ -5773,8 +6142,15 @@ async function resolveRecipient(input) {
     }
     return { address: resolved, name: normalized + '.gwei' };
   } catch (e) {
+    // "No RPC answered" is not "this name doesn't resolve"; let callers say which.
+    if (isRpcUnavailable(e)) throw e;
     return null;
   }
+}
+
+function rpcUnavailableHtml(retryCall) {
+  return '<span style="color:var(--error-fg);">' + escapeHtml(RPC_UNAVAILABLE_MESSAGE) + '</span> ' +
+    '<a href="#" onclick="' + retryCall + ';return false;" style="color:inherit;">Retry</a>';
 }
 
 let transferPreviewDebounce = null;
@@ -5796,7 +6172,15 @@ function previewTransferRecipient() {
   transferPreviewDebounce = setTimeout(async () => {
     const thisVersion = ++transferPreviewVersion;
 
-    const result = await resolveRecipient(input);
+    let result;
+    try {
+      result = await resolveRecipient(input);
+    } catch (e) {
+      if (thisVersion !== transferPreviewVersion) return;
+      preview.innerHTML = rpcUnavailableHtml('previewTransferRecipient()');
+      preview.style.display = 'block';
+      return;
+    }
 
     // Ignore stale responses
     if (thisVersion !== transferPreviewVersion) return;
@@ -6590,7 +6974,14 @@ function previewSendRecipient() {
   clearTimeout(sendPreviewDebounce);
   sendPreviewDebounce = setTimeout(async () => {
     const thisVersion = ++sendPreviewVersion;
-    const result = await resolveRecipient(input);
+    let result;
+    try {
+      result = await resolveRecipient(input);
+    } catch (e) {
+      if (thisVersion !== sendPreviewVersion) return;
+      preview.innerHTML = rpcUnavailableHtml('previewSendRecipient()');
+      return;
+    }
     if (thisVersion !== sendPreviewVersion) return;
 
     if (result?.name) {
@@ -7078,6 +7469,15 @@ function parseTokenId(input) {
     if (/^\d+$/.test(s)) return BigInt(s);
   } catch {}
 
+  // Marketplace and explorer URLs (opensea.io/item/ethereum/<contract>/<id>, etherscan.io/nft/<contract>/<id>,
+  // etherscan.io/token/<contract>?a=<id>) put the token ID after the contract address, which must not
+  // be mistaken for it.
+  try {
+    const url = new URL(s);
+    const candidate = url.searchParams.get('a') || url.pathname.split('/').filter(Boolean).pop() || '';
+    if (/^\d+$/.test(candidate) || /^0x[0-9a-fA-F]+$/.test(candidate)) return BigInt(candidate);
+  } catch {}
+
   // Extract from URL - look for last numeric sequence or hex
   const hexMatch = s.match(/0x[0-9a-fA-F]+/);
   if (hexMatch) {
@@ -7190,7 +7590,9 @@ async function doVerifyNow() {
 
   } catch (e) {
     if (thisVersion !== verifyVersion) return;
-    result.innerHTML = `<span style="color:#c00;">Error: ${escapeHtml(e.message || 'Failed to fetch')}</span>`;
+    result.innerHTML = isRpcUnavailable(e)
+      ? rpcUnavailableHtml('doVerifyNow()')
+      : `<span style="color:#c00;">Error: ${escapeHtml(e.message || 'Failed to fetch')}</span>`;
   }
 }
 
@@ -7220,8 +7622,8 @@ try {
 function initFromHash() {
   const hash = window.location.hash.slice(1); // Remove #
   if (hash) {
-    let name = decodeURIComponent(hash);
-    if (name.endsWith('.gwei')) name = name.slice(0, -5);
+    let name = '';
+    try { name = stripGweiSuffix(decodeURIComponent(hash)); } catch (e) { name = ''; } // malformed escape: no name
     if (name) {
       $('nameInput').value = name;
       checkName();
@@ -7233,11 +7635,12 @@ function initFromHash() {
 function updateHash(name) {
   if (name) {
     history.replaceState(null, '', '#' + encodeURIComponent(name));
-    document.title = name + '.gwei - GNS';
+    pageTitle = name + '.gwei - GNS';
   } else {
     history.replaceState(null, '', window.location.pathname);
-    document.title = 'GNS';
+    pageTitle = PAGE_TITLE;
   }
+  applyPageTitle();
 }
 
 // Copy share link to clipboard
@@ -7254,6 +7657,8 @@ function copyShareLink() {
 
 // Init from hash on load
 initFromHash();
+// A name typed (or restored by the browser) before the scripts finished loading gets checked now.
+if (!window.location.hash && $('nameInput').value.trim()) checkName();
 
 // Listen for hash changes (back/forward navigation)
 window.addEventListener('hashchange', initFromHash);
@@ -7270,11 +7675,20 @@ console.log('GNS init:', {
 <!-- ─────────────────────────────────────────────────────────────────────────
      ES module: the ZKPassport request/verify lifecycle. Renders the QR,
      drives the status line, and hands the verifier params to zkSubmitClaim().
-     Imports the vendored SDK same-origin from /vendor/entry.js.
+     Imports the vendored SDK same-origin from /vendor/entry.js, on first use.
      ───────────────────────────────────────────────────────────────────────── -->
 <script type="module">
-import { ZKPassport } from "/vendor/entry.js";
-import QRCode from "https://esm.sh/qrcode@1.5.4";
+// The vendored SDK (~1 MB unpacked) and the QR encoder load the first time the zkpassport panel is
+// used, not on every visit. Opening the panel starts the download; the flow awaits it.
+let zkSdk = null;
+window.zkLoadSdk = () => {
+  if (!zkSdk) {
+    zkSdk = Promise.all([import("/vendor/entry.js"), import("https://esm.sh/qrcode@1.5.4")])
+      .then(([sdk, qr]) => ({ ZKPassport: sdk.ZKPassport, QRCode: qr.default }))
+      .catch((e) => { zkSdk = null; throw e; }); // let the next attempt retry
+  }
+  return zkSdk;
+};
 
 // Update the ZKPassport QR panel's status line (red on error). Defined on window
 // so the classic script can also drive it during the mint step.
@@ -7357,6 +7771,7 @@ const setStep = window.zkSetStep;
 
 // Render the deep-link as a QR code, revealing the panel.
 window.zkRenderQR = async (url) => {
+  const { QRCode } = await window.zkLoadSdk();
   const panel = document.getElementById("zkQrPanel");
   panel.classList.add("show");
   const canvas = document.getElementById("zkQrCanvas");
@@ -7383,6 +7798,7 @@ const renderQR = window.zkRenderQR;
 
 window.zkStartFlow = async (label) => {
   preloadVerifier(); // start fetching the ~3.5 MB verifier now so it overlaps the scan + proof generation
+  const { ZKPassport } = await window.zkLoadSdk();
   const account = window.connectedAddress; // checksummed 0x… set by the wallet code
   // devMode ↔ chain are coupled: mainnet verifies REAL passports (devMode false); Sepolia's verifier registry
   // only holds ZKR MOCK passports (devMode true). The request and getSolidityVerifierParameters MUST agree.
@@ -7431,6 +7847,6 @@ window.zkpReady = true;
 window.dispatchEvent(new Event("zkp-ready"));
 </script>
 
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015" integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ==" data-cf-beacon='{"version":"2024.11.0","token":"be57eb6251e840a591ab66afaffe7d83","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "be57eb6251e840a591ab66afaffe7d83"}'></script>
 </body>
 </html>
