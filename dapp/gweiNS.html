@@ -424,6 +424,20 @@ body.modal-open { overflow: hidden; }
   margin-bottom: 12px;
   font-size: 16px;
 }
+/* Edit profile */
+.manage-form textarea {
+  width: 100%; padding: 10px 0; margin-bottom: 12px; font-size: 16px; font-family: inherit; line-height: 1.4;
+  border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); outline: none; resize: vertical;
+}
+.manage-form textarea:focus { border-bottom-width: 2px; }
+.profile-hint { font-size: 11px; color: var(--fg-muted); line-height: 1.5; margin: -6px 0 14px; }
+.profile-hint a { color: inherit; }
+.profile-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted); margin: 22px 0 12px; }
+.profile-avatar-preview { display: none; width: 56px; height: 56px; object-fit: cover; margin: -4px 0 14px; background: var(--manage-bg); }
+.profile-color { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; }
+.profile-color label { margin: 0; text-transform: none; letter-spacing: normal; font-size: 13px; color: var(--fg); }
+.manage-form .profile-color input { width: auto; margin: 0; padding: 0; border: none; }
+.manage-form .profile-color input[type=color] { width: 44px; height: 28px; border: 1px solid var(--border-muted); background: none; cursor: pointer; }
 /* Set Website notice: a contenthash is shadowing this name's contentcontract record. */
 .website-switch {
   font-size: 11px;
@@ -5543,6 +5557,7 @@ let currentRenewFee = null;   // bigint getFee(label byte length), cached per na
 // calls for, and clearing needs to know which are actually populated.
 let currentHasContenthash = false;
 let currentContentContract = null; // { chainId, address } from the ERC-6821 contentcontract record
+let currentTextRecords = {};       // the current name's profile text records, for "Edit profile"
 let isProcessing = false; // Prevent double-click on manage actions
 
 function hideManage() {
@@ -5553,6 +5568,7 @@ function hideManage() {
   currentTokenName = null;
   currentExpiry = null;
   currentRenewFee = null;
+  currentTextRecords = {};
 }
 
 let manageVersion = 0;
@@ -5818,7 +5834,7 @@ async function showManage(tokenId, name) {
 
   try {
     // Common text record keys to display
-    const textKeys = ['url', 'email', 'description', 'com.twitter', 'com.github'];
+    const textKeys = PROFILE_KEYS;
 
     // Batch all reads into one RPC call (including text records). `contentcontract` rides along with
     // the text records but is shown as the website, not as a generic text row.
@@ -5843,6 +5859,7 @@ async function showManage(tokenId, name) {
       const val = results[5 + i]?.[0];
       if (val) textRecords[key] = val;
     });
+    currentTextRecords = textRecords;
 
     // Ignore stale results if user switched names
     if (thisManageVersion !== manageVersion) return;
@@ -5918,12 +5935,25 @@ async function showManage(tokenId, name) {
       const daysText = daysLeft > 0 ? ` (${daysLeft} days left)` : ' (expired)';
       infoHtml += `<div${expiryStyle}><span>Expires:</span>${expiryDate}${daysText}</div>`;
     }
+    // A name without a website has a profile page on the gateway.
+    if (GWEI_GATEWAY && !hasContenthash && !contentContract) {
+      const pageUrl = `https://${name}.${GWEI_GATEWAY}`;
+      infoHtml += `<div><span>Page:</span><a href="${pageUrl}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(pageUrl.replace('https://', ''))}</a></div>`;
+    }
     // Display text records
-    const textLabels = { url: 'URL', email: 'Email', description: 'Description', 'com.twitter': 'Twitter', 'com.github': 'GitHub' };
+    const textLabels = {
+      url: 'URL', email: 'Email', description: 'Description', 'com.twitter': 'Twitter', 'com.github': 'GitHub',
+      avatar: 'Avatar', display: 'Display name', 'org.telegram': 'Telegram', header: 'Banner',
+    };
     for (const [key, val] of Object.entries(textRecords)) {
       const label = textLabels[key] || key;
       const escaped = escapeHtml(val);
-      if (key === 'url') {
+      if (key === GWEI_PAGE_KEY) {
+        infoHtml += '<div><span>Page style:</span>set</div>';
+      } else if (key === 'avatar' || key === 'header') {
+        const short = val.length > 48 ? val.slice(0, 30) + '…' + val.slice(-12) : val;
+        infoHtml += `<div><span>${label}:</span><span style="font-family:monospace;font-size:11px;">${escapeHtml(short)}</span></div>`;
+      } else if (key === 'url') {
         const href = val.startsWith('http') ? val : 'https://' + val;
         infoHtml += `<div><span>${label}:</span><a href="${escapeHtml(href)}" target="_blank" rel="noopener" style="color:inherit;">${escaped}</a></div>`;
       } else if (key === 'com.twitter') {
@@ -5940,6 +5970,7 @@ async function showManage(tokenId, name) {
     // Build actions if owner
     if (isOwner) {
       let actionsHtml = `
+        <button onclick="showManageForm('profile')">Edit Profile</button>
         <button onclick="showManageForm('transfer')">Transfer</button>
         <button onclick="showManageForm('setAddr')">Set Recipient</button>
         <button onclick="showManageForm('setContent')">Set Website</button>
@@ -5996,11 +6027,195 @@ function websiteSwitchNote() {
         </div>`;
 }
 
+// ── Edit profile ──
+// The records a name's page (<name>.gwei.domains, while no website is set) and other apps read. Standard
+// ENS keys, plus `gwei-page`: a small JSON object with the page's accent colour and extra links.
+const PROFILE_FIELDS = [
+  { key: 'avatar', label: 'Avatar', placeholder: 'https://…, ipfs://… or eip155:1/erc721:0x…/id' },
+  { key: 'display', label: 'Display name', placeholder: 'Alice' },
+  { key: 'description', label: 'Bio', placeholder: 'A sentence or two about you', multiline: true },
+  { key: 'url', label: 'Website', placeholder: 'example.com' },
+  { key: 'com.twitter', label: 'X', placeholder: 'handle' },
+  { key: 'com.github', label: 'GitHub', placeholder: 'handle' },
+  { key: 'org.telegram', label: 'Telegram', placeholder: 'handle' },
+  { key: 'email', label: 'Email', placeholder: 'you@example.com' },
+  { key: 'header', label: 'Banner image', placeholder: 'wide image: https://…, ipfs://… or NFT', page: true },
+];
+const GWEI_PAGE_KEY = 'gwei-page';
+const PROFILE_KEYS = [...PROFILE_FIELDS.map((f) => f.key), GWEI_PAGE_KEY];
+const PROFILE_MAX_LINKS = 8;
+const profileFieldId = (key) => 'pf-' + key.replace(/[^a-z0-9]/gi, '-');
+
+// Parse the `gwei-page` record, keeping any properties this page doesn't know about.
+function parseGweiPage(value) {
+  try {
+    const raw = JSON.parse(value || '');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+  } catch (e) {}
+  return {};
+}
+// The new `gwei-page` value ('' clears it): the existing object with colour and links replaced in
+// place, so an unchanged record serializes the same way.
+function buildGweiPage(existing, color, linksText) {
+  const page = { ...parseGweiPage(existing) };
+  if (/^#[0-9a-f]{6}$/i.test(color || '')) page.color = color.toLowerCase();
+  else delete page.color;
+  const links = String(linksText || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, PROFILE_MAX_LINKS);
+  if (links.length) page.links = links;
+  else delete page.links;
+  return Object.keys(page).length ? JSON.stringify(page) : '';
+}
+// [key, value] pairs that differ from what's on-chain ('' means clear). `gwei-page` is compared by
+// content, so spacing or key order alone never costs a transaction.
+const sortKeys = (v) => Array.isArray(v) ? v.map(sortKeys)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v;
+function profileChanges(current, next) {
+  const canonical = (value) => JSON.stringify(sortKeys(parseGweiPage(value)));
+  const same = (key) => key === GWEI_PAGE_KEY
+    ? canonical(next[key]) === canonical(current[key])
+    : (next[key] || '') === (current[key] || '');
+  return Object.keys(next).filter((key) => !same(key)).map((key) => [key, next[key] || '']);
+}
+const isImageRef = (v) => !v || /^(https?:\/\/|ipfs:\/\/|data:image\/)/i.test(v) || /^eip155:1\/(erc721|erc1155):0x[0-9a-f]{40}\/\d+$/i.test(v);
+function profileImagePreview(value) {
+  const v = (value || '').trim();
+  const ipfs = /^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]{46,100}(?:\/\S*)?)$/.exec(v);
+  if (ipfs) return 'https://ipfs.filebase.io/ipfs/' + ipfs[1];
+  return /^(https:\/\/|data:image\/)/i.test(v) ? v : null;
+}
+
+function readProfileForm() {
+  const next = {};
+  for (const f of PROFILE_FIELDS) {
+    let v = ($(profileFieldId(f.key))?.value || '').trim();
+    if (f.key === 'com.twitter' || f.key === 'org.telegram' || f.key === 'com.github') v = v.replace(/^@/, '');
+    next[f.key] = v;
+  }
+  const color = $('pfColorOn')?.checked ? $('pfColor').value : '';
+  next[GWEI_PAGE_KEY] = buildGweiPage(currentTextRecords[GWEI_PAGE_KEY], color, $('pfLinks')?.value);
+  return next;
+}
+function previewProfileAvatar() {
+  const img = $('pfAvatarPreview');
+  if (!img) return;
+  const src = profileImagePreview($(profileFieldId('avatar'))?.value);
+  img.style.display = src ? 'block' : 'none';
+  if (src) img.src = src; else img.removeAttribute('src');
+}
+function updateProfileCost() {
+  const el = $('pfCost');
+  if (!el) return;
+  const n = profileChanges(currentTextRecords, readProfileForm()).length;
+  el.textContent = n === 0 ? 'No changes yet.'
+    : n === 1 ? 'Saves 1 record in one transaction.'
+    : `Saves ${n} records: one confirmation if your wallet can bundle calls, otherwise ${n} transactions.`;
+}
+
+// EIP-5792: wallets that bundle calls (smart accounts, EIP-7702 upgraded accounts) save every change
+// in one confirmation. Returns false when the wallet can't, so the caller sends them one by one.
+async function sendRecordBatch(calls) {
+  const wallet = connectedWalletProvider;
+  if (!wallet?.request || calls.length < 2) return false;
+  const chainHex = '0x' + CHAIN_ID.toString(16);
+  try {
+    const caps = await wallet.request({ method: 'wallet_getCapabilities', params: [connectedAddress, [chainHex]] });
+    const chainCaps = caps?.[chainHex] || caps?.[CHAIN_ID] || {};
+    const atomic = chainCaps.atomic?.status || (chainCaps.atomicBatch?.supported ? 'supported' : null);
+    if (atomic !== 'supported' && atomic !== 'ready') return false;
+  } catch (e) {
+    return false;
+  }
+  const sent = await wcTransaction(wallet.request({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: chainHex, from: connectedAddress, atomicRequired: true, calls }],
+  }), 'Approve the profile update');
+  const id = typeof sent === 'string' ? sent : sent?.id;
+  if (!id) throw new Error('The wallet did not return a batch id');
+  showStatus('Waiting for confirmation...', '');
+  const deadline = Date.now() + 180000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const status = await wallet.request({ method: 'wallet_getCallsStatus', params: [id] }).catch(() => null);
+    const code = status?.status;
+    if (code === 200 || code === 'CONFIRMED') {
+      if (status.receipts?.some((r) => r.status === '0x0' || r.status === 0)) throw new Error('The profile update reverted');
+      return true;
+    }
+    if ((typeof code === 'number' && code >= 400) || code === 'FAILED') throw new Error('The wallet reported that the profile update failed');
+  }
+  throw new Error('Timed out waiting for the profile update to confirm');
+}
+
+async function doSaveProfile() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const next = readProfileForm();
+  for (const key of ['avatar', 'header']) {
+    if (!isImageRef(next[key])) { showStatus(`${key === 'avatar' ? 'Avatar' : 'Banner'}: use an https:// or ipfs:// image URL, or an NFT (eip155:1/erc721:0x…/id)`, 'error'); return; }
+  }
+  if (next.email && !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(next.email)) { showStatus('That email address looks wrong', 'error'); return; }
+  const changes = profileChanges(currentTextRecords, next);
+  if (!changes.length) { showStatus('Nothing to save: no fields changed', ''); return; }
+
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const calls = changes.map(([key, value]) => ({ to: CONTRACT, data: contract.interface.encodeFunctionData('setText', [currentTokenId, key, value]) }));
+    if (!(await sendRecordBatch(calls))) {
+      for (let i = 0; i < changes.length; i++) {
+        const [key, value] = changes[i];
+        const label = PROFILE_FIELDS.find((f) => f.key === key)?.label || 'Page style';
+        showStatus(changes.length > 1 ? `Saving ${i + 1} of ${changes.length}: ${label}...` : `Saving ${label}...`, '');
+        const tx = await wcTransaction(contract.setText(currentTokenId, key, value), `Approve ${label} (${i + 1} of ${changes.length})`);
+        showStatus('Waiting for confirmation...', '', tx.hash);
+        await waitForTx(tx);
+      }
+    }
+    showStatus('Profile saved!', 'success');
+    doCheckName(); // refresh Manage with the new records
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+function profileFormHtml() {
+  const r = currentTextRecords || {};
+  const page = parseGweiPage(r[GWEI_PAGE_KEY]);
+  const color = /^#[0-9a-f]{6}$/i.test(page.color || '') ? page.color : '';
+  const field = (f) => {
+    const id = profileFieldId(f.key);
+    const value = escapeHtml(r[f.key] || '');
+    const input = f.multiline
+      ? `<textarea id="${id}" rows="2" placeholder="${escapeHtml(f.placeholder)}">${value}</textarea>`
+      : `<input type="text" id="${id}" value="${value}" placeholder="${escapeHtml(f.placeholder)}" autocapitalize="off" autocorrect="off" spellcheck="false"${f.key === 'avatar' ? ' oninput="previewProfileAvatar()"' : ''}>`;
+    return `<label for="${id}">${f.label}</label>${input}` + (f.key === 'avatar' ? '<img id="pfAvatarPreview" class="profile-avatar-preview" alt="">' : '');
+  };
+  const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
+  return (pageUrl
+    ? `<div class="profile-hint">Shown on <a href="${pageUrl}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a> while no website is set, and readable by other apps. Leave a field empty to clear it.</div>`
+    : '<div class="profile-hint">Readable by other apps. Leave a field empty to clear it.</div>') +
+    PROFILE_FIELDS.filter((f) => !f.page).map(field).join('') +
+    '<div class="profile-section">Page style</div>' +
+    `<div class="profile-color"><input type="checkbox" id="pfColorOn"${color ? ' checked' : ''}><label for="pfColorOn">Accent color</label>` +
+    `<input type="color" id="pfColor" value="${color || '#175640'}" aria-label="Accent color" oninput="$('pfColorOn').checked = true"></div>` +
+    `<label for="pfLinks">Links (one per line, up to ${PROFILE_MAX_LINKS})</label>` +
+    `<textarea id="pfLinks" rows="3" placeholder="warpcast.com/you">${escapeHtml(Array.isArray(page.links) ? page.links.join('\n') : '')}</textarea>` +
+    PROFILE_FIELDS.filter((f) => f.page).map(field).join('') +
+    '<div class="profile-hint" id="pfCost" aria-live="polite"></div>' +
+    '<button onclick="doSaveProfile()">Save Profile</button>' +
+    `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>`;
+}
+
 function showManageForm(action) {
   const form = $('manageForm');
   let html = '';
 
   switch (action) {
+    case 'profile':
+      html = profileFormHtml();
+      break;
     case 'transfer':
       html = `
         <label>Recipient</label>
@@ -6068,7 +6283,10 @@ function showManageForm(action) {
 
   form.innerHTML = html;
   form.classList.add('show');
+  form.oninput = action === 'profile' ? updateProfileCost : null;
+  form.onchange = action === 'profile' ? updateProfileCost : null;
   if (action === 'renew') previewRenew();
+  if (action === 'profile') { previewProfileAvatar(); updateProfileCost(); }
 }
 
 // Read and normalize the years input to 1..25. Keep the visible value in sync

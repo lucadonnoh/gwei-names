@@ -2479,3 +2479,48 @@ test('mainnet reads have three independent RPC endpoints to fail over between', 
   const hosts = context.networks.ethereum.rpc.map((url) => new URL(url).host);
   assert.equal(new Set(hosts).size, 3);
 });
+
+function profileEditorHarness() {
+  const start = html.indexOf('const PROFILE_FIELDS = [');
+  const end = html.indexOf('function readProfileForm()', start);
+  assert.notEqual(start, -1, 'profile editor helpers must exist');
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, end) + `
+    globalThis.api = { PROFILE_KEYS, parseGweiPage, buildGweiPage, profileChanges, isImageRef, profileImagePreview };`, context);
+  return context.api;
+}
+
+test('profile editor: gwei-page keeps unknown properties, and only changed records are saved', () => {
+  const api = profileEditorHarness();
+  assert.deepEqual([...api.PROFILE_KEYS], ['avatar', 'display', 'description', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email', 'header', 'gwei-page']);
+  assert.equal(api.buildGweiPage('', '#175640', 'a.example\n\n b.example '), '{"color":"#175640","links":["a.example","b.example"]}');
+  assert.equal(api.buildGweiPage('{"color":"#000000","theme":"x"}', '', ''), '{"theme":"x"}', 'unknown properties survive');
+  assert.equal(api.buildGweiPage('{"color":"#000000"}', 'red', ''), '', 'an invalid colour clears it; empty means clear the record');
+  assert.equal(JSON.parse(api.buildGweiPage('', '', Array.from({ length: 12 }, (_, i) => `${i}.example`).join('\n'))).links.length, 8);
+  assert.deepEqual(JSON.parse(JSON.stringify(api.profileChanges({ avatar: 'a', url: 'x.example' }, { avatar: 'a', url: '', display: 'Alice' }))),
+    [['url', ''], ['display', 'Alice']]);
+  const stored = '{"color":"#402370","links":["a.example"],"theme":"x"}';
+  assert.equal(api.buildGweiPage(stored, '#402370', 'a.example'), stored, 'an unchanged record serializes identically');
+  assert.equal(api.profileChanges({ 'gwei-page': '{ "links": ["a.example"], "color": "#402370" }' },
+    { 'gwei-page': '{"color":"#402370","links":["a.example"]}' }).length, 0, 'compared by content');
+});
+
+test('profile editor: image references and previews', () => {
+  const api = profileEditorHarness();
+  for (const ok of ['', 'https://img.example/a.png', 'ipfs://bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644', 'eip155:1/erc721:0xaa6612f03443517ced2bdcf27958c22353ceeab9/8977']) {
+    assert.equal(api.isImageRef(ok), true, ok);
+  }
+  assert.equal(api.isImageRef('javascript:alert(1)'), false);
+  assert.equal(api.profileImagePreview('ipfs://bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/a.png'),
+    'https://ipfs.filebase.io/ipfs/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/a.png');
+  assert.equal(api.profileImagePreview('eip155:1/erc721:0xaa6612f03443517ced2bdcf27958c22353ceeab9/1'), null, 'NFTs are shown on the page, not previewed');
+});
+
+test('profile editor: one bundled confirmation via EIP-5792 when the wallet supports it, else one transaction per record', () => {
+  assert.match(html, /showManageForm\('profile'\)">Edit Profile<\/button>/);
+  assert.match(html, /method: 'wallet_getCapabilities'/);
+  assert.match(html, /method: 'wallet_sendCalls',\s*params: \[\{ version: '2\.0\.0', chainId: chainHex, from: connectedAddress, atomicRequired: true, calls \}\]/);
+  assert.match(html, /method: 'wallet_getCallsStatus'/);
+  assert.match(html, /if \(!\(await sendRecordBatch\(calls\)\)\) \{\s*for \(let i = 0; i < changes\.length; i\+\+\)/);
+  assert.match(html, /const textKeys = PROFILE_KEYS;/, 'Manage reads every profile record');
+});
