@@ -18,10 +18,18 @@ test('service failures fail over immediately and enter cooldown',async()=>{
  const start=Date.now();assert.ok(await pool(endpoints,'/ipfs/one'));assert.ok(Date.now()-start<200);
  calls.length=0;assert.ok(await pool(endpoints,'/ipfs/two'));assert.deepEqual(calls,[endpoints[1]+'/ipfs/two']);
 });
-test('missing content does not mark an otherwise healthy gateway offline',async()=>{
+test('missing content is a 404 and does not mark an otherwise healthy gateway offline',async()=>{
  let missing=true;const calls=[];const pool=createGatewayPool({fetchImpl:async url=>{calls.push(url);return new Response('x',{status:missing?404:200});}});
- assert.equal(await pool(endpoints,'/ipfs/missing'),null);missing=false;calls.length=0;
+ assert.equal((await pool(endpoints,'/ipfs/missing')).status,404);missing=false;calls.length=0;
  assert.ok(await pool(endpoints,'/ipfs/available'));assert.equal(calls[0],endpoints[0]+'/ipfs/available');
+});
+test('a 404 loses to a gateway that has the content, and to outages only when one gateway said 404',async()=>{
+ const pool=createGatewayPool({hedgeMs:5,fetchImpl:async url=>new Response('found',{status:url.startsWith(endpoints[0])?404:200})});
+ assert.equal(await (await pool(endpoints,'/ipfs/one')).text(),'found');
+ const down=createGatewayPool({hedgeMs:5,fetchImpl:async url=>new Response('x',{status:url.startsWith(endpoints[0])?404:503})});
+ assert.equal((await down(endpoints,'/ipfs/two')).status,404);
+ const outage=createGatewayPool({hedgeMs:5,fetchImpl:async()=>new Response('x',{status:429})});
+ assert.equal(await outage(endpoints,'/ipfs/three'),null);
 });
 test('all hung gateways finish within a bounded deadline even if fetch ignores abort',async()=>{
  const pool=createGatewayPool({hedgeMs:5,timeoutMs:35,fetchImpl:()=>new Promise(()=>{})});const start=Date.now();

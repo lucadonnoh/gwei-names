@@ -19,5 +19,16 @@ type = "durable-object"
 storage = "sqlite"
 
 [vars]
-# The same IPFS/IPNS retrieval path applies to every GNS name and CID.
-IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.io","https://dweb.link"]'
+# The same IPFS/IPNS retrieval path applies to every GNS name and CID. Filebase is the public gateway
+# that still answers Worker traffic. ipfs.io and dweb.link are left out: they rate-limit Cloudflare's
+# shared egress (429 on every request in October 2026), so they never served content and would make
+# the daily health check fail every day.
+IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.filebase.io"]'
+
+# Daily endpoint health check (the `scheduled` handler in worker.js).
+[triggers]
+crons = ["17 6 * * *"]
+
+# Keep Workers Logs, so rpc_failed, resolve_stale and endpoint_health events can be read after the fact.
+[observability]
+enabled = true

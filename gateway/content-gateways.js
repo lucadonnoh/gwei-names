@@ -7,7 +7,9 @@ export function createGatewayPool({ fetchImpl = (...args) => fetch(...args), tim
     const healthy = unique.filter(url => (unhealthyUntil.get(url) || 0) <= now);
     const candidates = healthy.length ? healthy : unique.slice().sort((a, b) => unhealthyUntil.get(a) - unhealthyUntil.get(b)).slice(0, 1);
     return new Promise(resolve => {
-      let next = 0, active = 0, finished = false, hedge;
+      // A 404 from a gateway that answered is a definitive "no such file". It only wins if no other
+      // gateway has the content, and it is reported as a bare 404 instead of an outage.
+      let next = 0, active = 0, finished = false, notFound = false, hedge;
       const controllers = new Set();
       function done(response, winner) {
         if (finished) { void response?.body?.cancel().catch(() => {}); return; }
@@ -18,7 +20,7 @@ export function createGatewayPool({ fetchImpl = (...args) => fetch(...args), tim
       function launch() {
         clearTimeout(hedge);
         if (finished) return;
-        if (next === candidates.length) { if (!active) done(null); return; }
+        if (next === candidates.length) { if (!active) done(notFound ? new Response(null, { status: 404 }) : null); return; }
         const endpoint = candidates[next++], controller = new AbortController();
         controllers.add(controller); active++;
         if (next < candidates.length) hedge = setTimeout(launch, hedgeMs);
@@ -41,6 +43,7 @@ export function createGatewayPool({ fetchImpl = (...args) => fetch(...args), tim
               unhealthyUntil.delete(endpoint);
               done(upstream, controller);
             } else {
+              if (upstream.status === 404 || upstream.status === 410) notFound = true;
               if (upstream.status === 429 || upstream.status >= 500) unhealthyUntil.set(endpoint, Date.now() + cooldownMs);
               void upstream.body?.cancel().catch(() => {});
             }

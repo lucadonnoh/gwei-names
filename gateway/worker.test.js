@@ -7,10 +7,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from './worker.js';
+import worker, { checkEndpoints } from './worker.js';
 import {
+  RPCS,
   RPC_PAGE_TIMEOUT_MS,
   RPC_TIMEOUT_MS,
+  SEPOLIA_RPCS,
   rpcEndpointConfig,
 } from './rpc-config.js';
 import { RpcPool } from './rpc-pool.js';
@@ -1123,4 +1125,94 @@ test('immutable IPFS cache survives upstream outages while name changes select a
  cache.advance(301);changed=true;
  const updated=await invoke('https://cached.gwei.domains/',{cache,fetchMock,env:{...env}});
  assert.equal(updated.status,504,'must not serve old CID after the name record changes');
+});
+
+// ---- QOL: redirects, 404s, self-retrying errors, registration hint, last known site, health ------
+
+test('plain HTTP is redirected to HTTPS, path and query kept', async () => {
+  const fetchMock = makeFetch({ rpc: () => 'SHOULD NOT BE CALLED' });
+  const res = await invoke('http://donnoh.gwei.domains/a/b?c=1', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 301);
+  assert.equal(res.headers.get('location'), 'https://donnoh.gwei.domains/a/b?c=1');
+  assert.equal(fetchMock.calls.rpc, 0);
+});
+
+test('a page missing from the site is a 404, not the outage page', async () => {
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('no link named "nope"', { status: 404 }) });
+  const res = await invoke('https://donnoh.gwei.domains/nope', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /doesn't exist on <b>donnoh\.gwei<\/b>/);
+});
+
+test('transient error pages retry themselves and are never cached', async () => {
+  const fetchMock = makeFetch({ rpc: () => null }); // every endpoint answers garbage → RPC failure
+  const res = await invoke('https://donnoh.gwei.domains/', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 502);
+  assert.match(res.headers.get('cache-control'), /no-store/);
+  assert.equal(res.headers.get('retry-after'), '2');
+  const html = await res.text();
+  assert.match(html, /Resolution failed \(RPC\)/);
+  assert.match(html, /location\.reload\(\)/);
+  assert.match(html, /t\.length>=3/, 'bounded to three retries a minute');
+
+  const down = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('x', { status: 502 }) });
+  const fetchFailed = await invoke('https://donnoh.gwei.domains/', { cache: makeCache(), fetchMock: down });
+  assert.equal(fetchFailed.status, 504);
+  assert.match(await fetchFailed.text(), /location\.reload\(\)/);
+});
+
+test('the no-website page tells an unregistered name from one without a site, and links to it', async () => {
+  const resolveWord = (owner) => (data) => data.startsWith('0x4f896d4f') ? '0x' + pad32(owner) : rpcReturning(CH_NONE)(data);
+  let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: resolveWord('0') }) });
+  assert.equal(res.status, 404);
+  let html = await res.text();
+  assert.match(html, /isn't registered, or has expired/);
+  assert.match(html, /href="https:\/\/gwei\.domains\/#nobody">register it/);
+
+  res = await invoke('https://xn--ls8h.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: resolveWord('deadbeef') }) });
+  html = await res.text();
+  assert.match(html, /has no website set/);
+  assert.match(html, /href="https:\/\/gwei\.domains\/#%F0%9F%92%A9">set one/);
+});
+
+test('when a fresh lookup fails, the last known site is served', async () => {
+  const cache = makeCache();
+  let rpcUp = true;
+  const fetchMock = makeFetch({
+    rpc: (data) => (rpcUp ? rpcReturning(CH_IPFS)(data) : null),
+    ipfs: () => new Response('<h1>donnoh</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  });
+  assert.equal((await invoke('https://donnoh.gwei.domains/', { cache, fetchMock })).status, 200);
+
+  rpcUp = false;
+  cache.advance(3600); // past the 5-minute resolution entry, within the 7-day last-known entry
+  const res = await invoke('https://donnoh.gwei.domains/other', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>donnoh</h1>');
+  assert.ok(fetchMock.calls.ipfsUrls.at(-1).includes(DONNOH_CID));
+
+  cache.advance(8 * 86400); // past the last-known entry too
+  assert.equal((await invoke('https://donnoh.gwei.domains/', { cache, fetchMock })).status, 502);
+});
+
+test('the daily health check reports each endpoint that no longer answers', async () => {
+  const original = globalThis.fetch;
+  const logged = [];
+  const originalError = console.error;
+  console.error = (line) => logged.push(line);
+  globalThis.fetch = async (url) => {
+    if (url.includes('blastapi')) return new Response('{"error":"rate limit exceeded"}', { status: 429 });
+    if (url.includes('dweb.link')) throw new Error('connection reset');
+    if (url.includes('/ipfs/bafkqaaa')) return new Response('');
+    return new Response('{"jsonrpc":"2.0","id":1,"result":"0x1909b77"}');
+  };
+  try {
+    const summary = await checkEndpoints({ IPFS_GATEWAYS: '["https://node.example","https://dweb.link"]' });
+    assert.deepEqual(summary.failures, ['eth-mainnet.public.blastapi.io: HTTP 429', 'dweb.link: connection reset']);
+    assert.equal(summary.checked, RPCS.length + SEPOLIA_RPCS.length + 2);
+    assert.match(logged[0], /endpoint_health/);
+  } finally {
+    globalThis.fetch = original;
+    console.error = originalError;
+  }
 });

@@ -12,7 +12,7 @@
 
 import { createGatewayPool, configuredGateways } from './content-gateways.js';
 
-import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN } from './rpc-config.js';
+import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN, rpcEndpointConfig } from './rpc-config.js';
 import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
@@ -46,6 +46,9 @@ const RESERVED = {
 // shows up sooner. Transient RPC/upstream failures are never cached.
 const RESOLVE_TTL = 300;     // name → content reference (seconds)
 const RESOLVE_NEG_TTL = 60;  // name → "none"/"unsupported" (seconds)
+// The last successful website lookup per name is kept much longer and only used when a fresh
+// lookup fails, so an RPC outage serves a name's last known site instead of an error page.
+const RESOLVE_LKG_TTL = 7 * 86400;
 const IPFS_CACHE_TTL = 86400; // Immutable content can remain at the edge through upstream outages.
 const CONTENT_TTL = 300;     // proxied content (seconds)
 // resolveMode() is `pure` on every contract we've seen, so its answer is effectively immutable and
@@ -59,6 +62,7 @@ const SEL_TEXT = '308e3386'; // text(uint256,string)
 const SEL_RESOLVEMODE = 'dd473fae'; // resolveMode()
 const SEL_REQUEST = '1374c460'; // request(string[],(string,string)[])
 const SEL_HTML = '33c34ac3'; // html(), the getter single-file site contracts expose
+const SEL_RESOLVE = '4f896d4f'; // resolve(uint256): zero unless the name is registered and active
 const CONTENTCONTRACT = 'contentcontract'; // ERC-6821 text record key
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
@@ -466,11 +470,20 @@ function page(title, body, status, cache = 'public, max-age=60') {
   );
 }
 
-function busyPage(title) {
-  const response = page(title, '<p>The gateway is busy. Please retry shortly.</p>', 503, 'no-store');
+// Transient failures (RPC, a busy broker, unreachable storage) usually clear within seconds, so these
+// pages reload themselves up to three times a minute instead of leaving the visitor to refresh.
+const RETRY_SCRIPT = '<script>(()=>{try{const k="gwei-retry:"+location.href,now=Date.now(),' +
+  't=JSON.parse(sessionStorage.getItem(k)||"[]").filter((x)=>now-x<60000);if(t.length>=3)return;' +
+  't.push(now);sessionStorage.setItem(k,JSON.stringify(t));' +
+  'document.body.insertAdjacentHTML("beforeend","<p>Retrying automatically…</p>");' +
+  'setTimeout(()=>location.reload(),1000+t.length*1500)}catch(_){}})()</script>';
+function transientPage(title, message, status) {
+  const response = page(title, `<p>${message}</p>${RETRY_SCRIPT}`, status, 'no-store');
   response.headers.set('retry-after', '2');
   return response;
 }
+const busyPage = (title) => transientPage(title, 'The gateway is busy. Please retry shortly.', 503);
+const rpcFailedPage = (title) => transientPage(title, 'Resolution failed (RPC).', 502);
 
 // Parse an ERC-6821 `contentcontract` record: either an ERC-3770 chain-specific address
 // ("eth:0x…", "sep:0x…") or a bare address, which ERC-6821 reads as mainnet. Anything else — an
@@ -501,7 +514,46 @@ async function resolveName(name, route, cache, ctx) {
     try { return await cached.json(); } catch (_) {}
   }
 
-  // Transient RPC failures aren't cached, so a retry recovers.
+  // Transient RPC failures aren't cached, so a retry recovers. Meanwhile the last known site serves.
+  const lkgKey = new Request(`${CACHE_BASE}/resolve-lkg/${encodeURIComponent(name)}`);
+  const lastKnown = async () => {
+    const hit = await cache.match(lkgKey);
+    if (!hit) return null;
+    try {
+      const value = await hit.json();
+      console.log(JSON.stringify({ event: 'resolve_stale', name }));
+      return value;
+    } catch (_) {
+      return null;
+    }
+  };
+  let result;
+  try {
+    result = await lookupName(name, route);
+  } catch (error) {
+    if (error instanceof RpcOverloadedError) {
+      const stale = await lastKnown();
+      if (stale) return stale;
+    }
+    throw error;
+  }
+  if (result.error) return (await lastKnown()) || result;
+
+  const ttl = result.kind ? RESOLVE_TTL : RESOLVE_NEG_TTL;
+  const store = (request, maxAge) => ctx.waitUntil(
+    cache.put(
+      request,
+      new Response(JSON.stringify(result), {
+        headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${maxAge}` },
+      }),
+    ).catch(() => {}),
+  );
+  store(key, ttl);
+  if (result.kind) store(lkgKey, RESOLVE_LKG_TTL);
+  return result;
+}
+
+async function lookupName(name, route) {
   const idRes = await ethCall(1, NAMENFT, encodeString(SEL_COMPUTEID, name), route);
   if (!idRes) return { error: 'rpc' };
   const tokenIdHex = idRes.slice(2);
@@ -525,6 +577,14 @@ async function resolveName(name, route, cache, ctx) {
     const ccRes = await ethCall(1, NAMENFT, encodeTextCall(tokenIdHex, CONTENTCONTRACT), route);
     if (!ccRes) return { error: 'rpc' };
     result = parseContentContract(readText(ccRes.slice(2), word(ccRes.slice(2), 0))) || { state: 'none' };
+    // Only the "no website" page uses this, to tell an unregistered name from one without a site. If
+    // the lookup fails, the page just doesn't say which.
+    if (result.state === 'none') {
+      try {
+        const owner = await ethCall(1, NAMENFT, '0x' + SEL_RESOLVE + tokenIdHex, route);
+        if (owner) result.registered = BigInt(owner) !== 0n;
+      } catch (_) {}
+    }
   } else {
     const chHex = b.slice(128, 128 + len * 2);
     if (chHex.startsWith('e301')) {
@@ -539,15 +599,6 @@ async function resolveName(name, route, cache, ctx) {
     }
   }
 
-  const ttl = result.kind ? RESOLVE_TTL : RESOLVE_NEG_TTL;
-  ctx.waitUntil(
-    cache.put(
-      key,
-      new Response(JSON.stringify(result), {
-        headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl}` },
-      }),
-    ).catch(() => {}),
-  );
   return result;
 }
 
@@ -588,7 +639,7 @@ async function resolveMode(chainId, address, route, cache, ctx) {
 async function serveWeb3(ref, name, url, cache, ctx, route) {
   const chain = CHAINS[ref.chainId];
   if (!chain) return page(name, '<p>This name points to a contract on an unsupported chain.</p>', 415);
-  const rpcFailed = () => page(name, '<p>Resolution failed (RPC).</p>', 502, 'no-store');
+  const rpcFailed = () => rpcFailedPage(name);
 
   const mode = await resolveMode(ref.chainId, ref.address, route, cache, ctx);
   if (!mode) return rpcFailed();
@@ -725,6 +776,12 @@ export default {
     const host = url.hostname.toLowerCase();
     const route = rpcRoute(request, env);
 
+    // Name sites are only served over HTTPS; HSTS covers repeat visits, this covers the first one.
+    if (url.protocol === 'http:') {
+      url.protocol = 'https:';
+      return Response.redirect(url.toString(), 301);
+    }
+
     // Only subdomains of gwei.domains; the apex (the dapp) is routed elsewhere.
     if (!host.endsWith('.gwei.domains')) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
     const sub = host.slice(0, -'.gwei.domains'.length); // "donnoh", "diff", "a.b", …
@@ -751,9 +808,12 @@ export default {
       if (error instanceof RpcOverloadedError) return busyPage(name);
       throw error;
     }
-    if (r.error) return page('gwei gateway', '<p>Resolution failed (RPC).</p>', 502, 'no-store');
+    if (r.error) return rpcFailedPage('gwei gateway');
     if (r.state === 'none') {
-      return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains">set one →</a></p>`, 404);
+      const dapp = `https://gwei.domains/#${encodeURIComponent(decodedSub)}`;
+      return page(name, r.registered === false
+        ? `<p><b>${escapeHtml(name)}</b> isn't registered, or has expired.</p><p><a href="${dapp}">register it →</a></p>`
+        : `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="${dapp}">set one →</a></p>`, 404);
     }
     if (r.state === 'unsupported') {
       return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);
@@ -800,6 +860,9 @@ export default {
     const upstream = await retrieveContent(gateways, `${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
       accept: request.headers.get('accept') || '*/*',
     });
+    if (upstream?.status === 404) {
+      return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
+    }
     if (upstream) {
       const headers = harden(new Headers(upstream.headers));
       if (r.kind === 'swarm') headers.delete('content-disposition');
@@ -818,6 +881,45 @@ export default {
       }
       return resp;
     }
-    return page(name, '<p>Content is set but couldn’t be fetched right now.</p>', 504, 'no-store');
+    return transientPage(name, 'Content is set but couldn’t be fetched right now.', 504);
+  },
+
+  // Daily check that every RPC and IPFS endpoint still answers Worker traffic. Public endpoints fail
+  // silently (the October 2026 RPC outage was only noticed by visitors), so failures are logged at
+  // error level, where Workers Logs keeps them.
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(checkEndpoints(env));
   },
 };
+
+async function probe(url, init) {
+  const host = new URL(url).host;
+  try {
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+    const text = await response.text();
+    if (!response.ok) return `${host}: HTTP ${response.status}`;
+    if (init?.method === 'POST' && !/"result"\s*:\s*"0x[0-9a-f]+"/i.test(text)) return `${host}: ${text.slice(0, 100)}`;
+    return null;
+  } catch (error) {
+    return `${host}: ${error?.name === 'TimeoutError' ? 'timeout' : String(error?.message || error).slice(0, 100)}`;
+  }
+}
+
+export async function checkEndpoints(env) {
+  const rpc = (url) => probe(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}',
+  });
+  const checks = [
+    ...Object.keys(CHAINS).flatMap((id) => rpcEndpointConfig(Number(id), env).endpoints.map((url) => ['rpc', url, rpc(url)])),
+    // bafkqaaa is the empty identity CID: any gateway answers it without fetching content, so this
+    // tests whether the gateway accepts our traffic, not whether a particular site is retrievable.
+    ...configuredGateways(env.IPFS_GATEWAYS, IPFS_GATEWAYS).map((url) => ['ipfs', url, probe(`${url}/ipfs/bafkqaaa`)]),
+  ];
+  const failures = (await Promise.all(checks.map(([, , result]) => result))).filter(Boolean);
+  const summary = { event: 'endpoint_health', checked: checks.length, failures };
+  if (failures.length) console.error(JSON.stringify(summary));
+  else console.log(JSON.stringify(summary));
+  return summary;
+}

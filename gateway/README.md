@@ -38,8 +38,20 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **`diff.gwei.domains`** is a real service, not a gwei name, so the worker proxies it straight
   through to the Railway diff site (`RESERVED` in `worker.js`). Add more reserved subdomains there
   if you stand up other services under `gwei.domains`.
-- Names with no `contenthash` and no usable `contentcontract` record return a friendly 404 linking
-  to the dapp.
+- Names with no `contenthash` and no usable `contentcontract` record return a friendly 404. It says
+  whether the name is unregistered (or expired) or just has no website, and links to the name in the
+  dapp (`https://gwei.domains/#<name>`).
+- Name sites are HTTPS-only: plain HTTP requests get a 301 to the same URL over HTTPS.
+- Transient failures (RPC lookups, a busy broker, storage gateways that don't answer) return
+  uncached error pages that reload themselves up to three times a minute.
+- **Last known site.** Each successful website lookup is also kept for 7 days and used only when a
+  fresh lookup fails, so an RPC outage serves the name's last known site (logged as
+  `resolve_stale`) instead of an error page. A name repointed during an outage can serve its
+  previous site until RPC recovers.
+- **Health check.** A daily cron (`scheduled` in `worker.js`) probes every RPC endpoint and IPFS
+  gateway from the Worker and logs an `endpoint_health` event, at error level when any fails.
+  Workers Logs is enabled in `wrangler.toml`, so these and `rpc_failed` events can be read later in
+  the dashboard. Public endpoints tend to start rejecting Worker traffic without notice.
 - The NameNFT address lives at the top of `worker.js`; chain and endpoint pools live in
   `rpc-config.js`. A dedicated mainnet endpoint can be configured with
   `npx wrangler secret put RPC_URL`. It remains preferred while healthy, with the public pool as
@@ -54,7 +66,10 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **web3:// sites.** `contenthash` wins when a name has both records, so nothing that works today
   changes. Chains a `contentcontract` record may name live in the `CHAINS` table in `rpc-config.js`
   (mainnet and Sepolia); adding one is a single entry. The gateway reads `resolveMode()` and serves
-  ERC-6944 resource-request (`"5219"`) and manual mode; auto mode returns 415. Contract-supplied
+  auto mode (ERC-6860 method calls, `returns` JSON and ERC-7087 `mime.*` attributes, in
+  `web3-auto.js`), manual mode and ERC-6944 resource-request (`"5219"`). In auto mode the root is a
+  call with empty calldata; when that reverts or returns nothing, the gateway tries `html()` once
+  (a gwei.domains addition outside ERC-6860, marked `x-web3-auto-fallback: html()`). Contract-supplied
   headers pass an allowlist, so a contract cannot set `set-cookie` or weaken the security headers on
   a name's origin. Chunked (`web3-next-chunk`) responses are refused with a 501 rather than served
   truncated. Contract cache directives are capped to the 5-minute name-resolution window, and cached
@@ -74,7 +89,9 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 300 ms if needed. HTTP failures advance immediately. Each attempt has an 8-second
 header deadline; losing requests are cancelled. Network errors, 429 and 5xx
 responses temporarily cool down an upstream for 30 seconds. A 404 only misses
-that content, and does not mark the gateway unhealthy. When every gateway is
+that content, and does not mark the gateway unhealthy; if no gateway has the
+file and at least one answered 404, visitors get a 404 page rather than the
+"couldn't be fetched" outage page. When every gateway is
 cooling down, one is probed so recovery can be detected. Response bodies stream.
 Immutable IPFS content is retained in the edge cache for up to one day, subject
 to cache eviction. Browser caching remains five minutes, and name records are
@@ -93,8 +110,10 @@ Kubo admin API. Its CSP sandboxes direct browser visits so arbitrary IPFS HTML
 cannot access the transport host's app storage. GNS applies its existing security
 headers on the isolated per-name origin. No tunnel or Kubo restart was needed.
 
-Public fallbacks are ipfs.io and dweb.link. They share an operator and are
-opportunistic backups, not independent uptime guarantees. Storacha w3s.link was
+The public fallback is Filebase. ipfs.io and dweb.link (the code's built-in
+defaults when `IPFS_GATEWAYS` is unset) are not configured in production: from
+Cloudflare's shared egress they answered every request with 429 in October 2026.
+Filebase is an opportunistic backup, not an uptime guarantee. Storacha w3s.link was
 also tested but redirects this content to dweb.link, so it was not added as a
 falsely independent backup.
 The gateway list supports independent managed origins when configured; none was
