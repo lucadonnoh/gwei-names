@@ -149,15 +149,16 @@ function profileRows(profile) {
 
 // --- generative avatar ----------------------------------------------------------------------------
 // For names without an avatar record: a symmetric 7x7 pixel mark (the site's pixel "G" look) on one of
-// the dapp's share-card backgrounds (gradient, glow, faint dots). The name's token ID is the seed, so a
+// the dapp's share-card background gradients with their faint dots (the cards' glow is left out: at
+// avatar size it reads as a smudge). The name's token ID is the seed, so a
 // name always gets the same one. The page embeds it as SVG; link previews get the same image as a PNG,
 // since X and others don't render SVG.
 const AVATAR_PALETTES = [ // SHARE_BGS in dapp/gweiNS.html
-  { a: '#161616', b: '#050505', glow: null },
-  { a: '#244577', b: '#0a1626', glow: [95, 155, 240, 0.32] },
-  { a: '#175640', b: '#081b11', glow: [55, 205, 125, 0.30] },
-  { a: '#402370', b: '#110a22', glow: [160, 100, 245, 0.32] },
-  { a: '#732430', b: '#18090a', glow: [245, 100, 100, 0.32] },
+  { a: '#161616', b: '#050505' },
+  { a: '#244577', b: '#0a1626' },
+  { a: '#175640', b: '#081b11' },
+  { a: '#402370', b: '#110a22' },
+  { a: '#732430', b: '#18090a' },
 ];
 const AVATAR_GRID = 7, AVATAR_CELL = 16, AVATAR_SIZE = 160, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
 function avatarModel(seedHex) {
@@ -183,13 +184,10 @@ function avatarModel(seedHex) {
 
 export function avatarSvg(seedHex) {
   const { palette: p, cells } = avatarModel(seedHex);
-  const glow = p.glow ? `rgb(${p.glow.slice(0, 3).join(',')})` : null;
   return `<svg class="avatar" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${AVATAR_SIZE} ${AVATAR_SIZE}" shape-rendering="crispEdges" role="img" aria-label="generated avatar">` +
     `<defs><linearGradient id="av-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${p.a}"/><stop offset="1" stop-color="${p.b}"/></linearGradient>` +
-    (glow ? `<radialGradient id="av-glow" cx="0.72" cy="0.35" r="0.55"><stop offset="0" stop-color="${glow}" stop-opacity="${p.glow[3]}"/><stop offset="1" stop-color="${glow}" stop-opacity="0"/></radialGradient>` : '') +
     '<pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-bg)"/>` +
-    (glow ? `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-glow)"/>` : '') +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-dots)"/>` +
     cells.map(([x, y]) => `<rect x="${AVATAR_OFFSET + x * AVATAR_CELL}" y="${AVATAR_OFFSET + y * AVATAR_CELL}" width="${AVATAR_CELL}" height="${AVATAR_CELL}" fill="#fff" fill-opacity="0.92"/>`).join('') +
     '</svg>';
@@ -234,10 +232,6 @@ export async function avatarPng(seedHex, size = 256) {
       const t = (x + y) / (2 * (size - 1));
       const c = [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t);
       const mix = (target, alpha) => { for (let i = 0; i < 3; i++) c[i] += (target[i] - c[i]) * alpha; };
-      if (p.glow) {
-        const d = Math.hypot(x / size - 0.72, y / size - 0.35) / 0.55;
-        if (d < 1) mix(p.glow, p.glow[3] * (1 - d));
-      }
       const ux = x / scale, uy = y / scale;
       if (ux % 16 >= 7 && ux % 16 < 9 && uy % 16 >= 7 && uy % 16 < 9) mix([255, 255, 255], 0.06);
       const cx = Math.floor((ux - AVATAR_OFFSET) / AVATAR_CELL), cy = Math.floor((uy - AVATAR_OFFSET) / AVATAR_CELL);
