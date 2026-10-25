@@ -6033,7 +6033,7 @@ async function showManage(tokenId, name) {
     // Display text records
     const textLabels = {
       url: 'URL', email: 'Email', description: 'Description', 'com.twitter': 'Twitter', 'com.github': 'GitHub',
-      avatar: 'Avatar', display: 'Display name', 'org.telegram': 'Telegram', header: 'Banner',
+      avatar: 'Avatar', display: 'Display name', 'org.telegram': 'Telegram', 'org.signal': 'Signal', header: 'Banner',
     };
     for (const [key, val] of Object.entries(textRecords)) {
       const label = textLabels[key] || key;
@@ -6129,12 +6129,15 @@ const PROFILE_FIELDS = [
   { key: 'com.twitter', label: 'X', placeholder: 'handle' },
   { key: 'com.github', label: 'GitHub', placeholder: 'handle' },
   { key: 'org.telegram', label: 'Telegram', placeholder: 'handle' },
+  { key: 'org.signal', label: 'Signal username', placeholder: 'name.01' },
   { key: 'email', label: 'Email', placeholder: 'you@example.com' },
   { key: 'header', label: 'Banner image', placeholder: 'wide image: https://…, ipfs://… or NFT', page: true },
 ];
 const GWEI_PAGE_KEY = 'gwei-page';
 const PROFILE_KEYS = [...PROFILE_FIELDS.map((f) => f.key), GWEI_PAGE_KEY];
 const PROFILE_MAX_LINKS = 8;
+// Signal usernames: 3-32 letters, digits or _ (not starting with a digit), a dot, then two or more digits.
+const SIGNAL_USERNAME = /^[a-z_][a-z0-9_]{2,31}\.(?!00$)(?:\d{2}|[1-9]\d{2,8})$/i;
 const profileFieldId = (key) => 'pf-' + key.replace(/[^a-z0-9]/gi, '-');
 
 // Parse the `gwei-page` record, keeping any properties this page doesn't know about.
@@ -6179,7 +6182,7 @@ function readProfileForm() {
   const next = {};
   for (const f of PROFILE_FIELDS) {
     let v = ($(profileFieldId(f.key))?.value || '').trim();
-    if (f.key === 'com.twitter' || f.key === 'org.telegram' || f.key === 'com.github') v = v.replace(/^@/, '');
+    if (f.key === 'com.twitter' || f.key === 'org.telegram' || f.key === 'com.github' || f.key === 'org.signal') v = v.replace(/^@/, '');
     next[f.key] = v;
   }
   const color = $('pfColorOn')?.checked ? $('pfColor').value : '';
@@ -6245,6 +6248,7 @@ async function doSaveProfile() {
     if (!isImageRef(next[key])) { showStatus(`${key === 'avatar' ? 'Avatar' : 'Banner'}: use an https:// or ipfs:// image URL, or an NFT (eip155:1/erc721:0x…/id)`, 'error'); return; }
   }
   if (next.email && !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(next.email)) { showStatus('That email address looks wrong', 'error'); return; }
+  if (next['org.signal'] && !SIGNAL_USERNAME.test(next['org.signal'])) { showStatus('A Signal username looks like name.01: letters, digits or _, a dot, then its digits', 'error'); return; }
   const changes = profileChanges(currentTextRecords, next);
   if (!changes.length) { showStatus('Nothing to save: no fields changed', ''); return; }
 

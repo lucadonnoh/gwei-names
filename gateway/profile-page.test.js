@@ -56,10 +56,16 @@ test('the profile page escapes records and only links to safe URLs', () => {
       'com.twitter': 'https://x.com/alice_',
       'com.github': 'alice',
       'org.telegram': 'bad',
+      'org.signal': '@alice_.42',
       email: 'alice@example.com',
     },
   }));
   const html = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: 'https://alice.gwei.domains/', profile });
+  assert.match(html, /<span>Signal<\/span>alice_\.42</, 'a Signal username is shown as text');
+  for (const bad of ['alice', 'al.42', '1alice.42', 'alice.4', 'alice.00', 'alice.042', 'ali-ce.42', 'alice.42<b>']) {
+    const p = profileFromResults(results({ text: { 'org.signal': bad } }));
+    assert.doesNotMatch(renderProfile({ name: 'a.gwei', dappHash: 'a', pageUrl: 'https://a.gwei.limo/', profile: p }), /<span>Signal</, bad);
+  }
   assert.doesNotMatch(html.replace(`<script>${THEME_SCRIPT}</script>`, ''), /<script/i, 'no script but the pinned theme switch');
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt; &amp; co/);
   assert.match(html, /Alice &lt;b&gt;/);

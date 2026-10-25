@@ -2535,7 +2535,7 @@ function profileEditorHarness() {
 
 test('profile editor: gwei-page keeps unknown properties, and only changed records are saved', () => {
   const api = profileEditorHarness();
-  assert.deepEqual([...api.PROFILE_KEYS], ['avatar', 'display', 'description', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email', 'header', 'gwei-page']);
+  assert.deepEqual([...api.PROFILE_KEYS], ['avatar', 'display', 'description', 'url', 'com.twitter', 'com.github', 'org.telegram', 'org.signal', 'email', 'header', 'gwei-page']);
   assert.equal(api.buildGweiPage('', '#175640', 'a.example\n\n b.example '), '{"color":"#175640","links":["a.example","b.example"]}');
   assert.equal(api.buildGweiPage('{"color":"#000000","theme":"x"}', '', ''), '{"theme":"x"}', 'unknown properties survive');
   assert.equal(api.buildGweiPage('{"color":"#000000"}', 'red', ''), '', 'an invalid colour clears it; empty means clear the record');
@@ -2855,4 +2855,16 @@ test('name sites are linked under the short gwei.limo domain', () => {
   // Every <name>.gwei.domains link goes through GWEI_GATEWAY now; only the diff service is left.
   const left = [...html.matchAll(/[a-z0-9-]+\.gwei\.domains/gi)].map((m) => m[0].toLowerCase());
   assert.deepEqual([...new Set(left)], ['diff.gwei.domains']);
+});
+
+test('the Signal username field accepts only Signal-shaped usernames', () => {
+  const start = html.indexOf('const SIGNAL_USERNAME');
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, html.indexOf('\n', start)) + '\nglobalThis.re = SIGNAL_USERNAME;', context);
+  for (const ok of ['alice.01', 'Alice_.42', '_bob.123', 'a_b.999999999', 'x'.repeat(32) + '.10']) assert.ok(context.re.test(ok), ok);
+  for (const bad of ['alice', 'al.42', '1alice.42', 'alice.4', 'alice.00', 'alice.042', 'ali-ce.42', 'alice.1234567890', 'x'.repeat(33) + '.10', 'alice.42 ']) {
+    assert.ok(!context.re.test(bad), bad);
+  }
+  assert.match(html, /\{ key: 'org\.signal', label: 'Signal username', placeholder: 'name\.01' \}/);
+  assert.match(html, /next\['org\.signal'\] && !SIGNAL_USERNAME\.test\(next\['org\.signal'\]\)/, 'saving checks it');
 });

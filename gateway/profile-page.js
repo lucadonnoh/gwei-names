@@ -9,7 +9,7 @@ const SEL_AGGREGATE3 = '82ad56cb'; // aggregate3((address,bool,bytes)[])
 // ENS text-record keys shown on the page, in display order after the name.
 // `header` is the ENS banner-image key; `gwei-page` is this page's own record: a small JSON object
 // with an accent `color` and a `links` list (set from the dapp's profile editor).
-export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'email', 'header', 'gwei-page'];
+export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'org.signal', 'email', 'header', 'gwei-page'];
 
 const pad32 = (h) => h.padStart(64, '0');
 export const escapeHtml = (s) =>
@@ -168,6 +168,9 @@ function profileRows(profile) {
   if (gh) rows.push(['GitHub', `<a href="https://github.com/${gh}" rel="nofollow ugc noopener">${gh}</a>`]);
   const tg = handle(t['org.telegram'], /^[A-Za-z0-9_]{5,32}$/);
   if (tg) rows.push(['Telegram', `<a href="https://t.me/${tg}" rel="nofollow ugc noopener">@${tg}</a>`]);
+  // A Signal username can't be turned into a link (Signal's links are random), so it's shown as text.
+  const signal = handle(t['org.signal'], /^[a-z_][a-z0-9_]{2,31}\.(?!00$)(?:\d{2}|[1-9]\d{2,8})$/i);
+  if (signal) rows.push(['Signal', signal]);
   const email = (t.email || '').trim();
   if (/^[^\s@<>"']{1,64}@[^\s@<>"']{1,190}\.[a-z]{2,}$/i.test(email)) rows.push(['Email', `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>`]);
   return rows;
