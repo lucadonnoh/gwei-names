@@ -6,6 +6,9 @@ COPY dapp/guide.html /www/guide/index.html
 COPY dapp/vendor /www/vendor
 # busybox httpd has no built-in type for .mjs, and browsers refuse a module served without one.
 COPY dapp/httpd.conf /etc/httpd.conf
+# The commit being served, at /version.txt, so a deploy can be verified (Railway passes this build arg).
+ARG RAILWAY_GIT_COMMIT_SHA=unknown
+RUN printf '%s\n' "$RAILWAY_GIT_COMMIT_SHA" > /www/version.txt
 COPY dapp/favicon.ico /www/favicon.ico
 COPY dapp/apple-touch-icon.png /www/apple-touch-icon.png
 COPY dapp/icon-192.png /www/icon-192.png

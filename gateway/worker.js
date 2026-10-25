@@ -577,6 +577,8 @@ async function handleApi(request, url, env, ctx) {
 
 async function answerApi(request, url, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: API_HEADERS });
+  // The commit this Worker was deployed from (CI passes it as GIT_COMMIT), so a deploy can be verified.
+  if (url.pathname === '/api/version') return apiJson({ commit: env.GIT_COMMIT || null });
   const index = postIndex(env);
   if (!index) return apiJson({ error: 'Posts are not enabled on this gateway.' }, 503);
   const path = url.pathname.replace(/\/+$/, '');

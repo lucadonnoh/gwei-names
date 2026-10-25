@@ -556,6 +556,15 @@ test('the gwei.limo apex redirects to the dapp, keeping the path; its /api/ is n
   }
 });
 
+test('/api/version reports the deployed commit, uncached, with or without posts', async () => {
+  for (const env of [{ GIT_COMMIT: 'abc123' }, {}]) {
+    const res = await invoke('https://gwei.domains/api/version', { cache: makeCache(), fetchMock: makeFetch({}), env });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await res.json(), { commit: env.GIT_COMMIT || null });
+  }
+});
+
 test('cache expiry: after TTL the name is re-resolved', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('v', { status: 200 }) });

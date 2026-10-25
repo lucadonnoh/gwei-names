@@ -1,0 +1,92 @@
+# Deploys production after CI passes on main: the gateway Worker (wrangler) and the dapp (Railway),
+# both from the same commit, then waits until gwei.domains serves that commit everywhere and
+# smoke-tests the live pages. A failure here is a failed run (GitHub emails it) and an ntfy alert.
+#
+# Production never runs code that main doesn't have: deploys only happen from main's tip, and an
+# older run that finishes after a newer push skips itself.
+#
+# Secrets, in the `production` environment (only jobs on main can read them):
+#   CLOUDFLARE_API_TOKEN  Workers Scripts edit + Workers Routes edit on gwei.domains and gwei.limo
+#   RAILWAY_TOKEN         project token for gwei-names / production
+#   NTFY_URL, NTFY_TOKEN  optional: topic URL and publish token for failure alerts
+# Variable: CLOUDFLARE_ACCOUNT_ID.
+# A part whose secret is missing is skipped with a warning (and not verified).
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - name: Only main's tip deploys
+        id: tip
+        run: |
+          tip=$(git ls-remote "https://github.com/${{ github.repository }}" refs/heads/main | cut -f1)
+          if [ "$tip" != "$SHA" ]; then
+            echo "::notice::main is at $tip now; its own run deploys it, not $SHA"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.tip.outputs.skip != '1'
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.tip.outputs.skip != '1'
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
+
+      - name: Deploy the gateway
+        id: gateway
+        if: steps.tip.outputs.skip != '1'
+        working-directory: gateway
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::CLOUDFLARE_API_TOKEN is not set: the gateway was not deployed"; exit 0; fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx wrangler deploy --message "$(git log -1 --format='%h %s' | cut -c1-100)" --var "GIT_COMMIT:$SHA"
+          echo "parts=--gateway" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the dapp
+        id: dapp
+        if: steps.tip.outputs.skip != '1'
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then echo "::warning::RAILWAY_TOKEN is not set: the dapp was not deployed"; exit 0; fi
+          node scripts/railway-deploy.mjs "$SHA"
+          echo "parts=--dapp" >> "$GITHUB_OUTPUT"
+
+      - name: Verify production serves this commit
+        if: steps.tip.outputs.skip != '1' && (steps.gateway.outputs.parts || steps.dapp.outputs.parts)
+        run: node scripts/verify-deploy.mjs "$SHA" ${{ steps.gateway.outputs.parts }} ${{ steps.dapp.outputs.parts }}
+
+      - name: Alert on failure
+        if: failure()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        run: |
+          [ -n "$NTFY_URL" ] && [ -n "$NTFY_TOKEN" ] || exit 0
+          curl -fsS -A gwei-names-deploy -H "Authorization: Bearer $NTFY_TOKEN" -H "Title: gwei.domains deploy failed" -H "Tags: warning" \
+            -d "Commit ${SHA:0:7}: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" "$NTFY_URL"
