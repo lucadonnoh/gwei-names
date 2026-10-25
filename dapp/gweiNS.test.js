@@ -2890,3 +2890,14 @@ test('the Signal username field accepts only Signal-shaped usernames', () => {
   assert.match(html, /\{ key: 'org\.signal', label: 'Signal username', placeholder: 'name\.01' \}/);
   assert.match(html, /next\['org\.signal'\] && !SIGNAL_USERNAME\.test\(next\['org\.signal'\]\)/, 'saving checks it');
 });
+
+test('the page is Ethereum only, even for a visitor who once picked Sepolia', () => {
+  const start = html.indexOf("const NET_STORAGE_KEY = 'gwei_network';");
+  const end = html.indexOf('const ACTIVE_NET', start);
+  const store = new Map([['gwei_network', 'sepolia']]);
+  const context = vm.createContext({ localStorage: { getItem: (k) => store.get(k) ?? null, removeItem: (k) => store.delete(k) } });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.picked = pickActiveNetwork();', context);
+  assert.equal(context.picked, 'ethereum');
+  assert.equal(store.has('gwei_network'), false, 'the old choice is cleared');
+  assert.doesNotMatch(html, /id="netBar"|setActiveNetwork|net-pill/, 'no network picker left');
+});

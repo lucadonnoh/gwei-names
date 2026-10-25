@@ -514,7 +514,7 @@ body.modal-open { overflow: hidden; }
   body { padding: 80px 16px 100px; }
   .wallet { top: 16px; right: 16px; }
   .wallet button { padding: 10px 14px; font-size: 11px; }
-  h1 { margin-bottom: 40px; font-size: 13px; }
+  h1 { font-size: 13px; }
   input { font-size: 20px; padding: 14px 0; }
   .suffix { font-size: 20px; bottom: 14px; }
   button { padding: 14px 20px; font-size: 11px; width: 100%; margin-right: 0; }
@@ -792,10 +792,6 @@ body.vote-dock-open { padding-bottom: 104px; }
 }
 .stats-loading { text-align: center; font-size: 12px; color: var(--fg-muted); letter-spacing: 0.04em; padding: 22px 0; animation: statsPulse 1.4s ease-in-out infinite; }
 @keyframes statsPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
-.net-bar { display: flex; gap: 6px; justify-content: center; margin: -8px 0 20px; }
-.net-pill { font: inherit; font-size: 11px; letter-spacing: 0.04em; min-height: 24px; padding: 3px 11px; border: 1px solid var(--border-muted); background: var(--bg); color: var(--fg); border-radius: 999px; cursor: pointer; }
-.net-pill.active { border-color: var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); }
-.net-pill.disabled { opacity: 0.35; cursor: not-allowed; }
 :root {
   --bg:#fff;--fg:#000;--fg-muted:#666;--fg-dim:#999;
   --border:#000;--border-muted:#ddd;
@@ -1017,8 +1013,6 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <h1>gwei name service</h1>
 <div class="subtitle">The ownerless and unruggable ENS alternative on Ethereum</div>
-
-<div id="netBar" class="net-bar"></div>
 
 <div class="section">
   <label for="nameInput">Name</label>
@@ -2041,13 +2035,11 @@ const NETWORKS = {
   }
 };
 const NET_STORAGE_KEY = 'gwei_network';
+// The page is Ethereum only. Sepolia's configuration stays above for development and tests; a visitor
+// who once picked it (the choice used to be kept here) is back on mainnet.
 function pickActiveNetwork() {
-  let key = null;
-  try { key = localStorage.getItem(NET_STORAGE_KEY); } catch (e) {}
-  if (!key || !NETWORKS[key] || !NETWORKS[key].enabled) {
-    key = Object.keys(NETWORKS).find(k => NETWORKS[k].enabled) || 'sepolia';
-  }
-  return key;
+  try { localStorage.removeItem(NET_STORAGE_KEY); } catch (e) {}
+  return 'ethereum';
 }
 const ACTIVE_NET = pickActiveNetwork();
 const NET = NETWORKS[ACTIVE_NET];
@@ -2082,23 +2074,6 @@ function postsEnabled() {
   return CHAIN_ID === 1 && /^0x[0-9a-fA-F]{40}$/.test(POSTS_CONTRACT) && /^0x[0-9a-fA-F]{40}$/.test(POSTS_PUBLISHER);
 }
 
-function setActiveNetwork(key) {
-  if (!NETWORKS[key] || !NETWORKS[key].enabled || key === ACTIVE_NET) return;
-  try { localStorage.setItem(NET_STORAGE_KEY, key); } catch (e) {}
-  location.reload();
-}
-function renderNetBar() {
-  const bar = document.getElementById('netBar');
-  if (!bar) return;
-  bar.innerHTML = Object.values(NETWORKS).map(n => {
-    const active = n.key === ACTIVE_NET;
-    const cls = 'net-pill' + (active ? ' active' : '') + (n.enabled ? '' : ' disabled');
-    const tag = !n.enabled ? ' · soon' : (n.chainId !== 1 ? ' · testnet' : '');
-    const attr = !n.enabled ? ' disabled' : (active ? '' : ` onclick="setActiveNetwork('${n.key}')"`);
-    return `<button class="${cls}"${attr}>${n.label}${tag}</button>`;
-  }).join('');
-}
-renderNetBar();
 // The Ethereum send modes (standard and SLOW) are mainnet-only.
 if (NET.chainId !== 1) {
   const _d = document.getElementById('sendDest');
