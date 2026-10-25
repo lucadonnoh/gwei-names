@@ -531,6 +531,31 @@ test('apex gwei.domains is not treated as a name', async () => {
   assert.match(await res.text(), /Not a gwei name/);
 });
 
+test('gwei.limo serves the same name sites as gwei.domains', async () => {
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('<h1>donnoh</h1>', { status: 200, headers: { 'content-type': 'text/html' } }) });
+  const res = await invoke('https://donnoh.gwei.limo/', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>donnoh</h1>');
+  assert.equal(res.headers.get('x-gwei-name'), 'donnoh.gwei');
+  assert.equal(res.headers.get('x-ipfs-cid'), DONNOH_CID);
+  assert.ok(res.headers.get('content-security-policy') || res.headers.get('x-frame-options'), 'hardened like any name site');
+
+  const reserved = makeFetch({ reserved: () => new Response('railway-app', { status: 200 }) });
+  assert.equal(await (await invoke('https://diff.gwei.limo/x', { cache: makeCache(), fetchMock: reserved })).text(), 'railway-app');
+  assert.equal((await invoke('https://evil.gwei.limo.example/', { cache: makeCache(), fetchMock: makeFetch({}) })).status, 404);
+});
+
+test('the gwei.limo apex redirects to the dapp, keeping the path; its /api/ is not served', async () => {
+  for (const [from, to] of [['https://gwei.limo/', 'https://gwei.domains/'], ['https://gwei.limo/guide/?x=1', 'https://gwei.domains/guide/?x=1'],
+    ['https://gwei.limo/api/posts/recent', 'https://gwei.domains/api/posts/recent']]) {
+    const fetchMock = makeFetch({});
+    const res = await invoke(from, { cache: makeCache(), fetchMock });
+    assert.equal(res.status, 302, from);
+    assert.equal(res.headers.get('location'), to);
+    assert.equal(fetchMock.calls.rpc, 0);
+  }
+});
+
 test('cache expiry: after TTL the name is re-resolved', async () => {
   const cache = makeCache();
   const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('v', { status: 200 }) });

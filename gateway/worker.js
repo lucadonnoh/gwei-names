@@ -1,4 +1,4 @@
-// gwei.domains gateway — a Cloudflare Worker that turns `<name>.gwei.domains` into the website
+// gwei.domains gateway — a Cloudflare Worker that turns `<name>.gwei.domains` (or `<name>.gwei.limo`) into the website
 // stored at that name's on-chain records.
 //
 // For each request it: reads the label from the Host, asks the NameNFT contract for the name's
@@ -42,6 +42,10 @@ const PROTOCOLS = {
   ipns: { gateways: IPFS_GATEWAYS, prefix: '/ipns/', header: 'x-ipns-name' },
   swarm: { gateways: SWARM_GATEWAYS, prefix: '/bzz/', header: 'x-swarm-reference' },
 };
+// Name sites live under each of these (<name>.gwei.domains and the shorter <name>.gwei.limo). The
+// dapp and /api/* are on gwei.domains; the gwei.limo apex redirects there.
+const DAPP_HOST = 'gwei.domains';
+const NAME_DOMAINS = [DAPP_HOST, 'gwei.limo'];
 // Subdomains that are real services, not gwei names — proxied through so the wildcard route
 // doesn't shadow them.
 const RESERVED = {
@@ -1029,10 +1033,13 @@ export default {
     }
 
     // The apex is the dapp; only its /api/* routes reach this Worker.
-    if (host === 'gwei.domains' && url.pathname.startsWith('/api/')) return handleApi(request, url, env, ctx);
-    // Otherwise only subdomains of gwei.domains.
-    if (!host.endsWith('.gwei.domains')) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
-    const sub = host.slice(0, -'.gwei.domains'.length); // "donnoh", "diff", "a.b", …
+    if (host === DAPP_HOST && url.pathname.startsWith('/api/')) return handleApi(request, url, env, ctx);
+    // Other apexes send visitors to the dapp, path and all (a #name fragment survives a redirect).
+    if (host !== DAPP_HOST && NAME_DOMAINS.includes(host)) return Response.redirect(`https://${DAPP_HOST}${url.pathname}${url.search}`, 302);
+    // Otherwise only subdomains of a name domain.
+    const base = NAME_DOMAINS.find((domain) => host.endsWith('.' + domain));
+    if (!base) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
+    const sub = host.slice(0, -(base.length + 1)); // "donnoh", "diff", "a.b", …
     if (!sub) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
 
     // Reserved service subdomains: transparently proxy to their real origin (no caching/hardening).

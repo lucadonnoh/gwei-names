@@ -350,15 +350,16 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.theme-toggle .sun,:root.dark .theme-toggle .moon{display:none}:root.dark .theme-toggle .sun{display:block}' +
   '@media (prefers-color-scheme:dark){:root:not(.light) .theme-toggle .moon{display:none}:root:not(.light) .theme-toggle .sun{display:block}}';
 
-// The visitor's theme choice is one cookie on gwei.domains, shared by the dapp and every name page.
+// The visitor's theme choice is one cookie per site (gwei.domains, shared by the dapp and every name
+// page there, or gwei.limo): the cookie's domain is the last two labels of the page's host.
 // This is the only script these pages run; the CSP allows exactly this text, by hash.
 export const THEME_SCRIPT = "(()=>{const r=document.documentElement,m=document.cookie.match(/(?:^|; )gwei-theme=(dark|light)/);" +
   "r.classList.add('js');if(m)r.classList.add(m[1]);document.addEventListener('click',(e)=>{" +
   "if(!e.target.closest||!e.target.closest('.theme-toggle'))return;" +
   "const dark=r.classList.contains('dark')||(!r.classList.contains('light')&&matchMedia('(prefers-color-scheme:dark)').matches),next=dark?'light':'dark';" +
   "r.classList.remove('dark','light');r.classList.add(next);" +
-  "document.cookie='gwei-theme='+next+';domain=gwei.domains;path=/;max-age=31536000;samesite=lax;secure'})})()";
-export const THEME_SCRIPT_HASH = "'sha256-dxlP3npe0Va4W5wE17PadXXMxWUrgG+QGfh4JLNtB8Q='";
+  "document.cookie='gwei-theme='+next+';domain='+location.hostname.split('.').slice(-2).join('.')+';path=/;max-age=31536000;samesite=lax;secure'})})()";
+export const THEME_SCRIPT_HASH = "'sha256-QSbCQDQ4kljhA7vttnh5J+kRtdviwGQcubS+uAk0zO0='";
 const THEME_TOGGLE = '<button class="theme-toggle" type="button" title="Switch light or dark" aria-label="Switch light or dark mode">' +
   '<svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>' +
   '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>' +

@@ -33,6 +33,10 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 
 3. **Test:** open a name that has a website set, e.g. `https://donnoh.gwei.domains/`.
 
+4. **gwei.limo** serves the same sites under a shorter domain (`https://donnoh.gwei.limo/`); its
+   apex redirects to `gwei.domains`. In the `gwei.limo` zone add two records, both `AAAA` `100::`,
+   **Proxied**: one named `*` and one named `@` (the apex). The routes are in `wrangler.toml`.
+
 ## Notes
 
 - **`diff.gwei.domains`** is a real service, not a gwei name, so the worker proxies it straight

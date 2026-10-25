@@ -188,7 +188,20 @@ test('the theme switch: one hash-pinned script, shared cookie, system theme by d
   assert.match(html, /<button class="theme-toggle" type="button"/);
   assert.match(html, /:root\.dark\{--bg:#0a0a0a/);
   assert.match(html, /@media \(prefers-color-scheme:dark\)\{:root:not\(\.light\)\{--bg:#0a0a0a/);
-  assert.match(THEME_SCRIPT, /domain=gwei\.domains;path=\/;max-age=31536000;samesite=lax;secure/);
+  // The cookie goes on the page's own site: gwei.domains (shared with the dapp) or gwei.limo.
+  const { runInNewContext } = await import('node:vm');
+  for (const [hostname, domain] of [['donnoh.gwei.domains', 'gwei.domains'], ['donnoh.gwei.limo', 'gwei.limo'], ['a.b.gwei.limo', 'gwei.limo']]) {
+    let click;
+    const classes = new Set();
+    const document = {
+      cookie: '',
+      documentElement: { classList: { add: (...c) => c.forEach((x) => classes.add(x)), remove: (...c) => c.forEach((x) => classes.delete(x)), contains: (c) => classes.has(c) } },
+      addEventListener: (type, fn) => { click = fn; },
+    };
+    runInNewContext(THEME_SCRIPT, { document, location: { hostname }, matchMedia: () => ({ matches: false }) });
+    click({ target: { closest: () => ({}) } });
+    assert.equal(document.cookie, `gwei-theme=dark;domain=${domain};path=/;max-age=31536000;samesite=lax;secure`, hostname);
+  }
 });
 
 test('name pages use the name’s avatar as their favicon', async () => {

@@ -10,6 +10,10 @@ routes = [
   { pattern = "*.gwei.domains/*", zone_name = "gwei.domains" },
   # The posts API (posts/SPEC.md) lives on the dapp's own origin; every other apex path stays with the dapp.
   { pattern = "gwei.domains/api/*", zone_name = "gwei.domains" },
+  # gwei.limo: the same name sites under a shorter domain; its apex redirects to gwei.domains.
+  # Needs proxied DNS records for both * and the apex (see README.md).
+  { pattern = "*.gwei.limo/*", zone_name = "gwei.limo" },
+  { pattern = "gwei.limo/*", zone_name = "gwei.limo" },
 ]
 
 [[durable_objects.bindings]]
