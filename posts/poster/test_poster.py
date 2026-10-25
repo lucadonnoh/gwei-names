@@ -265,7 +265,8 @@ class Griefing(unittest.TestCase):
     def setUp(self):
         FakeApi.requests = []
         self.api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeApi)
-        threading.Thread(target=self.api.serve_forever, daemon=True).start()
+        # shutdown() waits out serve_forever's poll interval: half a second per test at the default.
+        threading.Thread(target=self.api.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.signer = gp.Signer(os.urandom(32))
         self.chain = FakeChain(self.signer.address)
         self.alerts = []

@@ -741,6 +741,8 @@ body.modal-open { overflow: hidden; }
 .int-power-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-power-row span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted); }
 .int-list { display: flex; flex-direction: column; gap: 12px; }
+/* A screen's height until the script draws the cards (always taller), so the footer doesn't start in view and jump away */
+.int-list:empty { min-height: 100vh; }
 .int-card { background: var(--surface); border: 1px solid var(--border-muted); padding: 16px 18px; transition: border-color 0.15s ease, transform 0.28s ease; }
 .int-card:hover { border-color: var(--fg-dim); }
 .int-head { display: flex; align-items: center; gap: 9px; }
@@ -1023,7 +1025,7 @@ body.vote-dock-open { padding-bottom: 104px; }
   <div id="availability" class="availability" aria-live="polite"></div>
   <div id="feeDisplay" class="fee"></div>
   <div id="commitHint" class="commit-hint"></div>
-  <button type="button" class="free-cta" id="freeCta" onclick="toggleFreePanel()" aria-expanded="false" aria-controls="freePanel" style="display:none;">free names available</button>
+  <button type="button" class="free-cta" id="freeCta" onclick="toggleFreePanel()" aria-expanded="false" aria-controls="freePanel">free names available</button>
   <div id="freePanel" class="free-panel">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <label for="freeLabelInput" style="margin-bottom:0;">Claim your free name</label>
@@ -1037,7 +1039,7 @@ body.vote-dock-open { padding-bottom: 104px; }
     <button id="freeMintBtn" onclick="doFreeMint()">Mint</button>
     <div id="freeStatus" class="free-status"></div>
   </div>
-  <button type="button" class="zk-cta" id="zkCta" onclick="toggleZkPanel()" aria-expanded="false" aria-controls="zkPanel" style="display:none;">[new] free zkpassport names available</button>
+  <button type="button" class="zk-cta" id="zkCta" onclick="toggleZkPanel()" aria-expanded="false" aria-controls="zkPanel">[new] free zkpassport names available</button>
   <div id="zkPanel" class="zk-panel">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <label for="zkLabelInput" style="margin-bottom:0;">Claim your free zkpassport name</label>
@@ -2160,10 +2162,26 @@ function recentWebsiteLabels(cache, limit) {
     .slice(0, limit)
     .map(function (node) { return cache.names[node].label; });
 }
+// Resolves once the visitor scrolls or `el` is within a few screens of the viewport, whichever comes
+// first (at once without IntersectionObserver).
+function nearViewport(el) {
+  if (!('IntersectionObserver' in window)) return Promise.resolve();
+  return new Promise(function (resolve) {
+    function near() { io.disconnect(); window.removeEventListener('scroll', near); resolve(); }
+    const io = new IntersectionObserver(function (entries) {
+      if (entries.some(function (e) { return e.isIntersecting; })) near();
+    }, { rootMargin: '3000px 0px' });
+    io.observe(el);
+    window.addEventListener('scroll', near, { passive: true });
+  });
+}
 async function loadStats() {
   const sec = document.getElementById('statsSection');
   if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
   sec.style.display = ''; // reveal the section with its loading line immediately, before any await
+  // A first visit's scan downloads every registration since the deploy block (about 700 KB, 4 MB of
+  // JSON), for a section far below the fold, so it waits until the section is about to be seen.
+  await nearViewport(sec);
   let burned = null;
   try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
   // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}}, cc:{node:{len,block}} }
@@ -2271,11 +2289,13 @@ const REGISTRAR_ABI = [
 ];
 function regEnabled() { return REGISTRAR && !/^0x0+$/.test(REGISTRAR); }
 function freeEnabled() { return FREE_ROOT && REGISTRAR && !/^0x0+$/.test(REGISTRAR); }
+// The free and zkpassport links are in the markup from the first paint (so nothing shifts when the
+// script runs); a network without the feature hides them.
 function initFree() {
-  if (!freeEnabled()) return;
+  const cta = document.getElementById('freeCta');
+  if (!freeEnabled()) { if (cta) cta.style.display = 'none'; return; }
   const sfx = document.querySelector('#freePanel .free-suffix');
   if (sfx) sfx.textContent = '.' + FREE_ROOT + '.gwei';
-  const cta = document.getElementById('freeCta'); if (cta) cta.style.display = '';
 }
 function toggleFreePanel() {
   const panel = document.getElementById('freePanel'); if (!panel) return;
@@ -2346,8 +2366,8 @@ const HUMAN_REGISTRAR_ABI = [
 
 function zkEnabled() { return HUMAN_REGISTRAR && !/^0x0+$/.test(HUMAN_REGISTRAR); }
 function initZk() {
-  if (!zkEnabled()) return;
-  const cta = document.getElementById('zkCta'); if (cta) cta.style.display = '';
+  const cta = document.getElementById('zkCta');
+  if (!zkEnabled()) { if (cta) cta.style.display = 'none'; return; }
   // The devnote only applies to testnet (dev-mode mock passports); mainnet verifies real passports.
   const note = document.getElementById('zkDevNote');
   if (note) {

@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { checkEndpoints } from './worker.js';
+import worker, { checkEndpoints, nameTokenId } from './worker.js';
 import { PROFILE_TEXT_KEYS } from './profile-page.js';
 import {
   RPCS,
@@ -110,18 +110,23 @@ const abiBytesReturn = (body) => '0x' + pad32('20') + tail(typeof body === 'stri
 const SEL = { id: '0xfb021939', ch: '0xcb323d76', text: '0x308e3386', mode: '0xdd473fae', request: '0x1374c460' };
 // RPC handler for a name whose website lives in a contract: no contenthash, a contentcontract record,
 // then whatever the contract itself answers. `onCall` sees the web3:// calldata.
+const NAMENFT = '0x9d51d507bc7264d4fe8ad1cf7fe191933a0a81d6';
 function rpcWeb3({ cc = CC_MAINNET, mode = MODE_5219, onCall = () => null } = {}) {
-  return (data) => {
-    if (data.startsWith(SEL.id)) return TOKEN_ID;
-    if (data.startsWith(SEL.ch)) return CH_NONE;
-    if (data.startsWith(SEL.text)) return cc;
+  return (data, _url, to) => {
+    if (to?.toLowerCase() === NAMENFT) {
+      if (data.startsWith(SEL.id)) return TOKEN_ID;
+      if (data.startsWith(SEL.ch)) return CH_NONE;
+      if (data.startsWith(SEL.text)) return cc;
+      return null; // the profile's records, which a website never reaches
+    }
     if (data.startsWith(SEL.mode)) return mode;
     return onCall(data);
   };
 }
 
 // ---- faithful-ish Cache API mock --------------------------------------------
-function makeCache() {
+// `browserTtl` mimics a zone's Browser Cache TTL, which raises a lower max-age on what match() returns.
+function makeCache({ browserTtl } = {}) {
   const store = new Map(); // url -> { body:ArrayBuffer, status, headers:{}, expiresAt }
   let now = 1_000_000;
   return {
@@ -132,7 +137,10 @@ function makeCache() {
       const e = store.get(url);
       if (!e) return undefined;
       if (e.expiresAt != null && now > e.expiresAt) { store.delete(url); return undefined; }
-      return new Response(e.body, { status: e.status, headers: new Headers(e.headers) });
+      const headers = new Headers(e.headers);
+      const maxAge = /max-age=(\d+)/.exec(headers.get('cache-control') || '');
+      if (browserTtl && maxAge && Number(maxAge[1]) < browserTtl) headers.set('cache-control', `public, max-age=${browserTtl}`);
+      return new Response(e.body, { status: e.status, headers });
     },
     async delete(req) {
       return store.delete(typeof req === 'string' ? req : req.url);
@@ -153,6 +161,38 @@ function makeCache() {
 }
 
 // ---- fetch mock -------------------------------------------------------------
+// The worker reads a name's records in one Multicall3 aggregate3 call. The mock unpacks it and asks
+// the rpc handler about each call on its own, so handlers answer by selector either way.
+const MULTICALL = '0xca11bde05977b3631167028862be2a173976ca11';
+function aggregate3Calls(data) {
+  const hex = data.slice(10);
+  const at = (byte) => parseInt(hex.slice(byte * 2, byte * 2 + 64), 16);
+  const base = at(0) + 32;
+  return Array.from({ length: at(at(0)) }, (_, i) => {
+    const element = base + at(base + i * 32);
+    const bytesAt = element + at(element + 64);
+    return { target: '0x' + hex.slice(element * 2 + 24, element * 2 + 64), data: '0x' + hex.slice((bytesAt + 32) * 2, (bytesAt + 32 + at(bytesAt)) * 2) };
+  });
+}
+function aggregate3Return(items) { // [success, bare hex][]
+  const elements = items.map(([ok, data]) => {
+    let padded = data; while (padded.length % 64) padded += '0';
+    return pad32(ok ? '1' : '0') + pad32('40') + pad32((data.length / 2).toString(16)) + padded;
+  });
+  let cursor = items.length * 32;
+  const offsets = elements.map((e) => { const o = pad32(cursor.toString(16)); cursor += e.length / 2; return o; });
+  return '0x' + pad32('20') + pad32(items.length.toString(16)) + offsets.join('') + elements.join('');
+}
+async function answerRpc(handlers, data, url, to, init) {
+  if (!handlers.rpc) return null;
+  if (to?.toLowerCase() !== MULTICALL || !data.startsWith('0x82ad56cb')) return handlers.rpc(data, url, to, init);
+  const answers = await Promise.all(aggregate3Calls(data).map((call) => handlers.rpc(call.data, url, call.target, init)));
+  // A transport failure (a thrown request, an HTTP error) fails the whole call, as it would on the wire.
+  const failed = answers.find((a) => a === 'THROW' || a instanceof Response);
+  if (failed) return failed;
+  return aggregate3Return(answers.map((a) => (typeof a === 'string' && a.startsWith('0x') ? [true, a.slice(2)] : [false, ''])));
+}
+
 // handlers: { rpc(data,url,to) -> resultHex|Response|null, ipfs(url) -> Response, ipns(url) -> Response,
 //             swarm(url) -> Response, reserved(url) -> Response }
 function makeFetch(handlers) {
@@ -166,7 +206,7 @@ function makeFetch(handlers) {
       calls.rpc++; calls.rpcUrls.push(url);
       const call = JSON.parse(init.body).params[0];
       const data = call.data;
-      const result = handlers.rpc ? await handlers.rpc(data, url, call.to, init) : null;
+      const result = await answerRpc(handlers, data, url, call.to, init);
       if (result === 'THROW') throw new Error('rpc network error');
       if (result instanceof Response) return result;
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: result ?? null }),
@@ -267,16 +307,37 @@ test('happy path: resolves, decodes the real CID, proxies content', async () => 
   assert.equal(fetchMock.calls.ipfsUrls[0], `https://ipfs.io/ipfs/${DONNOH_CID}/`);
 });
 
-test('emoji hostname is decoded from Punycode before computeId', async () => {
+// computeId(name) on mainnet, which the worker computes itself rather than asking for.
+const ON_CHAIN_IDS = {
+  'donnoh.gwei': '4af9471d1f0ffa0a3f725e0f0932984bb35187d5da3e24a9a55c9754aa9c0a01',
+  'Sub.Donnoh.GWEI': '0b1b9185866e2c594b02a5963cbbdc0cfb0d520e68d5aad3aa1b39e4dbd167f6',
+  'alice.zkpassport.gwei': 'f8f50fd1d3f16c66f888490c3a555959f9d4e57e460bea92cba082f98395d933',
+  '🐳.gwei': '637d65e04637f3878f890959a1ee0c76806b71b5846bbeedcd1ab577de619f5f',
+  'sub.🐳.gwei': 'f490de5a25a9d88854c60d29b11e94abe23e9d15dd3fc05579863ee5603bc92e',
+};
+
+test('token ids are computed as NameNFT.computeId does, without an RPC call', async () => {
+  for (const [name, id] of Object.entries(ON_CHAIN_IDS)) assert.equal(nameTokenId(name), id, name);
+  assert.equal(nameTokenId('a..b.gwei'), null, 'computeId rejects empty labels');
+
+  // For those the contract is still asked, so its revert keeps meaning a failed lookup.
+  let asked;
+  const fetchMock = makeFetch({ rpc: (data) => { if (data.startsWith(SEL.id)) asked = decodeStringCall(data); return null; } });
+  const res = await invoke('https://a..b.gwei.domains/', { cache: makeCache(), fetchMock });
+  assert.equal(asked, 'a..b.gwei');
+  assert.equal(res.status, 502);
+});
+
+test('emoji hostname is decoded from Punycode before its token id is computed', async () => {
   const cache = makeCache();
-  let computedName;
+  let tokenId;
   const fetchMock = makeFetch({
     rpc: (data) => {
-      if (data.startsWith('0xfb021939')) {
-        computedName = decodeStringCall(data);
-        return TOKEN_ID;
+      if (data.startsWith('0xcb323d76')) {
+        tokenId = data.slice(10);
+        return CH_IPFS;
       }
-      return data.startsWith('0xcb323d76') ? CH_IPFS : null;
+      return data.startsWith(SEL.text) ? TEXT_NONE : null;
     },
     ipfs: () => new Response('<h1>whale</h1>', { status: 200 }),
   });
@@ -284,27 +345,27 @@ test('emoji hostname is decoded from Punycode before computeId', async () => {
   // Request/URL normalizes the Unicode hostname to xn--7o8h before the Worker sees it.
   const res = await invoke('https://🐳.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 200);
-  assert.equal(computedName, '🐳.gwei');
+  assert.equal(tokenId, ON_CHAIN_IDS['🐳.gwei']);
   assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), '🐳.gwei');
   assert.equal(await res.text(), '<h1>whale</h1>');
 });
 
 test('Punycode is decoded label-by-label for nested gwei names', async () => {
   const cache = makeCache();
-  let computedName;
+  let tokenId;
   const fetchMock = makeFetch({
     rpc: (data) => {
-      if (data.startsWith('0xfb021939')) {
-        computedName = decodeStringCall(data);
-        return TOKEN_ID;
+      if (data.startsWith('0xcb323d76')) {
+        tokenId = data.slice(10);
+        return CH_IPFS;
       }
-      return data.startsWith('0xcb323d76') ? CH_IPFS : null;
+      return data.startsWith(SEL.text) ? TEXT_NONE : null;
     },
   });
 
   const res = await invoke('https://sub.xn--7o8h.gwei.domains/', { cache, fetchMock });
   assert.equal(res.status, 200);
-  assert.equal(computedName, 'sub.🐳.gwei');
+  assert.equal(tokenId, ON_CHAIN_IDS['sub.🐳.gwei']);
   assert.equal(decodeURIComponent(res.headers.get('x-gwei-name')), 'sub.🐳.gwei');
 });
 
@@ -929,7 +990,7 @@ test('resolveMode is cached: a second request skips the resolveMode call', async
   let modeCalls = 0;
   const inner = rpcWeb3({ onCall: (d) => d.startsWith(SEL.request) ? abiRequestResult(200, 'ok') : null });
   const fetchMock = makeFetch({
-    rpc: (data) => { if (data.startsWith(SEL.mode)) modeCalls++; return inner(data); },
+    rpc: (data, url, to) => { if (data.startsWith(SEL.mode)) modeCalls++; return inner(data, url, to); },
   });
   // Two different paths, so the content cache can't mask the effect — only the mode cache can.
   await invoke('https://rock.gwei.domains/one', { cache, fetchMock });
@@ -972,7 +1033,7 @@ test('custom RPC_URL is used for mainnet contract calls as well as name resoluti
     env: { RPC_URL: privateRpc },
   });
   assert.equal(res.status, 200);
-  assert.ok(fetchMock.calls.rpcUrls.length >= 5);
+  assert.ok(fetchMock.calls.rpcUrls.length >= 3, 'records, resolveMode, request');
   assert.deepEqual([...new Set(fetchMock.calls.rpcUrls)], [privateRpc]);
 });
 
@@ -985,7 +1046,7 @@ test('oversized streamed RPC responses fail over before JSON buffering', async (
     onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'fallback') : null,
   });
   const fetchMock = makeFetch({
-    rpc: (data) => {
+    rpc: (data, url, to) => {
       if (data.startsWith(SEL.request) && !sentOversized) {
         sentOversized = true;
         oversizedCalls++;
@@ -998,7 +1059,7 @@ test('oversized streamed RPC responses fail over before JSON buffering', async (
         }), { headers: { 'content-type': 'application/json' } });
       }
       if (data.startsWith(SEL.request)) fallbackCalls++;
-      return inner(data);
+      return inner(data, url, to);
     },
   });
   const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
@@ -1042,6 +1103,31 @@ test('web3 content is cached: a repeat GET makes no RPC calls at all', async () 
   const res = await invoke('https://rock.gwei.domains/', { cache, fetchMock });
   assert.equal(await res.text(), 'cached');
   assert.equal(fetchMock.calls.rpc, after, 'served entirely from the content cache');
+});
+
+test('cache hits are served with the cache-control they were stored for, not the zone\'s', async () => {
+  // gwei.limo's zone raises a hit's max-age to its 4-hour Browser Cache TTL.
+  const cache = makeCache({ browserTtl: 14400 });
+  const fetchMock = makeFetch({
+    rpc: rpcWeb3({ onCall: (data) => data.startsWith(SEL.request)
+      ? abiRequestResult(200, 'on-chain', [['Cache-control', 'public, max-age=60, must-revalidate']]) : null }),
+  });
+  const first = await invoke('https://rock.gwei.limo/', { cache, fetchMock });
+  assert.equal(first.headers.get('cache-control'), 'public, max-age=60, must-revalidate');
+  const after = fetchMock.calls.rpc;
+  const hit = await invoke('https://rock.gwei.limo/', { cache, fetchMock });
+  assert.equal(fetchMock.calls.rpc, after, 'served from the content cache');
+  assert.equal(await hit.text(), 'on-chain');
+  assert.equal(hit.headers.get('cache-control'), 'public, max-age=60, must-revalidate');
+  assert.equal(hit.headers.get('x-gwei-cache-control'), null, 'the stored value stays internal');
+
+  for (const [fixture, path] of [[CH_IPNS_SHA256, '/ipns/'], [CH_SWARM, '/bzz/'], [CH_IPFS, '/ipfs/']]) {
+    const storage = makeFetch({ rpc: rpcReturning(fixture) });
+    const zoneCache = makeCache({ browserTtl: 14400 });
+    await invoke('https://site.gwei.limo/', { cache: zoneCache, fetchMock: storage });
+    const cached = await invoke('https://site.gwei.limo/', { cache: zoneCache, fetchMock: storage });
+    assert.equal(cached.headers.get('cache-control'), 'public, max-age=300', path);
+  }
 });
 
 test('a malformed ERC-5219 return is reported, not served', async () => {
@@ -1100,10 +1186,10 @@ test('a cold request herd shares each identical RPC call through the broker', as
     onCall: (data) => data.startsWith(SEL.request) ? abiRequestResult(200, 'coalesced') : null,
   });
   const fetchMock = makeFetch({
-    rpc: async (data) => {
+    rpc: async (data, url, to) => {
       // Keep every stage in flight long enough for all requests to join it.
       await new Promise((resolve) => setTimeout(resolve, 5));
-      return inner(data);
+      return inner(data, url, to);
     },
   });
   const env = { RPC_BROKER: makeRpcBrokerNamespace(fetchMock, {}) };
@@ -1115,8 +1201,8 @@ test('a cold request herd shares each identical RPC call through the broker', as
   assert.deepEqual(await Promise.all(responses.map((response) => response.text())), Array(10).fill('coalesced'));
   assert.equal(
     fetchMock.calls.rpc,
-    5,
-    'computeId, contenthash, text, resolveMode, and request each ran once for the whole herd',
+    3,
+    'the records multicall, resolveMode, and request each ran once for the whole herd',
   );
 });
 
@@ -1199,22 +1285,17 @@ test('transient error pages retry themselves and are never cached', async () => 
   assert.match(await fetchFailed.text(), /location\.reload\(\)/);
 });
 
-// aggregate3 result for [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS)].
-function abiProfile({ address = '0', owner = address, expires = '0', text = {}, available = '0', fee = '1c6bf52634000', premium = '0' } = {}) {
-  const str = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return pad32('20') + pad32((utf8(v).length).toString(16)) + d; };
-  const items = [[true, pad32(address)], [true, pad32(owner)], [true, pad32(expires)],
-    ...PROFILE_TEXT_KEYS.map((k) => [true, str(text[k] || '')]),
-    [true, pad32(available)], [true, pad32(fee)], [true, pad32(premium)]]; // isAvailable, getFee, getPremium
-  const elements = items.map(([ok, data]) => pad32(ok ? '1' : '0') + pad32('40') + pad32((data.length / 2).toString(16)) + data);
-  let cursor = items.length * 32;
-  const offsets = elements.map((e) => { const o = pad32(cursor.toString(16)); cursor += e.length / 2; return o; });
-  return '0x' + pad32('20') + pad32(items.length.toString(16)) + offsets.join('') + elements.join('');
-}
-const MULTICALL = '0xca11bde05977b3631167028862be2a173976ca11';
+// A name without a website: resolve, ownerOf, expiresAt, its text records, and isAvailable / getFee /
+// getPremium (what registering it would cost), each answered by selector.
 const ABI_EMPTY_STRING = '0x' + pad32('20') + pad32('0');
-const rpcProfile = (profile) => (data, url, to) => (to?.toLowerCase() === MULTICALL ? abiProfile(profile)
-  : data.startsWith('0x9af8b7aa') ? ABI_EMPTY_STRING // reverseResolve: no primary name
-  : rpcReturning(CH_NONE)(data));
+const textKey = (data) => decodeStringCall('0x00000000' + data.slice(74)); // text(uint256 id, string key)
+const rpcProfile = ({ address = '0', owner = address, expires = '0', text = {}, available = '0', fee = '1c6bf52634000', premium = '0' } = {}) => (data) => {
+  if (data.startsWith(SEL.text)) return PROFILE_TEXT_KEYS.includes(textKey(data)) ? abiString(text[textKey(data)] || '') : TEXT_NONE;
+  const word = { '0x4f896d4f': address, '0x6352211e': owner, '0x17c95709': expires, '0x8f8dc386': available, '0xfcee45f4': fee, '0x1bf1fffb': premium }[data.slice(0, 10)];
+  if (word !== undefined) return '0x' + pad32(word);
+  return data.startsWith('0x9af8b7aa') ? ABI_EMPTY_STRING // reverseResolve: no primary name
+    : rpcReturning(CH_NONE)(data);
+};
 
 test('an unregistered name gets a register page; a registered one without a site gets its profile', async () => {
   let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
@@ -1237,7 +1318,7 @@ test('an unregistered name gets a register page; a registered one without a site
   assert.match(res.headers.get('content-security-policy'), /script-src|default-src 'none'/);
   assert.doesNotMatch(res.headers.get('content-security-policy'), /unsafe-eval|script-src 'unsafe-inline'/);
   assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
-  assert.equal(fetchMock.calls.rpcUrls.length, 5, 'computeId, contenthash, contentcontract, one multicall, primary name');
+  assert.equal(fetchMock.calls.rpcUrls.length, 2, 'one multicall for every record, then the primary name');
 
   res = await invoke('https://alice.gwei.domains/favicon.ico', { cache: makeCache(), fetchMock });
   assert.equal(res.status, 404, 'other paths are not the profile');
@@ -1500,7 +1581,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
   return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
 }
 const aliceProfile = () => makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) }) });
-const TOKEN_HEX = '0x' + pad32('1234');
+const TOKEN_HEX = '0x9e0f6f68e7256d6a947a0578c7e746a0ff47e3b83c72fca64c940351d60da810'; // computeId('alice.gwei') on mainnet
 
 test('a profile lists the owner’s posts, newest first, with a feed link', async () => {
   const POST_INDEX = fakePostIndex();
@@ -1752,7 +1833,7 @@ test('cards: an unregistered name shows its price; only its root page answers 20
   assert.deepEqual(pngSize(new Uint8Array(await card.arrayBuffer())), [1200, 630]);
   assert.equal((await invoke('https://nobody.gwei.limo/elsewhere', { cache, fetchMock })).status, 404);
   // isAvailable(label, 0), getFee and getPremium ride in the profile's Multicall3 call: no extra round trip.
-  assert.equal(fetchMock.calls.rpc, 4, 'computeId, contenthash, contentcontract, one multicall');
+  assert.equal(fetchMock.calls.rpc, 1, 'one multicall for every record');
 
   const lapsed = await invoke('https://lapsed.gwei.limo/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
   assert.match(await lapsed.text(), /content="lapsed\.gwei isn&#39;t registered, or has expired\./, 'no price while it can’t be registered');

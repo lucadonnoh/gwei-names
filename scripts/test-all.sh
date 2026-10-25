@@ -16,6 +16,7 @@ run() { # name, directory, command...
 }
 skip() { printf '\n== %s: skipped (%s)\n' "$1" "$2"; skipped="$skipped $1"; }
 
+run ci-rules . node --test scripts/ci-changes.test.mjs
 run gateway gateway node --test *.test.js
 run dapp dapp node --test gweiNS.test.js
 

@@ -147,6 +147,22 @@ test('the generated avatar is deterministic per name, symmetric, and a valid PNG
   const pixels = inflateSync(png.subarray(41, 41 + idatLength));
   assert.equal(pixels.length, 64 * (64 * 3 + 1), 'one filter byte and 64 RGB pixels per row');
   assert.equal(String.fromCharCode(...png.subarray(png.length - 8, png.length - 4)), 'IEND');
+
+  // At 180 px one pixel is one SVG unit, so the PNG must light exactly the SVG's cells, on the accent
+  // background with its faint dot grid.
+  const full = await avatarPng(seedA, 180, '#102030');
+  const fullView = new DataView(full.buffer, full.byteOffset);
+  const raster = inflateSync(full.subarray(41, 41 + fullView.getUint32(33)));
+  const pixel = (x, y) => [...raster.subarray(y * (180 * 3 + 1) + 1 + x * 3, y * (180 * 3 + 1) + 4 + x * 3)];
+  const lit = new Set(cells);
+  for (let cy = 0; cy < 9; cy++) {
+    for (let cx = 0; cx < 9; cx++) {
+      const [x, y] = [18 + cx * 16, 18 + cy * 16];
+      assert.deepEqual(pixel(x + 3, y + 3), lit.has(`${x},${y}`) ? [236, 237, 238] : [16, 32, 48], `cell ${cx},${cy}`);
+    }
+  }
+  assert.deepEqual(pixel(7, 7), [30, 45, 60], 'a grid dot on the background');
+  assert.deepEqual(pixel(0, 0), [16, 32, 48]);
 });
 
 test('badges mark proof-of-humanity and free names, short, number and emoji names, and primary names', () => {

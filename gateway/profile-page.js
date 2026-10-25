@@ -297,23 +297,34 @@ export async function encodePng(width, height, raw, palette) {
 // The same avatar rasterized to a PNG.
 export async function avatarPng(seedHex, size = 256, accent) {
   const { color, cells } = avatarModel(seedHex, accent);
-  const base = rgb(color);
   const filled = new Set(cells.map(([x, y]) => y * AVATAR_GRID + x));
   const scale = size / AVATAR_SIZE;
+  // Every pixel is one of four shades (the background, lightened by a grid dot, a lit cell, or both),
+  // mixed once here rather than per pixel: the Worker draws this on a request's CPU budget.
+  const shades = [false, true].flatMap((dot) => [false, true].map((lit) => {
+    const c = rgb(color);
+    const mix = (target, alpha) => { for (let i = 0; i < 3; i++) c[i] += (target[i] - c[i]) * alpha; };
+    if (dot) mix([255, 255, 255], 0.06);
+    if (lit) mix([255, 255, 255], 0.92);
+    return c.map((v) => Math.round(v));
+  }));
+  // Whether a row or column crosses a grid dot, and which cell it falls in (-1 outside the grid).
+  const axis = Array.from({ length: size }, (_, v) => {
+    const u = v / scale;
+    const cell = Math.floor((u - AVATAR_OFFSET) / AVATAR_CELL);
+    return { dot: u % 16 >= 7 && u % 16 < 9, cell: u >= AVATAR_OFFSET && cell < AVATAR_GRID ? cell : -1 };
+  });
   const stride = size * 3 + 1;
   const raw = new Uint8Array(stride * size);
   for (let y = 0; y < size; y++) {
     raw[y * stride] = 0; // filter: none
+    const row = axis[y];
     for (let x = 0; x < size; x++) {
-      const c = [...base];
-      const mix = (target, alpha) => { for (let i = 0; i < 3; i++) c[i] += (target[i] - c[i]) * alpha; };
-      const ux = x / scale, uy = y / scale;
-      if (ux % 16 >= 7 && ux % 16 < 9 && uy % 16 >= 7 && uy % 16 < 9) mix([255, 255, 255], 0.06);
-      const cx = Math.floor((ux - AVATAR_OFFSET) / AVATAR_CELL), cy = Math.floor((uy - AVATAR_OFFSET) / AVATAR_CELL);
-      if (ux >= AVATAR_OFFSET && uy >= AVATAR_OFFSET && cx < AVATAR_GRID && cy < AVATAR_GRID && filled.has(cy * AVATAR_GRID + cx)) {
-        mix([255, 255, 255], 0.92);
-      }
-      raw.set(c.map((v) => Math.round(v)), y * stride + 1 + x * 3);
+      const col = axis[x];
+      const lit = row.cell >= 0 && col.cell >= 0 && filled.has(row.cell * AVATAR_GRID + col.cell);
+      const shade = shades[(row.dot && col.dot ? 2 : 0) + (lit ? 1 : 0)];
+      const at = y * stride + 1 + x * 3;
+      raw[at] = shade[0]; raw[at + 1] = shade[1]; raw[at + 2] = shade[2];
     }
   }
   return encodePng(size, size, raw);

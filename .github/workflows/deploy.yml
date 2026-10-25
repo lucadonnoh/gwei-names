@@ -1,9 +1,11 @@
 # Deploys production after CI passes on main: the gateway Worker (wrangler) and the dapp (Railway),
-# both from the same commit, then waits until gwei.domains serves that commit everywhere and
-# smoke-tests the live pages. A failure here is a failed run (GitHub emails it) and an ntfy alert.
+# from the same commit, then waits until gwei.domains serves that commit and smoke-tests the live
+# pages. A failure here is a failed run (GitHub emails it) and an ntfy alert.
 #
 # Production never runs code that main doesn't have: deploys only happen from main's tip, and an
-# older run that finishes after a newer push skips itself.
+# older run that finishes after a newer push skips itself. A part whose files (scripts/ci-changes.mjs)
+# are the same at main's tip as at the commit it already runs is left alone, and keeps reporting that
+# commit; a manual run redeploys both.
 #
 # Secrets, in the `production` environment (only jobs on main can read them):
 #   CLOUDFLARE_API_TOKEN  Workers Scripts edit + Workers Routes edit on gwei.domains and gwei.limo
@@ -51,6 +53,7 @@ jobs:
         if: steps.tip.outputs.skip != '1'
         with:
           ref: ${{ env.SHA }}
+          fetch-depth: 0 # to compare with the commits production runs
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.tip.outputs.skip != '1'
@@ -59,9 +62,23 @@ jobs:
           cache: npm
           cache-dependency-path: gateway/package-lock.json
 
+      - name: What production runs
+        id: live
+        if: steps.tip.outputs.skip != '1'
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          gateway=$(curl -fsS "https://gwei.domains/api/version?deploy=$GITHUB_RUN_ID" | jq -r '.commit // empty' || true)
+          dapp=$(curl -fsS "https://gwei.domains/version.txt?deploy=$GITHUB_RUN_ID" || true)
+          echo "gateway runs ${gateway:-unknown}, dapp runs ${dapp:-unknown}"
+          # No base means "deploy": an unknown commit, or a manual run, which is how to force a redeploy.
+          if [ "$EVENT" = workflow_dispatch ]; then gateway=; dapp=; fi
+          node scripts/ci-changes.mjs "$gateway" deploy-gateway >> "$GITHUB_OUTPUT"
+          node scripts/ci-changes.mjs "$dapp" deploy-dapp >> "$GITHUB_OUTPUT"
+
       - name: Deploy the gateway
         id: gateway
-        if: steps.tip.outputs.skip != '1'
+        if: steps.tip.outputs.skip != '1' && steps.live.outputs.deploy-gateway == 'true'
         working-directory: gateway
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then echo "::warning::CLOUDFLARE_API_TOKEN is not set: the gateway was not deployed"; exit 0; fi
@@ -71,7 +88,7 @@ jobs:
 
       - name: Deploy the dapp
         id: dapp
-        if: steps.tip.outputs.skip != '1'
+        if: steps.tip.outputs.skip != '1' && steps.live.outputs.deploy-dapp == 'true'
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then echo "::warning::RAILWAY_TOKEN is not set: the dapp was not deployed"; exit 0; fi
           node scripts/railway-deploy.mjs "$SHA"

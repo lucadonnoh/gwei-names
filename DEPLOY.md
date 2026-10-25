@@ -1,7 +1,7 @@
 # Shipping
 
-Main is production. Every push runs the tests; a green run on main deploys the gateway and the dapp
-from that commit and checks that the live sites serve it.
+Main is production. Every push runs the tests it can affect; a green run on main deploys the gateway
+and the dapp from that commit and checks that the live sites serve it.
 
 | Part | Where it runs | How it ships | How to see what's live |
 |---|---|---|---|
@@ -14,29 +14,41 @@ from that commit and checks that the live sites serve it.
 ## Tests
 
 `scripts/test-all.sh` runs every offline suite locally and says which it skipped. CI
-(`.github/workflows/ci.yml`) runs all of them on every push and pull request: contracts (minus the
-mainnet-fork suites), gateway, dapp, SDK (checks and offline tests), snap (and that its committed
-manifest matches the build), and the publisher (including its anvil end-to-end test). A nightly run
-adds the suites that need live networks: the fork tests and the SDK's Sepolia tests.
+(`.github/workflows/ci.yml`) has the same suites: contracts (minus the mainnet-fork suites), gateway,
+dapp, SDK (checks and offline tests), snap (and that its committed manifest matches the build), and the
+publisher (including its anvil end-to-end test). A nightly run adds the suites that need live networks:
+the fork tests and the SDK's Sepolia tests.
+
+A push or pull request runs only the suites whose inputs changed (`scripts/ci-changes.mjs` lists them
+and follows imports across directories, so a change to `gateway/posts-format.js` also runs the dapp and
+publisher tests). Changes are counted from the last commit that passed CI on the branch (main's, for a
+branch's first push; the target branch, for a pull request), so a failing suite keeps running until it
+passes. Nightly and manual runs, and any change to the workflows or to those rules, run everything. The
+contracts' invariant test runs 256 runs on a push and the full 1000 nightly.
 
 ## Deploys
 
 `.github/workflows/deploy.yml` runs when CI passes on main:
 
 1. Skips itself if main has moved on (the newer commit's run deploys that one).
-2. Deploys the Worker with `wrangler deploy`, tagged with the commit (`GIT_COMMIT`).
-3. Deploys that commit of the dapp through Railway's API and waits for Railway to report it live.
+2. Skips a part whose files (`deploy-gateway` and `deploy-dapp` in `scripts/ci-changes.mjs`) are the
+   same as at the commit it already runs, read from `/api/version` and `/version.txt`: production
+   already runs main's code for it. That part keeps reporting its older commit. An unknown commit
+   means deploy.
+3. Deploys the Worker with `wrangler deploy`, tagged with the commit (`GIT_COMMIT`).
+4. Deploys that commit of the dapp through Railway's API and waits for Railway to report it live.
    Railway's own deploy-on-push is off, so nothing ships before the tests pass.
-4. Waits until `/api/version` and `/version.txt` both report the commit, then smoke-tests the live
-   pages (`scripts/verify-deploy.mjs`).
-5. On any failure: a failed run (GitHub emails it) and, if configured, an ntfy alert.
+5. Waits until each deployed part reports the commit, then smoke-tests the live pages
+   (`scripts/verify-deploy.mjs`).
+6. On any failure: a failed run (GitHub emails it) and, if configured, an ntfy alert.
 
 Secrets live in the repository's `production` environment, readable only by jobs on main:
 `CLOUDFLARE_API_TOKEN` (Workers Scripts edit, Workers Routes edit on both zones), `RAILWAY_TOKEN`
 (project token, gwei-names / production), optional `NTFY_URL` and `NTFY_TOKEN`. The variable
 `CLOUDFLARE_ACCOUNT_ID` names the account. A part whose secret is missing is skipped with a warning.
 
-Run it again by hand from the Actions tab (Deploy, "Run workflow"): it redeploys main's tip.
+Run it again by hand from the Actions tab (Deploy, "Run workflow"): it redeploys both parts from
+main's tip, changed or not.
 
 ### Without CI
 

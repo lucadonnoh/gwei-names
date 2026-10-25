@@ -14,7 +14,7 @@ import { createGatewayPool, configuredGateways } from './content-gateways.js';
 
 import { CHAINS, RPC_BROKER_SHARDS, SHORT_TO_CHAIN, rpcEndpointConfig } from './rpc-config.js';
 import {
-  AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
+  AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, keccak256, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
   AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, cardVersion,
@@ -71,6 +71,9 @@ const MODE_TTL = 86400;      // contract → resolve mode (seconds)
 // changes reach new cards within RESOLVE_TTL, like everything else.
 const CARD_TTL = 86400;
 const CACHE_BASE = 'https://gwei-cache.internal'; // synthetic keys for the resolution cache
+// A cached contract response keeps the cache-control visitors get here, since a cache hit's own
+// cache-control can be rewritten by the zone (see the content cache below). Never sent to visitors.
+const STORED_CACHE_CONTROL = 'x-gwei-cache-control';
 
 const SEL_COMPUTEID = 'fb021939'; // computeId(string)
 const SEL_CONTENTHASH = 'cb323d76'; // contenthash(uint256)
@@ -85,6 +88,7 @@ const SEL_REVERSE = '9af8b7aa'; // reverseResolve(address): the address's primar
 const SEL_TOKENURI = 'c87b56dd'; // tokenURI(uint256), ERC-721
 const SEL_URI = '0e89341c'; // uri(uint256), ERC-1155
 const CONTENTCONTRACT = 'contentcontract'; // ERC-6821 text record key
+const GWEI_NODE = 'cca9c7f2dbe2808af0de2982fc84314bfa68a82a6a60ad5cd757f91a233d7d7f'; // NameNFT.GWEI_NODE
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 const B36 = '0123456789abcdefghijklmnopqrstuvwxyz';
 
@@ -301,6 +305,21 @@ const utf8 = (s) => new TextEncoder().encode(s);
 // `text(uint256,string)` — tokenId, offset to the string (0x40), then the string tail.
 function encodeTextCall(tokenIdHex, key) {
   return '0x' + SEL_TEXT + tokenIdHex + pad32('40') + tail(utf8(key));
+}
+// NameNFT.computeId(name) without the eth_call, saving a round trip on every cold lookup: the namehash
+// of the labels under GWEI_NODE, with ASCII letters lowercased (computeNamehash). Returns 64 hex digits,
+// or null for a name with an empty label, which computeId rejects.
+export function nameTokenId(name) {
+  const labels = name.replace(/\.gwei$/i, '').split('.');
+  if (labels.some((label) => !label)) return null;
+  let node = hexToBytes(GWEI_NODE);
+  for (const label of labels.reverse()) {
+    const packed = new Uint8Array(64);
+    packed.set(node);
+    packed.set(keccak256(utf8(label.replace(/[A-Z]/g, (c) => c.toLowerCase()))), 32);
+    node = keccak256(packed);
+  }
+  return toHex(node);
 }
 // ERC-5219 `request(string[] resource, KeyValue[] params)`. Both arguments are dynamic arrays whose
 // elements are themselves dynamic, so each array is [length, ...offsets, ...tails] with the offsets
@@ -758,17 +777,32 @@ async function resolveName(name, route, cache, ctx) {
 }
 
 async function lookupName(name, route) {
-  const idRes = await ethCall(1, NAMENFT, encodeString(SEL_COMPUTEID, name), route);
-  if (!idRes) return { error: 'rpc' };
-  const tokenIdHex = idRes.slice(2);
-  const chRes = await ethCall(1, NAMENFT, '0x' + SEL_CONTENTHASH + tokenIdHex, route);
-  if (!chRes) return { error: 'rpc' };
+  let tokenIdHex = nameTokenId(name);
+  if (!tokenIdHex) {
+    // computeId reverts on an empty label; asking it keeps that answer exactly as it always was.
+    const idRes = await ethCall(1, NAMENFT, encodeString(SEL_COMPUTEID, name), route);
+    if (!idRes) return { error: 'rpc' };
+    tokenIdHex = idRes.slice(2);
+  }
+  // One Multicall3 call reads both website records and, for a name without a website, everything its
+  // profile page shows: resolve() tells an unregistered (or expired) name from one without a site, and
+  // the same call asks what registering it would cost. A cold lookup is one round trip, not up to four.
+  const calls = [
+    { target: NAMENFT, data: '0x' + SEL_CONTENTHASH + tokenIdHex },
+    { target: NAMENFT, data: encodeTextCall(tokenIdHex, CONTENTCONTRACT) },
+    ...[SEL_RESOLVE, SEL_OWNEROF, SEL_EXPIRESAT].map((sel) => ({ target: NAMENFT, data: '0x' + sel + tokenIdHex })),
+    ...PROFILE_TEXT_KEYS.map((key) => ({ target: NAMENFT, data: encodeTextCall(tokenIdHex, key) })),
+    ...priceCalls(NAMENFT, name.slice(0, -'.gwei'.length), tokenIdHex),
+  ];
+  const res = await ethCall(1, MULTICALL3, encodeAggregate3(calls), route);
+  const results = res ? decodeAggregate3(res) : null;
+  if (!results || results.length !== calls.length || !results[0].success || !results[0].data) return { error: 'rpc' };
 
   // Decode the contenthash → storage reference.
   //   IPFS:  e301 || <cidv1 bytes>
   //   IPNS:  e501 || <cidv1 libp2p-key bytes>
   //   Swarm: e4 01 01 fa 01 1b 20 || <32-byte bzz hash>   (swarm-ns / cidv1 / swarm-manifest / keccak256)
-  const b = chRes.slice(2);
+  const b = results[0].data;
   const len = parseInt(b.slice(64, 128), 16) || 0;
   let result;
   if (len === 0) {
@@ -776,23 +810,16 @@ async function lookupName(name, route) {
     // also specifies falling back to the name's *resolved address*; we deliberately don't, because
     // GNS `resolve()` falls back to `ownerOf`, which would make every registered name claim to be
     // a website. Only an explicit record counts.
-    // An unset record still ABI-encodes to a non-empty result (offset + zero length), so a null here
-    // means the lookup itself failed. Surface that rather than caching a 404 the retry can't clear.
-    const ccRes = await ethCall(1, NAMENFT, encodeTextCall(tokenIdHex, CONTENTCONTRACT), route);
-    if (!ccRes) return { error: 'rpc' };
-    result = parseContentContract(readText(ccRes.slice(2), word(ccRes.slice(2), 0))) || { state: 'none' };
-    // A name without a website gets a profile page from its records, read in one Multicall3 call;
-    // resolve() also tells an unregistered (or expired) name from one without a site, and the same
-    // call asks what registering it would cost. If the call fails, the page just shows the plain
-    // "no website" message.
+    // An unset record still ABI-encodes to a non-empty result (offset + zero length), so a failed
+    // read means the lookup itself failed. Surface that rather than caching a 404 the retry can't clear.
+    const cc = results[1].success ? results[1].data : '';
+    if (!cc) return { error: 'rpc' };
+    result = parseContentContract(readText(cc, word(cc, 0))) || { state: 'none' };
+    // A name without a website gets a profile page from the rest of the results. If those don't
+    // decode, the page just shows the plain "no website" message.
     if (result.state === 'none') {
       try {
-        const calls = [SEL_RESOLVE, SEL_OWNEROF, SEL_EXPIRESAT]
-          .map((sel) => ({ target: NAMENFT, data: '0x' + sel + tokenIdHex }))
-          .concat(PROFILE_TEXT_KEYS.map((key) => ({ target: NAMENFT, data: encodeTextCall(tokenIdHex, key) })))
-          .concat(priceCalls(NAMENFT, name.slice(0, -'.gwei'.length), tokenIdHex));
-        const res = await ethCall(1, MULTICALL3, encodeAggregate3(calls), route);
-        const profile = res ? profileFromResults(decodeAggregate3(res)) : null;
+        const profile = profileFromResults(results.slice(2));
         if (profile) {
           result.registered = profile.registered;
           if (profile.price) result.price = profile.price;
@@ -1164,10 +1191,13 @@ export default {
     if (request.method === 'GET') {
       const hit = await cache.match(contentKey);
       if (hit) {
-        if (r.kind !== 'ipfs') return hit;
+        // A hit comes back with whatever max-age the zone's Browser Cache TTL imposes (gwei.limo's
+        // 4-hour default turned 300 into 14400), so it is served with the value it was stored for.
+        // Immutable IPFS content stays at the edge for a day, but browsers still get CONTENT_TTL.
         const headers = new Headers(hit.headers);
-        headers.set('cache-control', `public, max-age=${CONTENT_TTL}`);
-        headers.delete('age');
+        headers.set('cache-control', hit.headers.get(STORED_CACHE_CONTROL) || `public, max-age=${CONTENT_TTL}`);
+        headers.delete(STORED_CACHE_CONTROL);
+        if (r.kind === 'ipfs') headers.delete('age');
         return new Response(hit.body, { status: hit.status, headers });
       }
     }
@@ -1182,7 +1212,9 @@ export default {
         throw error;
       }
       if (request.method === 'GET' && resp.status === 200 && web3ResponseIsCacheable(resp)) {
-        ctx.waitUntil(cache.put(contentKey, resp.clone()).catch(() => {}));
+        const stored = resp.clone();
+        stored.headers.set(STORED_CACHE_CONTROL, resp.headers.get('cache-control'));
+        ctx.waitUntil(cache.put(contentKey, stored).catch(() => {}));
       }
       return resp;
     }

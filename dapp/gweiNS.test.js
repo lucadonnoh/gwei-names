@@ -2123,6 +2123,59 @@ test('the stats scan reads contentcontract records alongside contenthashes', () 
   assert.match(statsSource, /c\.names && c\.ch && c\.cc &&/);
 });
 
+test('the stats scan waits until the visitor scrolls or its section is about to be seen', async () => {
+  const start = html.indexOf('function nearViewport(el)');
+  const end = html.indexOf('async function loadStats()', start);
+  assert.notEqual(start, -1, 'the viewport helper must exist');
+  function load() {
+    const observer = { disconnected: false };
+    const scroll = new Set();
+    class IntersectionObserver {
+      constructor(cb) { observer.callback = cb; }
+      observe() {}
+      disconnect() { observer.disconnected = true; }
+    }
+    const window = {
+      IntersectionObserver,
+      addEventListener: (type, fn) => scroll.add(fn),
+      removeEventListener: (type, fn) => scroll.delete(fn),
+    };
+    const context = vm.createContext({ window, IntersectionObserver });
+    vm.runInContext(html.slice(start, end) + '\nglobalThis.nearViewport = nearViewport;', context);
+    let near = false;
+    const waiting = context.nearViewport({}).then(() => { near = true; });
+    return { observer, scroll, waiting, near: () => near };
+  }
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+  const byObserver = load();
+  byObserver.observer.callback([{ isIntersecting: false }]);
+  await tick();
+  assert.equal(byObserver.near(), false, 'still far below the fold, and nobody scrolled');
+  byObserver.observer.callback([{ isIntersecting: true }]);
+  await byObserver.waiting;
+  assert.equal(byObserver.observer.disconnected, true);
+  assert.equal(byObserver.scroll.size, 0, 'the scroll listener is removed too');
+
+  const byScroll = load();
+  for (const fn of [...byScroll.scroll]) fn();
+  await byScroll.waiting;
+  assert.equal(byScroll.observer.disconnected, true);
+  assert.equal(byScroll.scroll.size, 0);
+
+  // Nothing is fetched before then: not the logs, not the burned balance.
+  const loadStats = html.slice(end, html.indexOf('loadStats();', end));
+  assert.ok(loadStats.indexOf('await nearViewport(sec)') < loadStats.indexOf('statsRpc('));
+});
+
+test('the first paint holds room for what the script draws, and shows the free-name links, so nothing shifts', () => {
+  assert.match(html, /\.int-list:empty \{ min-height: 100vh; \}/);
+  assert.match(html, /<div class="int-list" id="integrationList"><\/div>/, 'empty until drawn, or :empty never matches');
+  for (const id of ['freeCta', 'zkCta']) {
+    assert.doesNotMatch(html.match(new RegExp(`<button[^>]*id="${id}"[^>]*>`))[0], /display:\s*none/, id);
+  }
+});
+
 // --- read RPC failover ---------------------------------------------------------
 
 function rpcHarness(fetchImpl) {
