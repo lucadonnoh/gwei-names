@@ -72,13 +72,42 @@ function decodeString(r) {
 }
 const clip = (s, max) => (s.length > max ? s.slice(0, max - 1) + '…' : s);
 
-// Results of [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS)] → the stored profile.
-// `registered` follows resolve(): zero means unregistered, expired or otherwise inactive.
+// What registering a name would cost, asked in the same Multicall3 call after the text records so a
+// name nobody holds can show its price: isAvailable(label, 0), getFee(label bytes), getPremium(id).
+// A subname's label has a dot, which isAvailable() rejects, so subnames never get a price.
+const SEL_ISAVAILABLE = '8f8dc386', SEL_GETFEE = 'fcee45f4', SEL_GETPREMIUM = '1bf1fffb';
+export function priceCalls(target, label, tokenIdHex) {
+  const bytes = new TextEncoder().encode(label);
+  let data = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  while (data.length % 64) data += '0';
+  return [
+    { target, data: '0x' + SEL_ISAVAILABLE + pad32('40') + pad32('0') + pad32(bytes.length.toString(16)) + data },
+    { target, data: '0x' + SEL_GETFEE + pad32(bytes.length.toString(16)) },
+    { target, data: '0x' + SEL_GETPREMIUM + pad32(tokenIdHex) },
+  ];
+}
+// NameNFT's GRACE_PERIOD plus PREMIUM_DECAY_PERIOD: an expired name's premium is gone this long after expiry.
+const PREMIUM_GONE_AFTER = (90 + 21) * 86400;
+
+// Results of [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS), ...priceCalls] → the stored profile.
+// `registered` follows resolve(): zero means unregistered, expired or otherwise inactive. Such a name
+// carries a `price` (wei, as strings, since lookups are cached as JSON) when the registrar would take it.
 export function profileFromResults(results) {
-  if (!Array.isArray(results) || results.length !== 3 + PROFILE_TEXT_KEYS.length || !results[0].success) return null;
+  if (!Array.isArray(results) || results.length !== 6 + PROFILE_TEXT_KEYS.length || !results[0].success) return null;
   const address = decodeAddress(results[0]);
   if (!address) return null;
-  if (BigInt(address) === 0n) return { registered: false };
+  if (BigInt(address) === 0n) {
+    const [available, fee, premium] = results.slice(-3).map(decodeUint);
+    if (available !== 1n || fee === null) return { registered: false };
+    const expired = decodeUint(results[2]);
+    return {
+      registered: false,
+      price: {
+        fee: String(fee),
+        ...(premium > 0n && expired > 0n && expired < 1n << 40n ? { premium: String(premium), premiumEnds: Number(expired) + PREMIUM_GONE_AFTER } : {}),
+      },
+    };
+  }
   const text = {};
   PROFILE_TEXT_KEYS.forEach((key, i) => {
     const value = decodeString(results[3 + i]);
@@ -186,7 +215,7 @@ function profileRows(profile) {
 const AVATAR_COLORS = ['#161616', '#244577', '#175640', '#402370', '#732430']; // SHARE_BGS in dapp/gweiNS.html
 const AVATAR_GRID = 9, AVATAR_HALF = 5, AVATAR_CELL = 16, AVATAR_SIZE = 180, AVATAR_OFFSET = (AVATAR_SIZE - AVATAR_GRID * AVATAR_CELL) / 2;
 const AVATAR_MIN_CELLS = 16; // fewer (or more than 81 - 16) lit cells and the pattern is inverted
-function avatarModel(seedHex, accent) {
+export function avatarModel(seedHex, accent) {
   const bytes = hexToBytes(String(seedHex).replace(/^0x/, '').padStart(64, '0').slice(-64));
   // The owner's accent colour, when set, replaces the seeded background.
   const color = /^#[0-9a-f]{6}$/i.test(accent || '') ? accent : AVATAR_COLORS[bytes[0] % AVATAR_COLORS.length];
@@ -244,9 +273,26 @@ function pngChunk(type, data) {
   view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
   return out;
 }
-const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+export const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
-// The same avatar rasterized to a PNG (RGB, zlib via CompressionStream; no dependencies).
+// Unfiltered scanlines (a filter byte per row) → PNG, zlib via CompressionStream; no dependencies.
+// RGB unless a palette (an array of [r, g, b]) is given, then 8-bit indexed.
+export async function encodePng(width, height, raw, palette) {
+  const idat = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const ihdr = new Uint8Array(13);
+  new DataView(ihdr.buffer).setUint32(0, width);
+  new DataView(ihdr.buffer).setUint32(4, height);
+  ihdr.set([8, palette ? 3 : 2, 0, 0, 0], 8); // 8-bit, indexed or RGB, deflate, no filter, no interlace
+  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', ihdr)];
+  if (palette) parts.push(pngChunk('PLTE', Uint8Array.from(palette.flat())));
+  parts.push(pngChunk('IDAT', idat), pngChunk('IEND', new Uint8Array(0)));
+  const png = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+  let at = 0;
+  for (const part of parts) { png.set(part, at); at += part.length; }
+  return png;
+}
+
+// The same avatar rasterized to a PNG.
 export async function avatarPng(seedHex, size = 256, accent) {
   const { color, cells } = avatarModel(seedHex, accent);
   const base = rgb(color);
@@ -268,16 +314,7 @@ export async function avatarPng(seedHex, size = 256, accent) {
       raw.set(c.map((v) => Math.round(v)), y * stride + 1 + x * 3);
     }
   }
-  const idat = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
-  const ihdr = new Uint8Array(13);
-  new DataView(ihdr.buffer).setUint32(0, size);
-  new DataView(ihdr.buffer).setUint32(4, size);
-  ihdr.set([8, 2, 0, 0, 0], 8); // 8-bit, RGB, deflate, no filter, no interlace
-  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', ihdr), pngChunk('IDAT', idat), pngChunk('IEND', new Uint8Array(0))];
-  const png = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
-  let at = 0;
-  for (const part of parts) { png.set(part, at); at += part.length; }
-  return png;
+  return encodePng(size, size, raw);
 }
 export const AVATAR_PNG_PATH = '/.well-known/gwei-avatar.png';
 
@@ -378,15 +415,74 @@ export function renderLayout({ title, head = '', body, subtitle = '', icon = '<l
     (subtitle ? `<div class="subtitle">${subtitle}</div>` : '<div class="subtitle"></div>') + body + THEME_TOGGLE;
 }
 
-export function metaTags({ title, description, url, image, imageSize, type = 'profile' }) {
+// Link-preview tags. `url` is the page on the host it was asked for (gwei.limo or gwei.domains), and
+// a 1200x630 `image` (a card, see cardImage) is shown large.
+export function metaTags({ title, description, url, image, imageWidth, imageHeight, imageAlt, type = 'website' }) {
   const tag = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
-  return tag('name', 'description', description) +
+  return `<link rel="canonical" href="${escapeHtml(url)}">` + tag('name', 'description', description) +
     tag('property', 'og:type', type) + tag('property', 'og:site_name', 'Gwei Name Service') +
     tag('property', 'og:title', title) + tag('property', 'og:description', description) +
     tag('property', 'og:url', url) + tag('property', 'og:image', image) +
-    (imageSize ? tag('property', 'og:image:width', imageSize) + tag('property', 'og:image:height', imageSize) : '') +
-    tag('name', 'twitter:card', 'summary') + tag('name', 'twitter:title', title) +
-    tag('name', 'twitter:description', description) + tag('name', 'twitter:image', image);
+    (imageWidth ? tag('property', 'og:image:type', 'image/png') + tag('property', 'og:image:width', imageWidth) + tag('property', 'og:image:height', imageHeight) : '') +
+    (imageAlt ? tag('property', 'og:image:alt', imageAlt) : '') +
+    tag('name', 'twitter:card', imageWidth > imageHeight ? 'summary_large_image' : 'summary') + tag('name', 'twitter:title', title) +
+    tag('name', 'twitter:description', description) + tag('name', 'twitter:image', image) +
+    (imageAlt ? tag('name', 'twitter:image:alt', imageAlt) : '');
+}
+
+// --- link-preview cards ------------------------------------------------------------------------------
+// Every page's preview image is a 1200x630 card that share-card.js draws from one of these. Its URL
+// carries a hash of what the card shows (?v=), so a records change gives previews a new image to
+// fetch, and the Worker keys its cache of drawn cards on the same hash.
+export const CARD_PATH = '/.well-known/gwei-card.png';
+export const POST_CARD_PATH = /^\/\.well-known\/gwei-card\/([0-9a-f]{12})\.png$/;
+export const postCardPath = (hash) => `/.well-known/gwei-card/${hash.slice(2, 14)}.png`;
+const CARD_DESIGN = 1; // bump with any change to how cards look, so caches and previews refresh
+
+const displayName = (name, t) => (t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '');
+// The page's address as people read it: the name's own (Unicode) labels on the page's domain.
+const cardHost = (name, pageUrl) => `${name.slice(0, -'.gwei'.length)}.${new URL(pageUrl).hostname.split('.').slice(-2).join('.')}`;
+const CARD_BADGES = ['Proof of humanity', 'Free name', 'Primary name']; // the rest are plain from the name
+export function profileCard(name, profile, pageUrl) {
+  const t = profile.text || {};
+  const display = displayName(name, t);
+  return {
+    kind: 'profile', name, host: cardHost(name, pageUrl), seed: profile.seed || null, accent: profile.page?.color || null,
+    // The owner's own avatar isn't drawn (see share-card.js), and the generated mark would contradict it.
+    mark: !avatarUrl(profile.avatarImage || t.avatar),
+    // A display name that only repeats the label ("alice" on alice.gwei) adds nothing to the card.
+    display: display.toLowerCase() === name.slice(0, -'.gwei'.length).toLowerCase() ? '' : display,
+    bio: t.description || '', badges: nameBadges(name, profile).filter((b) => CARD_BADGES.includes(b)),
+  };
+}
+export function postCard(name, profile, post, pageUrl) {
+  return {
+    kind: 'post', name, host: cardHost(name, pageUrl), seed: profile.seed || null, accent: profile.page?.color || null,
+    mark: !avatarUrl(profile.avatarImage || profile.text?.avatar),
+    title: post.title, date: Number.isFinite(post.time) ? new Date(post.time * 1000).toISOString().slice(0, 10) : '',
+  };
+}
+// `price` is the profile's (profileFromResults): set when the name can be registered right now.
+export function unregisteredCard(name, pageUrl, price) {
+  return { kind: 'unregistered', name, host: cardHost(name, pageUrl), ...(price ? priceText(price) : {}) };
+}
+// Wei → ETH for people: exact for the fixed yearly fees, two significant digits for a decaying premium.
+const formatEth = (wei, digits = 6) => (Number(BigInt(wei)) / 1e18).toLocaleString('en-US', { maximumSignificantDigits: digits, useGrouping: false });
+function priceText(price) {
+  return {
+    fee: formatEth(price.fee),
+    ...(price.premium ? { premium: formatEth(price.premium, 2), premiumEnds: new Date(price.premiumEnds * 1000).toISOString().slice(0, 10) } : {}),
+  };
+}
+
+export function cardVersion(card) { // FNV-1a: a cache key, not a security boundary
+  let h = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(JSON.stringify([CARD_DESIGN, card]))) h = Math.imul(h ^ byte, 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+// The metaTags image fields for `card`, served at `path` on the page's own host.
+export function cardImage(card, path, pageUrl, alt) {
+  return { image: new URL(`${path}?v=${cardVersion(card)}`, pageUrl).href, imageWidth: 1200, imageHeight: 630, imageAlt: alt };
 }
 
 // `name` is the full name ("alice.gwei"), `dappHash` its gwei.domains link fragment, `pageUrl` this page.
@@ -415,7 +511,7 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
   const accent = page.color || null;
   const banner = avatarUrl(profile.bannerImage || t.header);
   const links = (page.links || []).map(webLink).filter(Boolean);
-  const display = t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '';
+  const display = displayName(name, t);
   const avatar = avatarUrl(profile.avatarImage || t.avatar);
   const description = t.description || `${name} on the Gwei Name Service, an ownerless namespace on Ethereum.`;
   const dapp = `https://gwei.domains/#${dappHash}`;
@@ -446,11 +542,10 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
     title: name,
     subtitle: '.gwei name',
     icon: faviconLinks(profile),
-    head: feed + (avatar?.startsWith('https://')
-      ? metaTags({ title: name, description, url: pageUrl, image: avatar })
-      : profile.seed
-        ? metaTags({ title: name, description, url: pageUrl, image: new URL(AVATAR_PNG_PATH, pageUrl).href, imageSize: '256' })
-        : metaTags({ title: name, description, url: pageUrl, image: 'https://gwei.domains/icon-512.png' })),
+    head: feed + metaTags({
+      title: name, description, url: pageUrl,
+      ...cardImage(profileCard(name, profile, pageUrl), CARD_PATH, pageUrl, `${name} on the Gwei Name Service`),
+    }),
     body,
   });
 }
@@ -471,18 +566,20 @@ export function faviconLinks(profile) {
   return '<link rel="icon" href="https://gwei.domains/favicon.ico">';
 }
 
-// The image link previews use: the avatar when it's a plain https URL, else the generated PNG.
-export function shareImage(profile, pageUrl) {
-  const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
-  if (avatar?.startsWith('https://')) return { image: avatar };
-  if (profile.seed) return { image: new URL(AVATAR_PNG_PATH, pageUrl).href, imageSize: '256' };
-  return { image: 'https://gwei.domains/icon-512.png' };
-}
-
-export function renderUnregistered({ name, dappHash }) {
+// Any name can be looked up, so these pages stay out of search indexes; previews still get a card,
+// with the price when the name can be registered (`price` from profileFromResults).
+export function renderUnregistered({ name, dappHash, pageUrl, price }) {
+  const card = pageUrl ? unregisteredCard(name, pageUrl, price) : null;
+  const description = !card?.fee ? `${name} isn't registered, or has expired. Register it on gwei.domains.`
+    : `${name} is available for ${card.fee} ETH a year` +
+      (card.premium ? `, plus a ${card.premium} ETH premium that falls to 0 by ${card.premiumEnds}` : '') + '. Register it on gwei.domains.';
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
+    head: card ? '<meta name="robots" content="noindex">' + metaTags({
+      title: name, description, url: pageUrl,
+      ...cardImage(card, CARD_PATH, pageUrl, card.fee ? `${name} is available for ${card.fee} ETH a year` : `${name} isn't registered`),
+    }) : '',
     body: `<div class="name">${escapeHtml(name)}</div><div class="lead muted">isn't registered, or has expired.</div>` +
       `<div class="actions"><a class="btn" href="https://gwei.domains/#${dappHash}">Register it</a></div>`,
   });

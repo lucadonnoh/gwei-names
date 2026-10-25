@@ -13,6 +13,9 @@ COPY dapp/favicon.ico /www/favicon.ico
 COPY dapp/apple-touch-icon.png /www/apple-touch-icon.png
 COPY dapp/icon-192.png /www/icon-192.png
 COPY dapp/icon-512.png /www/icon-512.png
+# Link-preview cards (1200x630), drawn by gateway/ops/render-dapp-cards.mjs.
+COPY dapp/og-card.png /www/og-card.png
+COPY dapp/og-card-guide.png /www/og-card-guide.png
 COPY dapp/manifest.json /www/manifest.json
 EXPOSE 8080
 CMD ["sh", "-c", "httpd -f -v -p ${PORT:-8080} -h /www"]

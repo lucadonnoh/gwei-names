@@ -25,11 +25,13 @@ test('aggregate3 calldata and results match cast', () => {
   assert.equal(decodeAggregate3('0x' + pad32('20') + pad32('ff')), null, 'claims more results than fit');
 });
 
-const results = ({ address = 'a11ce', owner = 'a11ce', expires = '0', text = {} } = {}) => [
+// After the records: isAvailable, getFee (0.0005 ETH) and getPremium, the price of a name nobody holds.
+const results = ({ address = 'a11ce', owner = 'a11ce', expires = '0', text = {}, available = '0', fee = '1c6bf52634000', premium = '0' } = {}) => [
   { success: true, data: word(address) },
   owner === null ? { success: false, data: '' } : { success: true, data: word(owner) },
   { success: true, data: word(expires) },
   ...PROFILE_TEXT_KEYS.map((key) => ({ success: true, data: abiString(text[key] || '') })),
+  { success: true, data: word(available) }, { success: true, data: word(fee) }, { success: true, data: word(premium) },
 ];
 
 test('profiles: unregistered, owner and expiry, and record parsing', () => {
@@ -78,7 +80,8 @@ test('the profile page escapes records and only links to safe URLs', () => {
   assert.match(html, /<span>Owner<\/span>/);
   assert.match(html, /<span>Expires<\/span>2029-06-25/);
   assert.match(html, /<meta property="og:title" content="alice\.gwei">/);
-  assert.match(html, /<meta property="og:image" content="https:\/\/ipfs\.filebase\.io\/ipfs\//);
+  // The preview is the drawn card, not the avatar (its JPEGs and SVGs can't be drawn into it).
+  assert.match(html, /<meta property="og:image" content="https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-card\.png\?v=[0-9a-f]{8}">/);
   assert.match(html, /href="https:\/\/gwei\.domains\/#alice">View on gwei\.domains/);
 
   for (const bad of ['javascript:alert(1)', 'data:text/html,hi', 'http//nope']) {
@@ -89,15 +92,20 @@ test('the profile page escapes records and only links to safe URLs', () => {
     assert.doesNotMatch(out, /class="avatar"/, bad);
   }
   const plain = renderProfile({ name: 'x.gwei', dappHash: 'x', pageUrl: 'https://x.gwei.domains/', profile: profileFromResults(results()) });
-  assert.match(plain, /og:image" content="https:\/\/gwei\.domains\/icon-512\.png"/, 'falls back to the GNS icon');
+  assert.match(plain, /og:image" content="https:\/\/x\.gwei\.domains\/\.well-known\/gwei-card\.png\?v=/, 'a name without an avatar gets a card too');
   assert.match(plain, /x\.gwei on the Gwei Name Service/);
   assert.doesNotMatch(plain, /<span>Owner<\/span>/, 'owner hidden when it is the resolved address');
 });
 
-test('the unregistered page links to registration', () => {
-  const html = renderUnregistered({ name: 'nobody.gwei', dappHash: 'nobody' });
+test('the unregistered page links to registration, has a preview card and stays out of search', () => {
+  const html = renderUnregistered({ name: 'nobody.gwei', dappHash: 'nobody', pageUrl: 'https://nobody.gwei.limo/' });
   assert.match(html, /isn't registered, or has expired/);
   assert.match(html, /href="https:\/\/gwei\.domains\/#nobody">Register it/);
+  assert.match(html, /<meta name="robots" content="noindex">/);
+  assert.match(html, /<meta property="og:title" content="nobody\.gwei">/);
+  assert.match(html, /<meta property="og:image" content="https:\/\/nobody\.gwei\.limo\/\.well-known\/gwei-card\.png\?v=[0-9a-f]{8}">/);
+  assert.match(html, /<meta property="og:image:alt" content="nobody\.gwei isn&#39;t registered">/);
+  assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
 });
 
 test('avatars: NFT references are recognized, inline images allowed, everything else dropped', () => {
@@ -222,4 +230,63 @@ test('name pages use the name’s avatar as their favicon', async () => {
   assert.match(profile, /<link rel="icon" type="image\/png" href="\/\.well-known\/gwei-avatar\.png">/);
   assert.doesNotMatch(profile, /gwei\.domains\/favicon\.ico/);
   assert.match(renderUnregistered({ name: 'nobody.gwei', dappHash: 'nobody' }), /<link rel="icon" href="https:\/\/gwei\.domains\/favicon\.ico">/);
+});
+
+test('preview tags: a large card on the page’s own host, alt text, and escaped records', async () => {
+  const { renderPostPage } = await import('./post-page.js');
+  const tags = (html) => Object.fromEntries([...html.matchAll(/<meta (?:property|name)="([^"]+)" content="([^"]*)">/g)].map((m) => [m[1], m[2]]));
+  const hostile = '"><script>alert(1)</script><meta x=\'';
+  const profile = { ...profileFromResults(results({ text: { display: hostile, description: hostile } })), seed: 'ab'.repeat(32) };
+  for (const host of ['alice.gwei.limo', 'alice.gwei.domains']) {
+    const html = renderProfile({ name: 'alice.gwei', dappHash: 'alice', pageUrl: `https://${host}/`, profile });
+    const t = tags(html);
+    assert.equal(t['og:url'], `https://${host}/`);
+    assert.match(html, new RegExp(`<link rel="canonical" href="https://${host.replace(/\./g, '\\.')}/">`));
+    assert.match(t['og:image'], new RegExp(`^https://${host.replace(/\./g, '\\.')}/\\.well-known/gwei-card\\.png\\?v=[0-9a-f]{8}$`));
+    assert.equal(t['twitter:image'], t['og:image']);
+    assert.equal(t['twitter:card'], 'summary_large_image');
+    assert.deepEqual([t['og:image:width'], t['og:image:height'], t['og:image:type']], ['1200', '630', 'image/png']);
+    assert.equal(t['og:title'], 'alice.gwei', 'the title is the name');
+    assert.equal(t['og:site_name'], 'Gwei Name Service');
+    assert.equal(t['og:type'], 'website');
+    assert.equal(t['og:image:alt'], 'alice.gwei on the Gwei Name Service');
+    assert.equal(t['og:description'], '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;meta x=&#39;');
+    assert.doesNotMatch(html, /<script>alert|<meta x=/);
+  }
+
+  const post = { hash: '0x' + 'a1'.repeat(32), title: `Blobs ${hostile}`, body: 'Hello **there**.', time: 1667844963, onchain: null };
+  const html = renderPostPage({ name: 'alice.gwei', pageUrl: 'https://alice.gwei.limo/', profile, post });
+  const t = tags(html);
+  assert.equal(t['og:type'], 'article');
+  assert.equal(t['og:title'], 'Blobs &quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;meta x=&#39; · alice.gwei', 'the post and its author');
+  assert.match(t['og:image'], /^https:\/\/alice\.gwei\.limo\/\.well-known\/gwei-card\/a1a1a1a1a1a1\.png\?v=[0-9a-f]{8}$/);
+  assert.equal(t['twitter:card'], 'summary_large_image');
+  assert.match(t['og:image:alt'], /, a post by alice\.gwei$/);
+  assert.doesNotMatch(html, /<script>alert|<meta x=/);
+});
+
+test('an unregistered name’s preview carries its price when it can be registered', async () => {
+  const { priceCalls } = await import('./profile-page.js');
+  // Reference: cast calldata 'isAvailable(string,uint256)' nobody 0, and the two uint256 getters.
+  assert.deepEqual(priceCalls(NFT, 'nobody', 'ab'.repeat(32)).map((c) => c.data), [
+    '0x8f8dc386' + pad32('40') + pad32('0') + pad32('6') + hex('nobody').padEnd(64, '0'),
+    '0xfcee45f4' + pad32('6'),
+    '0x1bf1fffb' + 'ab'.repeat(32),
+  ]);
+  assert.equal(priceCalls(NFT, '🦄', '00').at(1).data, '0xfcee45f4' + pad32('4'), 'the fee goes by UTF-8 bytes');
+
+  assert.deepEqual(profileFromResults(results({ address: '0', available: '1' })), { registered: false, price: { fee: '500000000000000' } });
+  assert.deepEqual(profileFromResults(results({ address: '0' })), { registered: false }, 'in its grace period, or not a valid label');
+  const expiredAt = 1785000000;
+  assert.deepEqual(profileFromResults(results({ address: '0', available: '1', expires: expiredAt.toString(16), premium: (63n * 10n ** 18n).toString(16) })),
+    { registered: false, price: { fee: '500000000000000', premium: '63000000000000000000', premiumEnds: expiredAt + 111 * 86400 } });
+
+  const tags = (html) => Object.fromEntries([...html.matchAll(/<meta (?:property|name)="([^"]+)" content="([^"]*)">/g)].map((m) => [m[1], m[2]]));
+  const page = (price) => tags(renderUnregistered({ name: 'nobody.gwei', dappHash: 'nobody', pageUrl: 'https://nobody.gwei.limo/', price }));
+  assert.equal(page({ fee: '500000000000000' })['og:description'], 'nobody.gwei is available for 0.0005 ETH a year. Register it on gwei.domains.');
+  assert.equal(page({ fee: '50000000000000000' })['og:image:alt'], 'nobody.gwei is available for 0.05 ETH a year');
+  assert.equal(page({ fee: '500000000000000', premium: '63492063492063492063', premiumEnds: 1794700800 })['og:description'],
+    'nobody.gwei is available for 0.0005 ETH a year, plus a 63 ETH premium that falls to 0 by 2026-11-15. Register it on gwei.domains.');
+  assert.equal(page(undefined)['og:description'], 'nobody.gwei isn&#39;t registered, or has expired. Register it on gwei.domains.');
+  assert.notEqual(page({ fee: '500000000000000' })['og:image'], page(undefined)['og:image'], 'the price is part of the card’s version');
 });

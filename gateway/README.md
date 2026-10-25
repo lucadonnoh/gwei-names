@@ -48,11 +48,18 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   `org.telegram`, `org.signal`, `email` and `header` (banner) records, read in one Multicall3 call, plus Open Graph
   tags for link previews. The `gwei-page` record (JSON, written by the dapp's Edit Profile form) adds
   an accent `color` and a `links` list. Names without an avatar get a generated one (SVG on the page,
-  PNG at `/.well-known/gwei-avatar.png` for previews). ENSIP-12 NFT avatars and banners are resolved
+  PNG at `/.well-known/gwei-avatar.png` for the favicon). ENSIP-12 NFT avatars and banners are resolved
   through `tokenURI`/`uri` (64 KB metadata, 4 s). Record
   values are escaped, links are limited to http(s)/mailto, and the page has no scripts under a strict
   CSP. Other paths on such a name are a 404; an unregistered (or expired) name gets a page linking to
   its registration in the dapp (`https://gwei.domains/#<name>`).
+- **Link previews.** Profiles, posts and unregistered names preview as 1200x630 cards
+  (`/.well-known/gwei-card.png`, `/.well-known/gwei-card/<post>.png`) that `share-card.js` draws in the
+  Worker: the name, its pixel mark and bio (or a post's title, or an available name's price) in a Unifont
+  subset (`card-font.js`, SIL OFL, rebuilt with `ops/build-card-font.mjs`), as an indexed PNG. A card is
+  drawn once per version of what it shows and kept at the edge for a day; the page's image URL carries
+  that version (`?v=`), so previews pick up record changes. The dapp's own cards are static files
+  (`ops/render-dapp-cards.mjs`).
 - Name sites are HTTPS-only: plain HTTP requests get a 301 to the same URL over HTTPS.
 - Transient failures (RPC lookups, a busy broker, storage gateways that don't answer) return
   uncached error pages that reload themselves up to three times a minute.

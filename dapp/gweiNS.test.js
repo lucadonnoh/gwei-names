@@ -2448,10 +2448,32 @@ test('icons and the manifest exist and are copied by the Dockerfile', () => {
   assert.match(html, /<link rel="icon" href="\/favicon\.ico" sizes="32x32">/);
   assert.match(html, /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png">/);
   assert.match(html, /<link rel="manifest" href="\/manifest\.json">/);
-  assert.match(html, /<meta property="og:image" content="https:\/\/gwei\.domains\/icon-512\.png">/);
-  assert.match(html, /<meta name="twitter:card" content="summary">/);
   assert.match(html, /<meta name="description" content="[^"]+">/);
   assert.doesNotMatch(html.match(/<title>([^<]*)<\/title>/)[1], /^GNS$|—/);
+});
+
+test('the dapp and the guide preview as large 1200x630 cards that the image copies', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'Dockerfile'), 'utf8');
+  const guide = fs.readFileSync(path.join(__dirname, 'guide.html'), 'utf8');
+  for (const [page, file, url] of [[html, 'og-card.png', 'https://gwei.domains/'], [guide, 'og-card-guide.png', 'https://gwei.domains/guide/']]) {
+    const head = page.slice(0, page.indexOf('</head>'));
+    const meta = (key) => (new RegExp(`<meta (?:property|name)="${key}" content="([^"]*)">`).exec(head) || [])[1];
+    assert.equal(meta('og:image'), `https://gwei.domains/${file}`);
+    assert.equal(meta('twitter:image'), `https://gwei.domains/${file}`);
+    assert.equal(meta('twitter:card'), 'summary_large_image');
+    assert.deepEqual([meta('og:image:width'), meta('og:image:height'), meta('og:image:type')], ['1200', '630', 'image/png']);
+    assert.equal(meta('og:url'), url);
+    for (const key of ['og:title', 'og:description', 'og:site_name', 'og:image:alt', 'twitter:title', 'twitter:description']) {
+      assert.ok(meta(key), `${file}: ${key}`);
+      assert.doesNotMatch(meta(key), /—/, `${file}: ${key}`);
+    }
+    const png = fs.readFileSync(path.join(__dirname, file));
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], file);
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630], file);
+    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /www/${file.replace('.', '\\.')}$`, 'm'));
+  }
+  // Crawlers read the charset from the header, which busybox only sends when its config says so.
+  assert.match(fs.readFileSync(path.join(__dirname, 'httpd.conf'), 'utf8'), /^\.html:text\/html;charset=utf-8$/m);
 });
 
 test('heavy libraries load on demand and ethers no longer blocks rendering', () => {

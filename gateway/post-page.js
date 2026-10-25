@@ -3,7 +3,7 @@
 
 import { excerpt, renderMarkdown } from './markdown.js';
 import { postPath } from './posts-format.js';
-import { avatarHtml, escapeHtml, faviconLinks, metaTags, renderLayout, shareImage, textOn } from './profile-page.js';
+import { avatarHtml, cardImage, escapeHtml, faviconLinks, metaTags, postCard, postCardPath, renderLayout, textOn } from './profile-page.js';
 
 const short = (hex) => `${hex.slice(0, 10)}…${hex.slice(-6)}`;
 const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
@@ -42,7 +42,10 @@ export function renderPostPage({ name, pageUrl, profile, post }) {
     subtitle: '.gwei post',
     icon: faviconLinks(profile),
     head: `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` +
-      metaTags({ title: post.title, description, url, type: 'article', ...shareImage(profile, pageUrl) }),
+      metaTags({
+        title: `${post.title} · ${name}`, description, url, type: 'article',
+        ...cardImage(postCard(name, profile, post, pageUrl), postCardPath(post.hash), pageUrl, `${post.title}, a post by ${name}`),
+      }),
     body,
   });
 }

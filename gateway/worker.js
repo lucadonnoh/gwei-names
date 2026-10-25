@@ -17,10 +17,12 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  AVATAR_PNG_PATH, MULTICALL3, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, decodeAggregate3, encodeAggregate3, nftAvatarRef,
-  postListHtml, profileFromResults, renderLayout, renderProfile, renderUnregistered,
+  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, cardVersion,
+  decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
+  renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
 import { renderFeed, renderPostPage } from './post-page.js';
+import { renderCard } from './share-card.js';
 import { MAX_POST_BYTES, POST_PATH, parsePost, postPath } from './posts-format.js';
 import { renderMarkdown } from './markdown.js';
 
@@ -65,6 +67,9 @@ const CONTENT_TTL = 300;     // proxied content (seconds)
 // resolveMode() is `pure` on every contract we've seen, so its answer is effectively immutable and
 // worth caching hard: it saves an eth_call on every cold web3:// request.
 const MODE_TTL = 86400;      // contract → resolve mode (seconds)
+// A drawn link-preview card is keyed on a hash of what it shows, so it never goes stale; records
+// changes reach new cards within RESOLVE_TTL, like everything else.
+const CARD_TTL = 86400;
 const CACHE_BASE = 'https://gwei-cache.internal'; // synthetic keys for the resolution cache
 
 const SEL_COMPUTEID = 'fb021939'; // computeId(string)
@@ -639,6 +644,33 @@ function htmlResponse(html, status, cache = 'public, max-age=60', csp = null) {
   return new Response(html, { status, headers });
 }
 
+// A link-preview card (share-card.js), drawn once per version of what it shows and kept at the edge.
+// The cache key is computed from the records, never from the request, so no query string makes the
+// Worker draw again. The ?v= a page puts in the image URL only decides how long clients may keep it:
+// a day when it is the current version, a few minutes when it is stale or missing.
+async function cardResponse(card, url, cache, ctx) {
+  const version = cardVersion(card);
+  const key = new Request(`${CACHE_BASE}/card/${encodeURIComponent(url.hostname)}${url.pathname}?v=${version}`);
+  const headers = harden(new Headers({
+    'content-type': 'image/png',
+    'cache-control': `public, max-age=${url.searchParams.get('v') === version ? CARD_TTL : RESOLVE_TTL}`,
+  }));
+  const hit = await cache.match(key);
+  if (hit) return new Response(hit.body, { status: 200, headers });
+  let png;
+  try {
+    png = await renderCard(card);
+  } catch (error) {
+    // A card that can't be drawn must not leave a broken image in a preview: fall back to the site's.
+    console.error(JSON.stringify({ event: 'card_failed', host: url.hostname, path: url.pathname, message: String(error?.message || error).slice(0, 200) }));
+    return Response.redirect(`https://${DAPP_HOST}/og-card.png`, 302);
+  }
+  ctx.waitUntil(cache.put(key, new Response(png, {
+    headers: { 'content-type': 'image/png', 'cache-control': `public, max-age=${CARD_TTL}` },
+  })).catch(() => {}));
+  return new Response(png, { status: 200, headers });
+}
+
 // Transient failures (RPC, a busy broker, unreachable storage) usually clear within seconds, so these
 // pages reload themselves up to three times a minute instead of leaving the visitor to refresh.
 const RETRY_SCRIPT = '<script>(()=>{try{const k="gwei-retry:"+location.href,now=Date.now(),' +
@@ -750,17 +782,20 @@ async function lookupName(name, route) {
     if (!ccRes) return { error: 'rpc' };
     result = parseContentContract(readText(ccRes.slice(2), word(ccRes.slice(2), 0))) || { state: 'none' };
     // A name without a website gets a profile page from its records, read in one Multicall3 call;
-    // resolve() also tells an unregistered (or expired) name from one without a site. If the call
-    // fails, the page just shows the plain "no website" message.
+    // resolve() also tells an unregistered (or expired) name from one without a site, and the same
+    // call asks what registering it would cost. If the call fails, the page just shows the plain
+    // "no website" message.
     if (result.state === 'none') {
       try {
         const calls = [SEL_RESOLVE, SEL_OWNEROF, SEL_EXPIRESAT]
           .map((sel) => ({ target: NAMENFT, data: '0x' + sel + tokenIdHex }))
-          .concat(PROFILE_TEXT_KEYS.map((key) => ({ target: NAMENFT, data: encodeTextCall(tokenIdHex, key) })));
+          .concat(PROFILE_TEXT_KEYS.map((key) => ({ target: NAMENFT, data: encodeTextCall(tokenIdHex, key) })))
+          .concat(priceCalls(NAMENFT, name.slice(0, -'.gwei'.length), tokenIdHex));
         const res = await ethCall(1, MULTICALL3, encodeAggregate3(calls), route);
         const profile = res ? profileFromResults(decodeAggregate3(res)) : null;
         if (profile) {
           result.registered = profile.registered;
+          if (profile.price) result.price = profile.price;
           if (profile.registered) {
             profile.seed = tokenIdHex; // generative avatar
             const ref = nftAvatarRef(profile.text.avatar);
@@ -1068,19 +1103,25 @@ export default {
     if (r.error) return rpcFailedPage('gwei gateway');
     if (r.state === 'none') {
       const dappHash = encodeURIComponent(decodedSub);
-      if (r.registered === false) return htmlResponse(renderUnregistered({ name, dappHash }), 404, undefined, PROFILE_CSP);
+      const pageUrl = `https://${host}/`;
+      // An unregistered name's root answers 200: previews (X, Telegram, WhatsApp) are only made for pages that do.
+      if (r.registered === false) {
+        if (url.pathname === CARD_PATH) return cardResponse(unregisteredCard(name, pageUrl, r.price), url, cache, ctx);
+        return htmlResponse(renderUnregistered({ name, dappHash, pageUrl, price: r.price }), url.pathname === '/' ? 200 : 404, undefined, PROFILE_CSP);
+      }
       if (url.pathname === AVATAR_PNG_PATH && r.profile?.seed) {
         // Only an accent-colour change alters the generated avatar, so a day of caching is fine.
         const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }));
         return new Response(await avatarPng(r.profile.seed, 256, r.profile.page?.color), { status: 200, headers });
       }
-      const pageUrl = `https://${host}/`;
+      if (url.pathname === CARD_PATH && r.profile) return cardResponse(profileCard(name, r.profile, pageUrl), url, cache, ctx);
       const index = postIndex(env);
       // Posts count for the name's current owner only, so a sold name doesn't carry its old posts.
       const token = r.profile?.seed && r.profile.owner ? '0x' + r.profile.seed : null;
-      const postMatch = POST_PATH.exec(url.pathname);
+      const postMatch = POST_PATH.exec(url.pathname) || POST_CARD_PATH.exec(url.pathname);
       if (index && token && postMatch) {
         const post = await fromIndex(() => index.postForToken(token, r.profile.owner, postMatch[1]), null);
+        if (post && url.pathname.endsWith('.png')) return cardResponse(postCard(name, r.profile, post, pageUrl), url, cache, ctx);
         if (post) {
           return htmlResponse(renderPostPage({ name, pageUrl, profile: r.profile, post }), 200, 'public, max-age=60', PROFILE_CSP);
         }

@@ -1200,10 +1200,11 @@ test('transient error pages retry themselves and are never cached', async () => 
 });
 
 // aggregate3 result for [resolve, ownerOf, expiresAt, ...text(PROFILE_TEXT_KEYS)].
-function abiProfile({ address = '0', owner = address, expires = '0', text = {} } = {}) {
+function abiProfile({ address = '0', owner = address, expires = '0', text = {}, available = '0', fee = '1c6bf52634000', premium = '0' } = {}) {
   const str = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return pad32('20') + pad32((utf8(v).length).toString(16)) + d; };
   const items = [[true, pad32(address)], [true, pad32(owner)], [true, pad32(expires)],
-    ...PROFILE_TEXT_KEYS.map((k) => [true, str(text[k] || '')])];
+    ...PROFILE_TEXT_KEYS.map((k) => [true, str(text[k] || '')]),
+    [true, pad32(available)], [true, pad32(fee)], [true, pad32(premium)]]; // isAvailable, getFee, getPremium
   const elements = items.map(([ok, data]) => pad32(ok ? '1' : '0') + pad32('40') + pad32((data.length / 2).toString(16)) + data);
   let cursor = items.length * 32;
   const offsets = elements.map((e) => { const o = pad32(cursor.toString(16)); cursor += e.length / 2; return o; });
@@ -1217,9 +1218,10 @@ const rpcProfile = (profile) => (data, url, to) => (to?.toLowerCase() === MULTIC
 
 test('an unregistered name gets a register page; a registered one without a site gets its profile', async () => {
   let res = await invoke('https://nobody.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
-  assert.equal(res.status, 404);
+  assert.equal(res.status, 200, 'link previews are only made for pages that answer 200');
   let html = await res.text();
   assert.match(html, /isn't registered, or has expired/);
+  assert.match(html, /<meta name="robots" content="noindex">/);
   assert.match(html, /href="https:\/\/gwei\.domains\/#nobody">Register it/);
   assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
 
@@ -1440,7 +1442,7 @@ test('an NFT avatar is resolved through tokenURI and its metadata', async () => 
   assert.match(plainHtml, /<svg class="avatar"/, 'falls back to the generated avatar');
 });
 
-test('profiles: primary-name badge, generated avatar as the preview image, and its PNG', async () => {
+test('profiles: primary-name badge, the preview card, and the generated avatar PNG', async () => {
   const strTail = (v) => { let d = toHex(utf8(v)); while (d.length % 64) d += '0'; return '0x' + pad32('20') + pad32(utf8(v).length.toString(16)) + d; };
   const rpc = (data, url, to) => (data.startsWith('0x9af8b7aa') ? strTail('Alice.gwei') : rpcProfile({ address: 'a11ce' })(data, url, to));
   const fetchMock = makeFetch({ rpc });
@@ -1449,7 +1451,8 @@ test('profiles: primary-name badge, generated avatar as the preview image, and i
   const html = await res.text();
   assert.match(html, /<span class="badge">Primary name<\/span>/);
   assert.match(html, /<svg class="avatar"/);
-  assert.match(html, /og:image" content="https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-avatar\.png"/);
+  assert.match(html, /og:image" content="https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-card\.png\?v=[0-9a-f]{8}"/);
+  assert.match(html, /<link rel="icon" type="image\/png" href="\/\.well-known\/gwei-avatar\.png">/, 'the generated PNG is still the favicon');
   assert.match(html, /href="https:\/\/x\.com\/intent\/post\?text=alice\.gwei&amp;url=https%3A%2F%2Falice\.gwei\.domains%2F"/);
 
   res = await invoke('https://alice.gwei.domains/.well-known/gwei-avatar.png', { cache, fetchMock });
@@ -1686,4 +1689,90 @@ test('the visitor\'s Accept header is not forwarded to storage gateways', async 
   wrapped.calls = fetchMock.calls;
   await invoke('https://donnoh.gwei.domains/', { cache: makeCache(), fetchMock: wrapped, headers: { accept: 'application/vnd.ipld.raw' } });
   assert.equal(seen, '*/*');
+});
+
+// ---- link-preview cards ---------------------------------------------------------------------------
+const pngSize = (bytes) => {
+  assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  const view = new DataView(bytes.buffer, bytes.byteOffset);
+  return [view.getUint32(16), view.getUint32(20)];
+};
+const ogImage = (html) => /<meta property="og:image" content="([^"]+)">/.exec(html)[1];
+const cardKeys = (cache) => [...cache._store.keys()].filter((k) => k.includes('/card/'));
+
+test('cards: drawn once per version of the records, kept at the edge, never redrawn for a query string', async () => {
+  const cache = makeCache();
+  let description = 'builds things';
+  const fetchMock = makeFetch({ rpc: (...args) => rpcProfile({ address: 'a11ce', text: { description } })(...args) });
+  const html = await (await invoke('https://alice.gwei.limo/', { cache, fetchMock })).text();
+  const image = ogImage(html);
+  assert.match(image, /^https:\/\/alice\.gwei\.limo\/\.well-known\/gwei-card\.png\?v=[0-9a-f]{8}$/, 'on the host the page was asked for');
+  assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+
+  const rpcBefore = fetchMock.calls.rpc;
+  let res = await invoke(image, { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=86400', 'the current version may be kept a day');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(pngSize(new Uint8Array(await res.arrayBuffer())), [1200, 630]);
+  assert.equal(fetchMock.calls.rpc, rpcBefore, 'the records come from the resolution cache');
+  assert.equal(cardKeys(cache).length, 1);
+
+  for (const query of ['', '?v=deadbeef', '?v=1&x=2', '?nonce=' + Math.random()]) {
+    res = await invoke('https://alice.gwei.limo/.well-known/gwei-card.png' + query, { cache, fetchMock });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=300', `a stale or missing version is kept briefly (${query})`);
+    assert.deepEqual(pngSize(new Uint8Array(await res.arrayBuffer())), [1200, 630]);
+  }
+  assert.equal(cardKeys(cache).length, 1, 'queries never make the Worker draw again');
+
+  // A records change shows up once the resolution entry expires: a new version, a new card.
+  description = 'builds other things';
+  cache.advance(301);
+  const next = ogImage(await (await invoke('https://alice.gwei.limo/', { cache, fetchMock })).text());
+  assert.notEqual(next, image);
+  assert.equal((await invoke(next, { cache, fetchMock })).headers.get('cache-control'), 'public, max-age=86400');
+  assert.equal(cardKeys(cache).length, 2);
+
+  // The same name on gwei.domains has its own URLs (and card, which shows that host).
+  const other = ogImage(await (await invoke('https://alice.gwei.domains/', { cache, fetchMock })).text());
+  assert.match(other, /^https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-card\.png\?v=/);
+});
+
+test('cards: an unregistered name shows its price; only its root page answers 200', async () => {
+  const cache = makeCache();
+  const fetchMock = makeFetch({ rpc: rpcProfile({ address: '0', available: '1' }) });
+  const res = await invoke('https://nobody.gwei.limo/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /<meta property="og:description" content="nobody\.gwei is available for 0\.0005 ETH a year\. Register it on gwei\.domains\.">/);
+  const card = await invoke(ogImage(html), { cache, fetchMock });
+  assert.equal(card.status, 200);
+  assert.deepEqual(pngSize(new Uint8Array(await card.arrayBuffer())), [1200, 630]);
+  assert.equal((await invoke('https://nobody.gwei.limo/elsewhere', { cache, fetchMock })).status, 404);
+  // isAvailable(label, 0), getFee and getPremium ride in the profile's Multicall3 call: no extra round trip.
+  assert.equal(fetchMock.calls.rpc, 4, 'computeId, contenthash, contentcontract, one multicall');
+
+  const lapsed = await invoke('https://lapsed.gwei.limo/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
+  assert.match(await lapsed.text(), /content="lapsed\.gwei isn&#39;t registered, or has expired\./, 'no price while it can’t be registered');
+});
+
+test('cards: a post’s card names the post; unknown posts and named websites are left alone', async () => {
+  const cache = makeCache();
+  const env = { POST_INDEX: fakePostIndex() };
+  const html = await (await invoke('https://alice.gwei.domains/posts/a1a1a1a1a1a1-exploring-the-blobspace', { cache, fetchMock: aliceProfile(), env })).text();
+  const image = ogImage(html);
+  assert.match(image, /^https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-card\/a1a1a1a1a1a1\.png\?v=[0-9a-f]{8}$/);
+  assert.match(html, /<meta property="og:title" content="Exploring the blobspace · alice\.gwei">/);
+  const res = await invoke(image, { cache, fetchMock: aliceProfile(), env });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=86400');
+  assert.deepEqual(pngSize(new Uint8Array(await res.arrayBuffer())), [1200, 630]);
+  assert.equal((await invoke('https://alice.gwei.domains/.well-known/gwei-card/ffffffffffff.png', { cache, fetchMock: aliceProfile(), env })).status, 404);
+
+  // A name with its own website serves its own files there; the gateway adds nothing to it.
+  const site = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('site file', { status: 200 }) });
+  const own = await invoke('https://donnoh.gwei.limo/.well-known/gwei-card.png', { cache: makeCache(), fetchMock: site });
+  assert.equal(await own.text(), 'site file');
 });
