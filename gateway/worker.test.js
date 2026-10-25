@@ -1617,7 +1617,7 @@ test('a profile lists the owner’s posts, newest first, with a feed link', asyn
   assert.equal(res.status, 200);
   const html = await res.text();
   assert.match(html, /<div class="section">Posts<\/div>/);
-  assert.match(html, /<a class="post-link" href="\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"><span class="post-date">2022-11-07<\/span><span class="post-name">Exploring the blobspace<\/span><\/a>/);
+  assert.match(html, /<a class="post-link" href="\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"><span class="post-date">Nov 7, 2022<\/span><span class="post-name">Exploring the blobspace<\/span><\/a>/);
   assert.match(html, /<span class="post-name">Pending &lt;one&gt;<\/span><span class="badge">Publishing<\/span>/);
   assert.match(html, /<link rel="alternate" type="application\/atom\+xml" title="alice\.gwei" href="\/feed\.xml">/);
   assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'forToken'), ['forToken', TOKEN_HEX, '0x' + pad32('b0b').slice(24), 50],
@@ -1643,7 +1643,7 @@ test('a post page renders the body safely and shows where it lives on Ethereum',
   assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
   let html = await res.text();
   assert.match(html, /<title>Exploring the blobspace · alice\.gwei<\/title>/);
-  assert.match(html, /<h2 class="post-title">Exploring the blobspace<\/h2><div class="post-meta">2022-11-07<\/div>/);
+  assert.match(html, /<h2 class="post-title">Exploring the blobspace<\/h2><div class="post-meta"><time datetime="2022-11-07">November 7, 2022<\/time><\/div>/);
   assert.match(html, /<div class="post-body"><h2 id="hello">Hello<\/h2><p>Some <strong>math<\/strong>: <math><msub><mi>y<\/mi><mn>0<\/mn><\/msub><\/math>\.<\/p><\/div>/);
   assert.match(html, /On Ethereum since block <a href="https:\/\/etherscan\.io\/block\/26263300">26263300<\/a>/);
   assert.match(html, /href="https:\/\/blobscan\.com\/blob\/0x01b1b1/);

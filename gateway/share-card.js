@@ -232,6 +232,64 @@ function drawPills(raw, f, labels, right, y) {
 // is a site card ({ kind: 'site', title, lead, footer }) for the dapp's own pages.
 const lineHeight = (scale) => 16 * scale + (scale >= 5 ? 8 : 6);
 const TITLE_FITS = [[8, 1], [7, 1], [6, 2], [5, 3], [4, 4], [3, 5]];
+
+// The main block: rows of wrapped text, top to bottom, fitted between the brand and the bottom row.
+// Exported for tests.
+const TEXT_TOP = PAD + 40, TEXT_BOTTOM = H - PAD - 56;
+export function textRows(card, textWidth) {
+  const f = loadFont();
+  const rows = [];
+  const text = (value, scale, color, maxLines, gap, extra) => {
+    const list = clusters(f, String(value).replace(/\s+/g, ' ').trim());
+    if (list.length) rows.push({ list, lines: fitText(f, list, Math.floor(textWidth / scale), maxLines), scale, color, gap, ...extra });
+  };
+  // A title as large as fits in a few lines (`fits`: sizes and line counts, largest first).
+  const fitsAll = (list, [scale, maxLines]) => wrap(list, Math.floor(textWidth / scale), / /).length <= maxLines;
+  const title = (value, fits, gap) => {
+    const list = clusters(f, String(value).replace(/\s+/g, ' ').trim());
+    const found = fits.findIndex((fit) => fitsAll(list, fit));
+    const at = found >= 0 ? found : fits.length - 1;
+    const [scale, maxLines] = fits[at];
+    rows.push({ list, lines: fitText(f, list, Math.floor(textWidth / scale), maxLines), scale, color: INK, gap, fits, at });
+  };
+  if (card.kind === 'post') {
+    text(card.name, 3, SOFT, 1, 0, { byline: true });
+    title(card.title, TITLE_FITS, 28);
+    if (card.date) text(card.date, 2, MUTED, 1, 24);
+  } else if (card.kind === 'site') {
+    title(card.title, [[10, 1], ...TITLE_FITS], 0);
+    if (card.lead) text(card.lead, 3, SOFT, 3, 28);
+  } else {
+    // A premium line needs the room of a smaller name.
+    rows.push({ ...fitName(f, card.name, textWidth, card.premium ? 8 : 10), color: INK, gap: 0 });
+    if (card.kind === 'unregistered' && card.fee) { // what registering it costs, as the dapp shows it
+      text('is available to register', 3, SOFT, 1, card.premium ? 18 : 24);
+      text(`${card.fee} ETH / year`, 6, INK, 1, 10);
+      if (card.premium) text(`+ ${card.premium} ETH premium, falling to 0 by ${card.premiumEnds}`, 3, MUTED, 2, 10);
+    } else if (card.kind === 'unregistered') text('isn\u2019t registered, or has expired.', 3, SOFT, 1, 24);
+    if (card.display) text(card.display, 4, SOFT, 1, 24);
+    if (card.bio) text(card.bio, 3, MUTED, 3, card.display ? 10 : 24);
+  }
+  // Whatever doesn't fit first takes a title down to a smaller size that still shows all of it; then
+  // loses lines from the bottom up (they end in "…"), then whole rows.
+  const height = () => rows.reduce((sum, r) => sum + r.gap + r.lines.length * lineHeight(r.scale), 0);
+  while (height() > TEXT_BOTTOM - TEXT_TOP) {
+    const t = rows.find((row) => row.fits);
+    const smaller = t ? t.fits.findIndex((fit, i) => i > t.at && fitsAll(t.list, fit)) : -1;
+    if (smaller >= 0) {
+      t.at = smaller;
+      [t.scale] = t.fits[smaller];
+      t.lines = fitText(f, t.list, Math.floor(textWidth / t.scale), t.fits[smaller][1]);
+      continue;
+    }
+    const r = rows.findLast((row) => row.list && row.lines.length > 1);
+    if (r) r.lines = fitText(f, r.list, Math.floor(textWidth / r.scale), r.lines.length - 1);
+    else if (rows.length > 1) rows.pop();
+    else break;
+  }
+  return rows;
+}
+
 export async function renderCard(card) {
   const f = loadFont();
   const model = card.seed ? avatarModel(card.seed, card.accent) : { color: card.accent || INK_BG, cells: [] };
@@ -257,46 +315,9 @@ export async function renderCard(card) {
   if (card.kind === 'site') drawLogo(raw, W - PAD - side + 4, (H - 280) / 2, 28, MARK);
   else if (showMark) drawMark(raw, model.cells, W - PAD - side, (H - side) / 2, side / 9);
 
-  // The main block: rows of wrapped text, drawn top to bottom.
-  const rows = [];
-  const text = (value, scale, color, maxLines, gap, extra) => {
-    const list = clusters(f, String(value).replace(/\s+/g, ' ').trim());
-    if (list.length) rows.push({ list, lines: fitText(f, list, Math.floor(textWidth / scale), maxLines), scale, color, gap, ...extra });
-  };
-  // A title as large as fits in a few lines.
-  const title = (value, fits, gap) => {
-    const list = clusters(f, String(value).replace(/\s+/g, ' ').trim());
-    const [scale, maxLines] = fits.find(([sc, n]) => wrap(list, Math.floor(textWidth / sc), / /).length <= n) || fits.at(-1);
-    rows.push({ list, lines: fitText(f, list, Math.floor(textWidth / scale), maxLines), scale, color: INK, gap });
-  };
-  if (card.kind === 'post') {
-    text(card.name, 3, SOFT, 1, 0, { byline: true });
-    title(card.title, TITLE_FITS, 28);
-    if (card.date) text(card.date, 2, MUTED, 1, 24);
-  } else if (card.kind === 'site') {
-    title(card.title, [[10, 1], ...TITLE_FITS], 0);
-    if (card.lead) text(card.lead, 3, SOFT, 3, 28);
-  } else {
-    // A premium line needs the room of a smaller name.
-    rows.push({ ...fitName(f, card.name, textWidth, card.premium ? 8 : 10), color: INK, gap: 0 });
-    if (card.kind === 'unregistered' && card.fee) { // what registering it costs, as the dapp shows it
-      text('is available to register', 3, SOFT, 1, card.premium ? 18 : 24);
-      text(`${card.fee} ETH / year`, 6, INK, 1, 10);
-      if (card.premium) text(`+ ${card.premium} ETH premium, falling to 0 by ${card.premiumEnds}`, 3, MUTED, 2, 10);
-    } else if (card.kind === 'unregistered') text('isn\u2019t registered, or has expired.', 3, SOFT, 1, 24);
-    if (card.display) text(card.display, 4, SOFT, 1, 24);
-    if (card.bio) text(card.bio, 3, MUTED, 3, card.display ? 10 : 24);
-  }
-  // Whatever doesn't fit loses lines from the bottom up (they end in "…"), then whole rows.
-  const top = PAD + 40, bottom = H - PAD - 56;
-  const height = () => rows.reduce((sum, r) => sum + r.gap + r.lines.length * lineHeight(r.scale), 0);
-  while (height() > bottom - top) {
-    const r = rows.findLast((row) => row.list && row.lines.length > 1);
-    if (r) r.lines = fitText(f, r.list, Math.floor(textWidth / r.scale), r.lines.length - 1);
-    else if (rows.length > 1) rows.pop();
-    else break;
-  }
-  let y = Math.round(top + Math.max(0, (bottom - top - height()) / 2));
+  const rows = textRows(card, textWidth);
+  const height = rows.reduce((sum, r) => sum + r.gap + r.lines.length * lineHeight(r.scale), 0);
+  let y = Math.round(TEXT_TOP + Math.max(0, (TEXT_BOTTOM - TEXT_TOP - height) / 2));
   for (const r of rows) {
     y += r.gap;
     let x = PAD;

@@ -3,10 +3,9 @@
 
 import { excerpt, renderMarkdown } from './markdown.js';
 import { postPath } from './posts-format.js';
-import { avatarHtml, cardImage, escapeHtml, faviconLinks, metaTags, postCard, postCardPath, renderLayout, textOn } from './profile-page.js';
+import { avatarHtml, cardImage, escapeHtml, faviconLinks, humanDate, metaTags, postCard, postCardPath, renderLayout, textOn } from './profile-page.js';
 
 const short = (hex) => `${hex.slice(0, 10)}…${hex.slice(-6)}`;
-const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
 
 function onchainRows(post) {
   const rows = [];
@@ -30,7 +29,7 @@ export function renderPostPage({ name, pageUrl, profile, post }) {
   const body =
     `<a class="byline" href="/">${avatarHtml(profile)}<span>${escapeHtml(name)}</span></a>` +
     `<h2 class="post-title">${escapeHtml(post.title)}</h2>` +
-    `<div class="post-meta">${day(post.time)}</div>` +
+    `<div class="post-meta"><time datetime="${new Date(post.time * 1000).toISOString().slice(0, 10)}">${humanDate(post.time)}</time></div>` +
     `<div class="post-body">${renderMarkdown(post.body)}</div>` +
     `<div class="panel">${onchainRows(post)}</div>` +
     `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="/">More from ${escapeHtml(name)}</a>` +

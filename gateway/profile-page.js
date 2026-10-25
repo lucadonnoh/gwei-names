@@ -450,7 +450,7 @@ export function metaTags({ title, description, url, image, imageWidth, imageHeig
 export const CARD_PATH = '/.well-known/gwei-card.png';
 export const POST_CARD_PATH = /^\/\.well-known\/gwei-card\/([0-9a-f]{12})\.png$/;
 export const postCardPath = (hash) => `/.well-known/gwei-card/${hash.slice(2, 14)}.png`;
-const CARD_DESIGN = 1; // bump with any change to how cards look, so caches and previews refresh
+const CARD_DESIGN = 2; // bump with any change to how cards look, so caches and previews refresh
 
 const displayName = (name, t) => (t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '');
 // The page's address as people read it: the name's own (Unicode) labels on the page's domain.
@@ -468,11 +468,14 @@ export function profileCard(name, profile, pageUrl) {
     bio: t.description || '', badges: nameBadges(name, profile).filter((b) => CARD_BADGES.includes(b)),
   };
 }
+// A post's date for people: "October 25, 2026", or "Oct 25, 2026" where room is short. UTC, as the
+// block time it comes from.
+export const humanDate = (t, month = 'long') => new Date(t * 1000).toLocaleDateString('en-US', { year: 'numeric', month, day: 'numeric', timeZone: 'UTC' });
 export function postCard(name, profile, post, pageUrl) {
   return {
     kind: 'post', name, host: cardHost(name, pageUrl), seed: profile.seed || null, accent: profile.page?.color || null,
     mark: !avatarUrl(profile.avatarImage || profile.text?.avatar),
-    title: post.title, date: Number.isFinite(post.time) ? new Date(post.time * 1000).toISOString().slice(0, 10) : '',
+    title: post.title, date: Number.isFinite(post.time) ? humanDate(post.time) : '',
   };
 }
 // `price` is the profile's (profileFromResults): set when the name can be registered right now.
@@ -511,9 +514,8 @@ export function textOn(hex) {
 // Posts (posts/SPEC.md) listed under the profile, newest first. Each is { hash, title, time, onchain }.
 export function postListHtml(posts, postPath) {
   if (!posts?.length) return '';
-  const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
   return '<div class="section">Posts</div><div class="posts">' + posts.map((p) =>
-    `<a class="post-link" href="${escapeHtml(postPath(p.hash, p.title))}"><span class="post-date">${day(p.time)}</span>` +
+    `<a class="post-link" href="${escapeHtml(postPath(p.hash, p.title))}"><span class="post-date">${humanDate(p.time, 'short')}</span>` +
     `<span class="post-name">${escapeHtml(p.title)}</span>${p.onchain ? '' : '<span class="badge">Publishing</span>'}</a>`).join('') +
     '</div>';
 }

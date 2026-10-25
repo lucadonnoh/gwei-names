@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crc32, inflateSync } from 'node:zlib';
-import { CARD_HEIGHT, CARD_WIDTH, renderCard } from './share-card.js';
+import { CARD_HEIGHT, CARD_WIDTH, renderCard, textRows } from './share-card.js';
 import { cardVersion, postCard, profileCard, unregisteredCard } from './profile-page.js';
 
 // A strict reader for the PNGs the cards are: every chunk's CRC, the header, and the scanlines.
@@ -96,6 +96,20 @@ test('the font has emoji and the common scripts; anything else is a box, never a
   // A ZWJ sequence draws its first emoji, and invisible characters nothing at all.
   assert.deepEqual(await pixels('👩‍💻.gwei'), await pixels('👩.gwei'));
   assert.deepEqual(await pixels('a\u200b\ufe0f.gwei'), await pixels('a.gwei'));
+});
+
+test('a post title shows in full at a smaller size before it is cut short', () => {
+  const textWidth = CARD_WIDTH - 72 - 288 - 64 - 72; // beside the mark
+  const titleOf = (title) => textRows(postCard('donnoh.gwei', profile(), { title, time: 1761350400 }, PAGE), textWidth).find((r) => r.fits);
+  const shown = (row) => row.lines.map((line) => line.map((c) => c.text).join('')).join(' ');
+  // At the size it first fits by line count, with the byline and date it was 18 px too tall and lost
+  // its last line (2026-10-25, on X).
+  const title = "External bridges vs Rollups' security councils";
+  assert.equal(shown(titleOf(title)), title);
+  assert.equal(shown(titleOf('Exploring the blobspace')), 'Exploring the blobspace');
+  assert.ok(titleOf('Exploring the blobspace').scale >= titleOf(title).scale, 'a short title stays large');
+  const long = titleOf('A very long title '.repeat(12));
+  assert.match(shown(long), /…$/, 'one too long for any size still ends in "…"');
 });
 
 test('a card’s version follows what it shows, and only that', () => {
