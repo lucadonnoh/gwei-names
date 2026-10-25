@@ -2607,7 +2607,7 @@ test('posts: mainnet points at the deployed GnsPosts and the gwei.domains publis
   const end = html.indexOf('const NET_STORAGE_KEY', start);
   const context = vm.createContext({});
   vm.runInContext(html.slice(start, end) + '\nglobalThis.networks = NETWORKS;', context);
-  assert.equal(context.networks.ethereum.posts, '0xb29aE0bA5bafF7Ec36EbCF1682C99810956e3075');
+  assert.equal(context.networks.ethereum.posts, '0x73849f6f2785BA7fd2f41b5B4573B75554417981');
   assert.equal(context.networks.ethereum.postsPublisher, '0x244C707FA9Fbb1907Dc394075633BabD2351F18d');
   assert.equal(context.networks.sepolia.posts, undefined, 'no posts on Sepolia');
 });

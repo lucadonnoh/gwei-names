@@ -37,8 +37,8 @@ storage = "sqlite"
 IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.filebase.io"]'
 
 # GnsPosts (src/GnsPosts.sol) and the block it was deployed in; indexing is off while unset.
-POSTS_CONTRACT = '0xb29aE0bA5bafF7Ec36EbCF1682C99810956e3075'
-POSTS_FROM_BLOCK = '26263907'
+POSTS_CONTRACT = '0x73849f6f2785BA7fd2f41b5B4573B75554417981'
+POSTS_FROM_BLOCK = '26268082'
 # Where the post indexer fetches blobs: Blobscan, which keeps them past the 18 days beacon nodes do, then beacon APIs.
 BLOB_SOURCES = '{"blobscan":"https://api.blobscan.com","beacons":["https://ethereum-beacon-api.publicnode.com"]}'
 
