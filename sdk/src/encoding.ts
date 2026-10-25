@@ -7,16 +7,9 @@ export function encodeString(value: string): string {
   const bytes = new TextEncoder().encode(value)
   const len = bytes.length
   const paddedLen = 32 * Math.ceil(len / 32)
-  const buf = new Uint8Array(64 + paddedLen)
 
-  // offset: 0x20 (32)
-  buf[31] = 32
-  // length
-  buf[63] = len
-  // data
-  buf.set(bytes, 64)
-
-  return bytesToHex(buf)
+  // offset (0x20) + length (a full word: a label can be longer than 255 bytes) + padded data
+  return encodeUint256(32n) + encodeUint256(BigInt(len)) + bytesToHex(paddedBytes(bytes, paddedLen))
 }
 
 /**

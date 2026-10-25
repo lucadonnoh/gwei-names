@@ -44,6 +44,14 @@ describe('encodeString', () => {
     assert.ok(result.startsWith('0000000000000000000000000000000000000000000000000000000000000020'))
     assert.ok(result.includes('0000000000000000000000000000000000000000000000000000000000000000'))
   })
+
+  it('matches viem for strings of 255 bytes and longer', () => {
+    const abi = parseAbi(['function resolve(string name) view returns (address)'])
+    for (const name of ['a'.repeat(255), `${'a'.repeat(256)}.gwei`, `${'🦄'.repeat(100)}.gwei`]) {
+      const viemCalldata = encodeFunctionData({ abi, functionName: 'resolve', args: [name] })
+      assert.equal(encodeString(name), viemArgs(viemCalldata))
+    }
+  })
 })
 
 describe('encodeAddress', () => {
