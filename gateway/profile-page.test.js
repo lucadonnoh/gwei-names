@@ -122,7 +122,8 @@ test('the generated avatar is deterministic per name, symmetric, and a valid PNG
   const seedA = 'ab'.repeat(32), seedB = '01'.repeat(32);
   assert.equal(avatarSvg(seedA), avatarSvg(seedA));
   assert.notEqual(avatarSvg(seedA), avatarSvg(seedB));
-  const cells = [...avatarSvg(seedA).matchAll(/<rect x="(\d+)" y="(\d+)" width="16"/g)].map(([, x, y]) => `${x},${y}`);
+  assert.equal(avatarSvg(seedA).match(/<path /g).length, 1, 'the cells are one shape, so neighbours never overlap');
+  const cells = [...avatarSvg(seedA).matchAll(/M(\d+) (\d+)h16v16h-16z/g)].map(([, x, y]) => `${x},${y}`);
   assert.ok(cells.length >= 16 && cells.length <= 65, 'never nearly blank or solid');
   for (const c of cells) {
     const [x, y] = c.split(',').map(Number);

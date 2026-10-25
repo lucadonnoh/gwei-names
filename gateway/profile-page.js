@@ -246,7 +246,9 @@ export function avatarSvg(seedHex, accent) {
     '<defs><pattern id="av-dots" width="16" height="16" patternUnits="userSpaceOnUse"><rect x="7" y="7" width="2" height="2" fill="#fff" fill-opacity="0.06"/></pattern></defs>' +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="${color}"/>` +
     `<rect width="${AVATAR_SIZE}" height="${AVATAR_SIZE}" fill="url(#av-dots)"/>` +
-    cells.map(([x, y]) => `<rect x="${AVATAR_OFFSET + x * AVATAR_CELL}" y="${AVATAR_OFFSET + y * AVATAR_CELL}" width="${AVATAR_CELL}" height="${AVATAR_CELL}" fill="#fff" fill-opacity="0.92"/>`).join('') +
+    // One path for every cell: as separate translucent rects, neighbours scaled to fractional pixels
+    // overlap by a sliver that is painted twice and shows as a light seam (iOS Safari especially).
+    `<path fill="#fff" fill-opacity="0.92" d="${cells.map(([x, y]) => `M${AVATAR_OFFSET + x * AVATAR_CELL} ${AVATAR_OFFSET + y * AVATAR_CELL}h${AVATAR_CELL}v${AVATAR_CELL}h-${AVATAR_CELL}z`).join('')}"/>` +
     '</svg>';
 }
 
