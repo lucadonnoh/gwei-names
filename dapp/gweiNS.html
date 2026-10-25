@@ -2059,6 +2059,9 @@ const POSTS_ABI = [
   'function refund(bytes32 blobHash, address publisher)',
   'function deposits(bytes32 key, address payer) view returns (uint128 amount, uint64 refundableAt)',
   'function delivered(bytes32 key) view returns (bool)',
+  'error AlreadyDelivered(bytes32 blobHash, address publisher)',
+  'error RefundNotDue(uint256 refundableAt)',
+  'error NothingToRefund()',
 ];
 function postsEnabled() {
   return CHAIN_ID === 1 && /^0x[0-9a-fA-F]{40}$/.test(POSTS_CONTRACT) && /^0x[0-9a-fA-F]{40}$/.test(POSTS_PUBLISHER);
@@ -2606,6 +2609,8 @@ const ABI = [
   'function records(uint256 tokenId) view returns (string label, uint256 parent, uint64 expiresAt, uint64 epoch, uint64 parentEpoch)',
   // Write functions
   'function setAddr(uint256 tokenId, address addr)',
+  'function addr(uint256 tokenId, uint256 coinType) view returns (bytes)',
+  'function setAddrForCoin(uint256 tokenId, uint256 coinType, bytes addr)',
   'function setText(uint256 tokenId, string key, string value)',
   'function setContenthash(uint256 tokenId, bytes hash)',
   'function setPrimaryName(uint256 tokenId)',
@@ -4676,7 +4681,10 @@ const CONTRACT_ERROR_HELP = {
   AllocationsNotSorted: 'Could not prepare the vote allocations. Refresh and try again.',
   TooManyAllocations: 'A name was split across more integrations than its voting power allows.',
   TooManyVotes: 'The vote uses more voting power than the selected .gwei names provide.',
-  InvalidFeeSchedule: 'Integration voting is unavailable because the name fee schedule is invalid.'
+  InvalidFeeSchedule: 'Integration voting is unavailable because the name fee schedule is invalid.',
+  AlreadyDelivered: 'This exact post is already in a blob, so it needs no fee. Try again.',
+  RefundNotDue: 'This fee can’t be refunded yet. Try again after the time shown.',
+  NothingToRefund: 'There is no fee left to refund for this post.'
 };
 // 4-byte selectors of the same errors, for raw provider errors ethers cannot decode
 const CONTRACT_ERROR_SELECTORS = {
@@ -4714,7 +4722,10 @@ const CONTRACT_ERROR_SELECTORS = {
   '0xa3672e63': 'AllocationsNotSorted',
   '0x8daf13c1': 'TooManyAllocations',
   '0xe29c3a1a': 'TooManyVotes',
-  '0xf75a271a': 'InvalidFeeSchedule'
+  '0xf75a271a': 'InvalidFeeSchedule',
+  '0x17e821bc': 'AlreadyDelivered',
+  '0xa8cc90dc': 'RefundNotDue',
+  '0xf76aef65': 'NothingToRefund'
 };
 
 function decodeContractError(e) {
@@ -5604,11 +5615,13 @@ function showStatus(msg, type, txHash) {
   }
 }
 
-// Current managed token
+// Current managed token. Lookups stay available while a transaction is pending and replace these,
+// so a handler pins them (const tokenId = currentTokenId) before its first await.
 let currentTokenId = null;
 let currentTokenName = null;
 let currentExpiry = null;     // bigint unix seconds (top-level names); null otherwise
 let currentRenewFee = null;   // bigint getFee(label byte length), cached per name
+let currentCoin60Stale = null; // the name's separate coin-60 address when it disagrees (coin60Mismatch)
 // Which website records the current name has set. "Set Website" writes to whichever one the input
 // calls for, and clearing needs to know which are actually populated.
 let currentHasContenthash = false;
@@ -5645,8 +5658,9 @@ const SHARE_PATTERNS = [
   { name: 'Take It', pattern: 'cati' },
 ];
 function shareNameType(name) {
-  if (name.endsWith('.zkpassport.gwei')) return 'PROOF OF HUMANITY';
-  if (name.endsWith('.id.gwei')) return 'FREE NAME';
+  // Only the registrars' own children: a deeper name was minted by whoever owns its parent.
+  if (/^[^.]+\.zkpassport\.gwei$/.test(name)) return 'PROOF OF HUMANITY';
+  if (/^[^.]+\.id\.gwei$/.test(name)) return 'FREE NAME';
   return null; // a top-level ".gwei" is self-evident from the name — no badge
 }
 function drawShareBackground(ctx, bg, W, H) {
@@ -5880,9 +5894,20 @@ function addShareButton(el, name) {
   el.append(document.createElement('br'), b);
 }
 
+// NameNFT keeps a name's ETH address twice: setAddr's record (resolve(), addr(node), this page) and a
+// coin-type-60 record from setAddrForCoin, which addr(node, 60) returns first. Neither clears the
+// other and both survive a transfer, so a seller can leave a coin-60 address that wallets using the
+// multichain lookup keep paying after the buyer sets their own. Returns that value when the two differ.
+function coin60Mismatch(coin60, resolved) {
+  const value = String(coin60 || '0x').toLowerCase();
+  if (value === '0x') return null;
+  return resolved && value === resolved.toLowerCase() ? null : value;
+}
+
 async function showManage(tokenId, name) {
   currentTokenId = tokenId;
   currentTokenName = name;
+  currentCoin60Stale = null;
   currentRenewFee = null; // fee depends on label length — refetch per name
   const thisManageVersion = ++manageVersion;
 
@@ -5900,8 +5925,10 @@ async function showManage(tokenId, name) {
       { fn: 'records', args: [tokenId], allowFailure: true },
       { fn: 'contenthash', args: [tokenId], allowFailure: true },
       { fn: 'text', args: [tokenId, CONTENTCONTRACT], allowFailure: true },
-      ...textKeys.map(key => ({ fn: 'text', args: [tokenId, key], allowFailure: true }))
+      ...textKeys.map(key => ({ fn: 'text', args: [tokenId, key], allowFailure: true })),
+      { fn: 'addr(uint256,uint256)', args: [tokenId, 60n], allowFailure: true }
     ]);
+    const coin60Stale = coin60Mismatch(results[5 + textKeys.length]?.[0], results[1]?.[0]);
     const [owner, resolved, record, contentHash] = [
       results[0]?.[0] || null,
       results[1]?.[0] || null,
@@ -5956,6 +5983,13 @@ async function showManage(tokenId, name) {
     if (resolved && resolved !== ethers.ZeroAddress) {
       infoHtml += `<div><span>Resolves to:</span>${addrLink(resolved, false)}</div>`;
     }
+    currentCoin60Stale = coin60Stale;
+    if (coin60Stale) {
+      const shown = coin60Stale.length === 42 ? addrLink(ethers.getAddress(coin60Stale), false) : escapeHtml(coin60Stale.slice(0, 18) + '…');
+      infoHtml += `<div><span>Multichain ETH:</span>${shown}</div>` +
+        `<div style="color:var(--error-fg);font-size:12px;">Wallets that use the multichain lookup send to this address, not the one above.` +
+        (isOwner ? ` <a href="#" onclick="doClearCoin60();return false;" style="color:inherit;">Clear it</a>` : '') + `</div>`;
+    }
     const hasContenthash = !!(contentHash && contentHash !== '0x' && contentHash.length > 2);
     currentHasContenthash = hasContenthash;
     currentContentContract = contentContract;
@@ -5963,7 +5997,7 @@ async function showManage(tokenId, name) {
       const cid = decodeContenthash(contentHash);
       if (GWEI_GATEWAY) {
         const gatewayUrl = `https://${name}.${GWEI_GATEWAY}`;
-        infoHtml += `<div><span>Website:</span><a href="${gatewayUrl}" target="_blank" rel="noopener" style="color:inherit;">${gatewayUrl}</a></div>`;
+        infoHtml += `<div><span>Website:</span><a href="${escapeHtml(gatewayUrl)}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(gatewayUrl)}</a></div>`;
       }
       if (cid) {
         const short = cid.slice(0, 16) + '...' + cid.slice(-6);
@@ -5976,7 +6010,7 @@ async function showManage(tokenId, name) {
       // The gateway serves contenthash first, so flag a contract that's currently shadowed by one.
       if (GWEI_GATEWAY && !hasContenthash) {
         const gatewayUrl = `https://${name}.${GWEI_GATEWAY}`;
-        infoHtml += `<div><span>Website:</span><a href="${gatewayUrl}" target="_blank" rel="noopener" style="color:inherit;">${gatewayUrl}</a></div>`;
+        infoHtml += `<div><span>Website:</span><a href="${escapeHtml(gatewayUrl)}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(gatewayUrl)}</a></div>`;
       }
       const addr = contentContract.address;
       const short = addr.slice(0, 8) + '...' + addr.slice(-6);
@@ -5994,7 +6028,7 @@ async function showManage(tokenId, name) {
     // A name without a website has a profile page on the gateway.
     if (GWEI_GATEWAY && !hasContenthash && !contentContract) {
       const pageUrl = `https://${name}.${GWEI_GATEWAY}`;
-      infoHtml += `<div><span>Page:</span><a href="${pageUrl}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(pageUrl.replace('https://', ''))}</a></div>`;
+      infoHtml += `<div><span>Page:</span><a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(pageUrl.replace('https://', ''))}</a></div>`;
     }
     // Display text records
     const textLabels = {
@@ -6170,7 +6204,7 @@ function updateProfileCost() {
 
 // EIP-5792: wallets that bundle calls (smart accounts, EIP-7702 upgraded accounts) save every change
 // in one confirmation. Returns false when the wallet can't, so the caller sends them one by one.
-async function sendRecordBatch(calls) {
+async function sendRecordBatch(calls, what = 'profile update') {
   const wallet = connectedWalletProvider;
   if (!wallet?.request || calls.length < 2) return false;
   const chainHex = '0x' + CHAIN_ID.toString(16);
@@ -6185,7 +6219,7 @@ async function sendRecordBatch(calls) {
   const sent = await wcTransaction(wallet.request({
     method: 'wallet_sendCalls',
     params: [{ version: '2.0.0', chainId: chainHex, from: connectedAddress, atomicRequired: true, calls }],
-  }), 'Approve the profile update');
+  }), `Approve the ${what}`);
   const id = typeof sent === 'string' ? sent : sent?.id;
   if (!id) throw new Error('The wallet did not return a batch id');
   showStatus('Waiting for confirmation...', '');
@@ -6195,16 +6229,17 @@ async function sendRecordBatch(calls) {
     const status = await wallet.request({ method: 'wallet_getCallsStatus', params: [id] }).catch(() => null);
     const code = status?.status;
     if (code === 200 || code === 'CONFIRMED') {
-      if (status.receipts?.some((r) => r.status === '0x0' || r.status === 0)) throw new Error('The profile update reverted');
+      if (status.receipts?.some((r) => r.status === '0x0' || r.status === 0)) throw new Error(`The ${what} reverted`);
       return true;
     }
-    if ((typeof code === 'number' && code >= 400) || code === 'FAILED') throw new Error('The wallet reported that the profile update failed');
+    if ((typeof code === 'number' && code >= 400) || code === 'FAILED') throw new Error(`The wallet reported that the ${what} failed`);
   }
-  throw new Error('Timed out waiting for the profile update to confirm');
+  throw new Error(`Timed out waiting for the ${what} to confirm`);
 }
 
 async function doSaveProfile() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId;
   const next = readProfileForm();
   for (const key of ['avatar', 'header']) {
     if (!isImageRef(next[key])) { showStatus(`${key === 'avatar' ? 'Avatar' : 'Banner'}: use an https:// or ipfs:// image URL, or an NFT (eip155:1/erc721:0x…/id)`, 'error'); return; }
@@ -6216,13 +6251,13 @@ async function doSaveProfile() {
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
-    const calls = changes.map(([key, value]) => ({ to: CONTRACT, data: contract.interface.encodeFunctionData('setText', [currentTokenId, key, value]) }));
+    const calls = changes.map(([key, value]) => ({ to: CONTRACT, data: contract.interface.encodeFunctionData('setText', [tokenId, key, value]) }));
     if (!(await sendRecordBatch(calls))) {
       for (let i = 0; i < changes.length; i++) {
         const [key, value] = changes[i];
         const label = PROFILE_FIELDS.find((f) => f.key === key)?.label || 'Page style';
         showStatus(changes.length > 1 ? `Saving ${i + 1} of ${changes.length}: ${label}...` : `Saving ${label}...`, '');
-        const tx = await wcTransaction(contract.setText(currentTokenId, key, value), `Approve ${label} (${i + 1} of ${changes.length})`);
+        const tx = await wcTransaction(contract.setText(tokenId, key, value), `Approve ${label} (${i + 1} of ${changes.length})`);
         showStatus('Waiting for confirmation...', '', tx.hash);
         await waitForTx(tx);
       }
@@ -6251,7 +6286,7 @@ function profileFormHtml() {
   };
   const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
   return (pageUrl
-    ? `<div class="profile-hint">Shown on <a href="${pageUrl}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a> while no website is set, and readable by other apps. Leave a field empty to clear it.</div>`
+    ? `<div class="profile-hint">Shown on <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a> while no website is set, and readable by other apps. Leave a field empty to clear it.</div>`
     : '<div class="profile-hint">Readable by other apps. Leave a field empty to clear it.</div>') +
     PROFILE_FIELDS.filter((f) => !f.page).map(field).join('') +
     '<div class="profile-section">Page style</div>' +
@@ -6343,7 +6378,7 @@ function postsFormHtml() {
   const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
   const hasWebsite = currentHasContenthash || !!currentContentContract;
   return (pageUrl
-    ? `<div class="profile-hint">Posts appear on <a href="${pageUrl}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>${hasWebsite ? ' once no website is set: the website takes the page while it is' : ''}. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
+    ? `<div class="profile-hint">Posts appear on <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>${hasWebsite ? ' once no website is set: the website takes the page while it is' : ''}. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
     : '') +
     '<div class="post-list" id="ppList" aria-live="polite"></div>' +
     '<div class="profile-section">New post</div>' +
@@ -6381,7 +6416,7 @@ async function loadOwnPosts() {
       `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
       `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
       `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`).join('');
-    html += await refundRows(tokenId, posts || []);
+    html += await refundRows(tokenId);
     if (tokenId !== currentTokenId || !$('ppList')) return;
     el.innerHTML = html || '<div class="profile-hint" style="margin:0;">No posts yet.</div>';
   } catch (e) {
@@ -6389,10 +6424,25 @@ async function loadOwnPosts() {
   }
 }
 
-// Paid posts whose blob wasn't delivered: once the refund delay has passed, a Refund button.
-async function refundRows(tokenId, shown) {
-  const list = paidPosts(tokenId);
-  if (!list.length || !connectedAddress) return '';
+// Fees this wallet put in escrow for the name's posts whose blob wasn't delivered: once the refund
+// delay has passed, a Refund button. They come from this browser and from the index, so another
+// browser (or a closed tab) still finds them; the contract says what is really there to take back.
+async function refundRows(tokenId) {
+  if (!connectedAddress) return '';
+  let indexed = [];
+  try {
+    const res = await fetch(`${POSTS_API}/authors/${connectedAddress.toLowerCase()}/paid`, { cache: 'no-store' });
+    if (res.ok) indexed = ((await res.json()).authorizations || []).filter((a) => a.token === tokenHexOf(tokenId));
+  } catch (e) {}
+  const seen = new Set();
+  const list = [...paidPosts(tokenId), ...indexed].filter((p) => {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(p?.blob || '') || !/^0x[0-9a-fA-F]{40}$/.test(p?.publisher || '')) return false;
+    const id = `${p.blob}|${p.publisher}`.toLowerCase();
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  if (!list.length) return '';
   const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, await getRpc());
   const keep = [];
   let html = '';
@@ -6402,11 +6452,11 @@ async function refundRows(tokenId, shown) {
       const [delivered, deposit] = await Promise.all([posts.delivered(key), posts.deposits(key, connectedAddress)]);
       if (delivered || deposit.amount === 0n) continue; // published (and paid), or already refunded
       keep.push(p);
-      if (shown.some((s) => s.hash === p.hash && s.onchain)) continue;
       const due = Number(deposit.refundableAt) * 1000 <= Date.now();
-      html += `<div class="post-row"><span class="post-date">unpublished</span><span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(p.title)}</span>` +
+      const title = p.title || `Post ${String(p.hash || '').slice(0, 10)}`;
+      html += `<div class="post-row"><span class="post-date">unpublished</span><span style="flex:1;overflow-wrap:anywhere;">${escapeHtml(title)}</span>` +
         (due
-          ? `<button class="secondary" onclick="doRefundPost('${p.hash}')">Refund ${ethers.formatEther(deposit.amount)} ETH</button>`
+          ? `<button class="secondary" onclick="doRefundPost('${p.blob}', '${p.publisher}')">Refund ${ethers.formatEther(deposit.amount)} ETH</button>`
           : `<span class="post-state">refundable ${new Date(Number(deposit.refundableAt) * 1000).toLocaleString()}</span>`) + '</div>';
     } catch (e) {
       keep.push(p);
@@ -6479,14 +6529,21 @@ async function doPublishPost() {
     const blob = blobVersionedHash(postBlobFrom(bytes));
     showStatus('Uploading the post...', '');
     const uploaded = await uploadPost(bytes, hash);
-    await refreshPostQuote();
-    if (currentPostFee == null) throw new Error('Couldn’t read current gas prices to price the post');
+    // The same post always makes the same blob. If the publisher already delivered it (say, the post
+    // was removed and is posted again), it is in a blob already and needs no fee; the contract would refuse one.
+    const delivered = await new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, await getRpc()).delivered(escrowKeyOf(blob, POSTS_PUBLISHER));
+    if (!delivered) {
+      await refreshPostQuote();
+      if (currentPostFee == null) throw new Error('Couldn’t read current gas prices to price the post');
+    }
+    const fee = delivered ? 0n : currentPostFee;
     const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
-    showStatus(`Approve the post: ${ethers.formatEther(currentPostFee)} ETH, held until the publisher delivers its blob`, '');
-    const tx = await wcTransaction(posts.authorize(tokenId, hash, blob, POSTS_PUBLISHER, { value: currentPostFee }), 'Approve the post');
+    showStatus(delivered ? 'Approve the post: it is already in a blob, so there is no fee' : `Approve the post: ${ethers.formatEther(fee)} ETH, held until the publisher delivers its blob`, '');
+    const tx = await wcTransaction(posts.authorize(tokenId, hash, blob, POSTS_PUBLISHER, { value: fee }), 'Approve the post');
+    // Remembered as soon as it is sent, so the refund is offered even if this tab closes now.
+    if (fee > 0n) savePaidPosts(tokenId, [...paidPosts(tokenId).filter((p) => p.blob !== blob), { hash, blob, publisher: POSTS_PUBLISHER, title }]);
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    savePaidPosts(tokenId, [...paidPosts(tokenId).filter((p) => p.hash !== hash), { hash, blob, publisher: POSTS_PUBLISHER, title }]);
     showStatus('Confirmed. Adding it to your page...', '', tx.hash);
     const indexed = await waitForPostIndexed(hash);
     if (!uploaded) {
@@ -6506,17 +6563,18 @@ async function doPublishPost() {
   }
 }
 
-async function doRefundPost(hash) {
+async function doRefundPost(blob, publisher) {
   if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
-  const p = paidPosts(currentTokenId).find((x) => x.hash === hash);
-  if (!p) return;
+  const tokenId = currentTokenId;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(blob) || !/^0x[0-9a-fA-F]{40}$/.test(publisher)) return;
   isProcessing = true;
   try {
     const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
-    const tx = await wcTransaction(posts.refund(p.blob, p.publisher), 'Approve the refund');
+    const tx = await wcTransaction(posts.refund(blob, publisher), 'Approve the refund');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    savePaidPosts(currentTokenId, paidPosts(currentTokenId).filter((x) => x.hash !== hash));
+    const id = `${blob}|${publisher}`.toLowerCase();
+    savePaidPosts(tokenId, paidPosts(tokenId).filter((x) => `${x.blob}|${x.publisher}`.toLowerCase() !== id));
     showStatus('Refunded. The fee is back in your wallet.', 'success', tx.hash);
     loadOwnPosts();
   } catch (e) {
@@ -6528,11 +6586,12 @@ async function doRefundPost(hash) {
 
 async function doRemovePost(hash) {
   if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
+  const tokenId = currentTokenId;
   if (!confirm('Take this post off your page? Its text stays in the Ethereum blob.')) return;
   isProcessing = true;
   try {
     const posts = new ethers.Contract(POSTS_CONTRACT, POSTS_ABI, signer);
-    const tx = await wcTransaction(posts.remove(currentTokenId, hash), 'Approve removing the post');
+    const tx = await wcTransaction(posts.remove(tokenId, hash), 'Approve removing the post');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     fetch(`${POSTS_API}/sync`, { method: 'POST' }).catch(() => {});
@@ -6568,7 +6627,7 @@ function showManageForm(action) {
     case 'setAddr':
       html = `
         <label>Recipient Address</label>
-        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Transfers to ${currentTokenName}.gwei will go to this address</div>
+        <div style="font-size:11px;opacity:0.5;margin-bottom:8px;">Transfers to ${escapeHtml(currentTokenName)}.gwei will go to this address</div>
         <input type="text" id="resolveAddr" placeholder="0x... (leave empty for self)">
         <button onclick="doSetAddr()">Set Recipient</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -6577,9 +6636,9 @@ function showManageForm(action) {
     case 'setContent':
       html = `${websiteSwitchNote()}
         <label>Website content</label>
-        <div style="font-size:11px;color:var(--fg-muted);margin-bottom:8px;">Host a website at ${currentTokenName}.gwei — paste an IPFS CID, an IPNS name, a Swarm bzz:// reference, or a web3:// contract URL.</div>
+        <div style="font-size:11px;color:var(--fg-muted);margin-bottom:8px;">Host a website at ${escapeHtml(currentTokenName)}.gwei — paste an IPFS CID, an IPNS name, a Swarm bzz:// reference, or a web3:// contract URL.</div>
         <input type="text" id="contentHash" placeholder="bafy… (IPFS), ipns://k51… (IPNS), bzz://…, or web3://0x…:1/">
-        ${GWEI_GATEWAY ? `<div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Visit via: <a href="https://${currentTokenName}.${GWEI_GATEWAY}" target="_blank" rel="noopener" style="color:inherit;">${currentTokenName}.${GWEI_GATEWAY}</a></div>` : ''}
+        ${GWEI_GATEWAY ? `<div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Visit via: <a href="https://${escapeHtml(currentTokenName)}.${GWEI_GATEWAY}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(currentTokenName)}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
       `;
@@ -6598,7 +6657,7 @@ function showManageForm(action) {
       html = `
         <label>Subdomain Label</label>
         <input type="text" id="subLabel" placeholder="e.g. blog">
-        <div style="font-size:12px;opacity:0.5;margin-bottom:12px;">{label}.${currentTokenName}.gwei</div>
+        <div style="font-size:12px;opacity:0.5;margin-bottom:12px;">{label}.${escapeHtml(currentTokenName)}.gwei</div>
         <button onclick="doSubdomain()">Register Subdomain</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
       `;
@@ -6672,6 +6731,15 @@ async function previewRenew() {
   el.innerHTML = lines.join('<br>') || '…';
 }
 
+// Without the ENSIP-15 library there is no look-alike check, so no name resolves.
+function normalizeRecipientName(input) {
+  let s = input.trim();
+  if (s.toLowerCase().endsWith('.gwei')) s = s.slice(0, -5);
+  if (!s || typeof ens_normalize !== 'function') return null;
+  const labels = s.split('.').map(normalizeLabel);
+  return labels.every(Boolean) ? labels.join('.') : null;
+}
+
 async function resolveRecipient(input) {
   // If it is already an address, include its valid primary .gwei name when available.
   if (ethers.isAddress(input)) {
@@ -6683,12 +6751,13 @@ async function resolveRecipient(input) {
     return { address: input, name };
   }
 
-  // Check if it looks like a .gwei name
-  let name = input.trim();
-  if (name.endsWith('.gwei')) name = name.slice(0, -5);
-
-  // Normalize the name (supports both top-level and subdomains)
-  const normalized = normalizeFullName(name);
+  // Money goes only to names this page would itself register: every label must pass ENSIP-15.
+  // The lookup fallback (normalizeLabelForLookup) would let a look-alike such as "vit\u0430lik"
+  // resolve to whoever registered it.
+  if (window.ensNormalizeReady === undefined && window.ensNormalizeLoaded) {
+    await Promise.race([window.ensNormalizeLoaded, new Promise(resolve => setTimeout(resolve, 8000))]);
+  }
+  const normalized = normalizeRecipientName(input);
   if (!normalized) return null;
 
   try {
@@ -6765,6 +6834,7 @@ function previewTransferRecipient() {
 
 async function doTransfer() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId, tokenName = currentTokenName;
   const input = $('transferTo').value.trim();
   if (!input) { showStatus('Recipient required', 'error'); return; }
 
@@ -6777,11 +6847,11 @@ async function doTransfer() {
 
     const to = result.address;
     const displayTo = result.name ? result.name : to.slice(0, 8) + '...' + to.slice(-4);
-    if (!confirm('Transfer ' + currentTokenName + '.gwei to ' + displayTo + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.')) {
+    if (!confirm('Transfer ' + tokenName + '.gwei to ' + displayTo + '?\n\nRecipient: ' + to + '\n\nThis action is irreversible.')) {
       return;
     }
     showStatus('Transferring to ' + displayTo + '...', '');
-    const tx = await wcTransaction(contract.transferFrom(connectedAddress, to, currentTokenId), 'Approve transfer');
+    const tx = await wcTransaction(contract.transferFrom(connectedAddress, to, tokenId), 'Approve transfer');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus('Transferred!', 'success', tx.hash);
@@ -6796,16 +6866,33 @@ async function doTransfer() {
 
 async function doSetAddr() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId;
   const addr = $('resolveAddr').value.trim() || connectedAddress;
   if (!ethers.isAddress(addr)) { showStatus('Invalid address', 'error'); return; }
 
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
+  // A disagreeing coin-60 record would keep multichain lookups on the old address, so clear it too:
+  // in one batch when the wallet can, otherwise as a second transaction.
+  const clearCoin60 = !!currentCoin60Stale;
   try {
-    showStatus('Setting address...', '');
-    const tx = await wcTransaction(contract.setAddr(currentTokenId, addr), 'Approve address update');
+    const calls = [{ to: CONTRACT, data: contract.interface.encodeFunctionData('setAddr', [tokenId, addr]) }];
+    if (clearCoin60) calls.push({ to: CONTRACT, data: contract.interface.encodeFunctionData('setAddrForCoin', [tokenId, 60n, '0x']) });
+    if (await sendRecordBatch(calls, 'address update')) {
+      showStatus('Recipient set!', 'success');
+      doCheckName();
+      return;
+    }
+    showStatus(clearCoin60 ? 'Setting address (1 of 2)...' : 'Setting address...', '');
+    const tx = await wcTransaction(contract.setAddr(tokenId, addr), 'Approve address update');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
+    if (clearCoin60) {
+      showStatus('Clearing the old multichain ETH address (2 of 2)...', '');
+      const clearTx = await wcTransaction(contract.setAddrForCoin(tokenId, 60n, '0x'), 'Approve clearing the multichain address');
+      showStatus('Waiting for confirmation...', '', clearTx.hash);
+      await waitForTx(clearTx);
+    }
     showStatus('Recipient set!', 'success', tx.hash);
     doCheckName();
   } catch (e) {
@@ -6816,8 +6903,27 @@ async function doSetAddr() {
   }
 }
 
+async function doClearCoin60() {
+  if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId;
+  isProcessing = true;
+  try {
+    showStatus('Clearing the multichain ETH address...', '');
+    const tx = await wcTransaction(contract.setAddrForCoin(tokenId, 60n, '0x'), 'Approve clearing the multichain address');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Cleared. Every lookup now returns the same address.', 'success', tx.hash);
+    doCheckName();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+  }
+}
+
 async function doSetText() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId;
   const key = $('textKey').value.trim();
   const value = $('textValue').value;
   if (!key) { showStatus('Key required', 'error'); return; }
@@ -6826,7 +6932,7 @@ async function doSetText() {
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     showStatus('Setting text record...', '');
-    const tx = await wcTransaction(contract.setText(currentTokenId, key, value), 'Approve text record');
+    const tx = await wcTransaction(contract.setText(tokenId, key, value), 'Approve text record');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus('Text record set!', 'success', tx.hash);
@@ -7112,10 +7218,10 @@ async function doSetContent() {
       // contenthash wins at the gateway, so clear the shadowed contract pointer first. If the user
       // cancels the second transaction, the still-present contenthash remains the active website.
       if (currentContentContract) {
-        steps.push([CONTENTCONTRACT, () => contract.setText(currentTokenId, CONTENTCONTRACT, '')]);
+        steps.push([CONTENTCONTRACT, () => contract.setText(tokenId, CONTENTCONTRACT, '')]);
       }
       if (currentHasContenthash) {
-        steps.push(['contenthash', () => contract.setContenthash(currentTokenId, '0x')]);
+        steps.push(['contenthash', () => contract.setContenthash(tokenId, '0x')]);
       }
       if (!steps.length) {
         showStatus('This name has no website set.', 'error');
@@ -7231,15 +7337,16 @@ async function doClearContenthash() {
 
 async function doSetPrimary() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId, tokenName = currentTokenName;
 
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
-    showStatus('Setting ' + currentTokenName + '.gwei as your display name...', '');
-    const tx = await wcTransaction(contract.setPrimaryName(currentTokenId), 'Approve primary name');
+    showStatus('Setting ' + tokenName + '.gwei as your display name...', '');
+    const tx = await wcTransaction(contract.setPrimaryName(tokenId), 'Approve primary name');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    showStatus(currentTokenName + '.gwei is now your display name!', 'success', tx.hash);
+    showStatus(tokenName + '.gwei is now your display name!', 'success', tx.hash);
     updateWalletDisplay();
   } catch (e) {
     handleError(e);
@@ -7251,6 +7358,7 @@ async function doSetPrimary() {
 
 async function doSubdomain() {
   if (isProcessing || !contract || !currentTokenId) return;
+  const tokenId = currentTokenId, tokenName = currentTokenName;
   const label = normalizeLabel($('subLabel').value);
   if (!label) { showStatus('Invalid subdomain label', 'error'); return; }
 
@@ -7258,10 +7366,10 @@ async function doSubdomain() {
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     showStatus('Registering subdomain...', '');
-    const tx = await wcTransaction(contract.registerSubdomain(label, currentTokenId), 'Approve subdomain');
+    const tx = await wcTransaction(contract.registerSubdomain(label, tokenId), 'Approve subdomain');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    showStatus(label + '.' + currentTokenName + '.gwei registered!', 'success', tx.hash);
+    showStatus(label + '.' + tokenName + '.gwei registered!', 'success', tx.hash);
     $('manageForm').classList.remove('show');
   } catch (e) {
     handleError(e);
@@ -7351,6 +7459,7 @@ async function showSubSalesForm() {
 
 async function doConfigureSubSales() {
   if (isProcessing || !currentTokenId) return;
+  const tokenId = currentTokenId;
   if (!signer) { showStatus('Connect your wallet first', ''); toggleWallet(); return; }
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
@@ -7383,7 +7492,7 @@ async function doConfigureSubSales() {
     }
     showStatus('Configuring subdomain sales...', '');
     const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
-    const tx = await wcTransaction(registrar.configure(currentTokenId, payoutAddr, feeToken, price, true, gateToken, minGateBalance), 'Approve configuration');
+    const tx = await wcTransaction(registrar.configure(tokenId, payoutAddr, feeToken, price, true, gateToken, minGateBalance), 'Approve configuration');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus('Subdomain sales enabled!', 'success', tx.hash);
@@ -7398,12 +7507,13 @@ async function doConfigureSubSales() {
 
 async function doDisableSubSales() {
   if (isProcessing || !signer || !currentTokenId) return;
+  const tokenId = currentTokenId;
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     showStatus('Disabling subdomain sales...', '');
     const registrar = new ethers.Contract(REGISTRAR, REGISTRAR_ABI, signer);
-    const tx = await wcTransaction(registrar.disable(currentTokenId), 'Approve disable');
+    const tx = await wcTransaction(registrar.disable(tokenId), 'Approve disable');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
     showStatus('Subdomain sales disabled.', 'success', tx.hash);
@@ -7438,6 +7548,7 @@ async function doWithdrawRegFees() {
 
 async function doRenew() {
   if (isProcessing || !currentTokenId) return;
+  const tokenId = currentTokenId, tokenName = currentTokenName;
   if (!signer) { showStatus('Connect your wallet to renew', ''); toggleWallet(); return; }
 
   const years = renewYearsValue();
@@ -7445,18 +7556,18 @@ async function doRenew() {
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
     const rc = readContract || contract;
-    const fee = await rc.getFee(byteLength(currentTokenName));
+    const fee = await rc.getFee(byteLength(tokenName));
 
     showStatus(years > 1 ? `Renewing +${years} years…` : 'Renewing…', '');
     let tx;
     if (years === 1) {
-      tx = await wcTransaction(contract.renew(currentTokenId, { value: fee }), 'Approve renewal');
+      tx = await wcTransaction(contract.renew(tokenId, { value: fee }), 'Approve renewal');
     } else {
       // Batch N renew() calls into a single tx via Multicall3. The sub-calls
       // run in order within the same tx, so each reads the expiresAt the
       // previous one wrote → +N years. Exact fee per call means renew()'s
       // refund branch never fires (no excess stuck in Multicall3).
-      const renewData = iface.encodeFunctionData('renew', [currentTokenId]);
+      const renewData = iface.encodeFunctionData('renew', [tokenId]);
       const calls = Array.from({ length: years }, () => ({
         target: CONTRACT,
         allowFailure: false,
@@ -8238,7 +8349,7 @@ console.log('GNS init:', {
 <!-- ─────────────────────────────────────────────────────────────────────────
      ES module: the ZKPassport request/verify lifecycle. Renders the QR,
      drives the status line, and hands the verifier params to zkSubmitClaim().
-     Imports the vendored SDK same-origin from /vendor/entry.js, on first use.
+     Imports the vendored SDK and QR encoder same-origin from /vendor, on first use.
      ───────────────────────────────────────────────────────────────────────── -->
 <script type="module">
 // The vendored SDK (~1 MB unpacked) and the QR encoder load the first time the zkpassport panel is
@@ -8246,7 +8357,7 @@ console.log('GNS init:', {
 let zkSdk = null;
 window.zkLoadSdk = () => {
   if (!zkSdk) {
-    zkSdk = Promise.all([import("/vendor/entry.js"), import("https://esm.sh/qrcode@1.5.4")])
+    zkSdk = Promise.all([import("/vendor/entry.js"), import("/vendor/qrcode.bundle.mjs")])
       .then(([sdk, qr]) => ({ ZKPassport: sdk.ZKPassport, QRCode: qr.default }))
       .catch((e) => { zkSdk = null; throw e; }); // let the next attempt retry
   }

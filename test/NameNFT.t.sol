@@ -739,6 +739,27 @@ contract NameNFTTest is Test {
         assertEq(result, abi.encodePacked(alice));
     }
 
+    // The coin-60 record is separate from setAddr and survives a transfer, so a seller's coin-60
+    // address outlives the buyer's setAddr. The dapp clears it with empty bytes, which restores the
+    // fallback to resolve().
+    function test_Addr_ETHCoinRecordSurvivesTransferUntilCleared() public {
+        uint256 tokenId = _registerName("alice", alice);
+        vm.prank(alice);
+        nft.setAddrForCoin(tokenId, 60, abi.encodePacked(alice));
+        vm.prank(alice);
+        nft.transferFrom(alice, bob, tokenId);
+
+        vm.prank(bob);
+        nft.setAddr(tokenId, bob);
+        assertEq(nft.resolve(tokenId), bob);
+        assertEq(nft.addr(bytes32(tokenId), 60), abi.encodePacked(alice), "multichain lookups still pay the seller");
+
+        vm.prank(bob);
+        nft.setAddrForCoin(tokenId, 60, "");
+        assertEq(nft.addr(bytes32(tokenId), 60), abi.encodePacked(bob));
+        assertEq(nft.addr(tokenId, 60), abi.encodePacked(bob));
+    }
+
     function test_RecordVersion_ClearsOnReregistration() public {
         uint256 tokenId = _registerName("alice", alice);
 

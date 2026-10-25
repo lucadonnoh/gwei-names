@@ -1532,6 +1532,48 @@ test('raw recipients use their valid primary gwei name', async () => {
   assert.equal(result.name, 'donnoh.gwei');
 });
 
+test('recipient names must pass ENSIP-15, never the lookup fallback', async () => {
+  const start = html.indexOf('function normalizeLabelContract');
+  const end = html.indexOf('let transferPreviewDebounce', start);
+  const labelStart = html.indexOf('function normalizeLabel(label)');
+  const labelEnd = html.indexOf('// Normalize a full name', labelStart);
+  const target = '0x00000000000000000000000000000000000000aa';
+  const resolved = [];
+  const window = {};
+  const context = vm.createContext({
+    window,
+    textEncoder: new TextEncoder(),
+    ethers: { isAddress: () => false, ZeroAddress: '0x0000000000000000000000000000000000000000' },
+    readContract: {
+      computeId: async (name) => name,
+      resolve: async (name) => { resolved.push(name); return target; },
+    },
+    isRpcUnavailable: () => false,
+  });
+  vm.runInContext(
+    html.slice(html.indexOf('function contractLabelError'), html.indexOf('\n}\n', html.indexOf('function contractLabelError')) + 3)
+      + html.slice(start, html.indexOf('\n}\n', start) + 3)
+      + html.slice(labelStart, labelEnd)
+      + html.slice(html.indexOf('// Without the ENSIP-15 library'), end)
+      + '\nglobalThis.resolveRecipient = resolveRecipient;',
+    context
+  );
+  // Stand-in for ENSIP-15: lowercase ASCII names pass, anything else is rejected.
+  context.ens_normalize = (label) => { if (!/^[a-z0-9-]+$/i.test(label)) throw new Error('disallowed'); return label.toLowerCase(); };
+  window.ensNormalizeReady = true;
+
+  assert.deepEqual({ ...(await context.resolveRecipient('vitalik.gwei')) }, { address: target, name: 'vitalik.gwei' });
+  assert.deepEqual({ ...(await context.resolveRecipient('Pay.Vitalik.gwei')) }, { address: target, name: 'pay.vitalik.gwei' });
+  assert.equal(await context.resolveRecipient('vit\u0430lik.gwei'), null);
+  assert.equal(await context.resolveRecipient('vitalik\u200d.gwei'), null);
+  assert.equal(await context.resolveRecipient('lex_node.gwei'), null);
+
+  context.ens_normalize = null;
+  window.ensNormalizeReady = false;
+  assert.equal(await context.resolveRecipient('vitalik.gwei'), null, 'no library, no anti-spoof check, no name sends');
+  assert.deepEqual(resolved, ['vitalik.gwei', 'pay.vitalik.gwei']);
+});
+
 test('identity addresses use unique reverse-resolved gwei names', async () => {
   const start = html.indexOf('function addressIdentityDisplay');
   const end = html.indexOf('function formatSlowDate', start);
@@ -1710,8 +1752,8 @@ test('Set Website routes web3:// to setText and everything else to setContenthas
   assert.match(source, /setText\(tokenId, CONTENTCONTRACT, formatContentContract\(pointer\)\)/);
   assert.match(source, /setContenthash\(tokenId, contenthash\)/);
   // Clearing must be able to remove either record, not just the contenthash.
-  assert.match(source, /setText\(currentTokenId, CONTENTCONTRACT, ''\)/);
-  assert.match(source, /setContenthash\(currentTokenId, '0x'\)/);
+  assert.match(source, /setText\(tokenId, CONTENTCONTRACT, ''\)/);
+  assert.match(source, /setContenthash\(tokenId, '0x'\)/);
 });
 
 test('Visit via link uses the muted theme color without container opacity', () => {
@@ -2624,8 +2666,186 @@ test('posts: the dapp builds the same blob as the gateway, and the vendored KZG 
 });
 
 test('posts: the dapp authorizes against the blob hash and offers refunds for undelivered posts', () => {
-  assert.match(html, /posts\.authorize\(tokenId, hash, blob, POSTS_PUBLISHER, \{ value: currentPostFee \}\)/);
+  assert.match(html, /posts\.authorize\(tokenId, hash, blob, POSTS_PUBLISHER, \{ value: fee \}\)/);
+  assert.match(html, /const fee = delivered \? 0n : currentPostFee;/, 'no fee for a blob the publisher already delivered');
   assert.match(html, /const blob = blobVersionedHash\(postBlobFrom\(bytes\)\);/);
-  assert.match(html, /posts\.refund\(p\.blob, p\.publisher\)/);
+  assert.match(html, /posts\.refund\(blob, publisher\)/);
   assert.match(html, /'function authorize\(uint256 tokenId, bytes32 postHash, bytes32 blobHash, address publisher\) payable'/);
+});
+
+test('posts: refunds are found from this browser and from the index, and only what the contract holds is offered', async () => {
+  const start = html.indexOf('const paidPostsKey = ');
+  const end = html.indexOf('async function previewPost() {', start);
+  const B = (n) => '0x01' + String(n).repeat(62).slice(0, 62);
+  const PUB = '0x' + '24'.repeat(20);
+  const ME = '0x' + 'A1'.repeat(20);
+  const TOKEN = '0x' + '0'.repeat(62) + '2a';
+  const store = { [`gwei_paid_posts_1_${TOKEN}`]: JSON.stringify([{ hash: '0x' + 'aa'.repeat(32), blob: B(1), publisher: PUB, title: 'Local' }]) };
+  const chain = {
+    [`${B(1)}|${PUB}`]: { delivered: false, amount: 5n, at: 1 }, // refundable now
+    [`${B(2)}|${PUB}`]: { delivered: false, amount: 7n, at: 1 }, // only the index knows it
+    [`${B(3)}|${PUB}`]: { delivered: true, amount: 0n, at: 1 }, // delivered
+    [`${B(4)}|${PUB}`]: { delivered: false, amount: 0n, at: 1 }, // refunded already
+    [`${B(5)}|${PUB}`]: { delivered: false, amount: 9n, at: 4102444800 }, // not due yet
+  };
+  const fetched = [];
+  const context = vm.createContext({
+    CHAIN_ID: 1, POSTS_CONTRACT: '0x' + 'c0'.repeat(20), POSTS_ABI: [], POSTS_API: 'https://gwei.domains/api', connectedAddress: ME, Date,
+    tokenHexOf: (id) => '0x' + BigInt(id).toString(16).padStart(64, '0'),
+    localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } },
+    escapeHtml: (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`),
+    getRpc: async () => ({}),
+    fetch: async (url) => {
+      fetched.push(url);
+      return { ok: true, json: async () => ({ authorizations: [
+        { hash: '0x' + 'bb'.repeat(32), blob: B(2), publisher: PUB, token: TOKEN, title: null },
+        { hash: '0x' + 'aa'.repeat(32), blob: B(1), publisher: PUB, token: TOKEN, title: 'Local' }, // also in this browser
+        { blob: B(3), publisher: PUB, token: TOKEN }, { blob: B(4), publisher: PUB, token: TOKEN }, { blob: B(5), publisher: PUB, token: TOKEN, title: 'Later' },
+        { blob: B(6), publisher: PUB, token: '0x' + '0'.repeat(63) + '1' }, // another name
+        { blob: "0x01');alert(1);//", publisher: PUB, token: TOKEN }, // never reaches the markup
+      ] }) };
+    },
+    ethers: {
+      keccak256: (x) => x, concat: (parts) => parts.join('|'), zeroPadValue: (v) => v, formatEther: (v) => String(v),
+      Contract: class {
+        delivered(key) { return chain[key].delivered; }
+        deposits(key) { return { amount: chain[key].amount, refundableAt: BigInt(chain[key].at) }; }
+      },
+    },
+  });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.refundRows = refundRows;', context);
+  const out = await context.refundRows(42n);
+  assert.deepEqual(fetched, [`https://gwei.domains/api/authors/${ME.toLowerCase()}/paid`]);
+  assert.match(out, new RegExp(`doRefundPost\\('${B(1)}', '${PUB}'\\)">Refund 5 ETH`));
+  assert.match(out, new RegExp(`doRefundPost\\('${B(2)}', '${PUB}'\\)">Refund 7 ETH`), 'found through the index');
+  assert.match(out, /Post 0xbbbbbbbb/, 'a post whose bytes the index dropped still gets a row');
+  assert.equal(out.split('Refund 5 ETH').length, 2, 'one row per blob and publisher');
+  assert.match(out, /Later<\/span><span class="post-state">refundable /);
+  assert.doesNotMatch(out, new RegExp(B(3) + '|' + B(4) + '|' + B(6) + '|alert'));
+  assert.deepEqual(JSON.parse(store[`gwei_paid_posts_1_${TOKEN}`]).map((p) => p.blob), [B(1), B(2), B(5)]);
+});
+
+test('share card name types only mark the registrars\' own children', () => {
+  const start = html.indexOf('function shareNameType(name) {');
+  const end = html.indexOf('\n}\n', start) + 3;
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, end), context);
+  assert.equal(context.shareNameType('alice.zkpassport.gwei'), 'PROOF OF HUMANITY');
+  assert.equal(context.shareNameType('bob.id.gwei'), 'FREE NAME');
+  assert.equal(context.shareNameType('bot.alice.zkpassport.gwei'), null);
+  assert.equal(context.shareNameType('x.bob.id.gwei'), null);
+  assert.equal(context.shareNameType('alice.gwei'), null);
+});
+
+test('manage actions keep targeting the name they started on when a lookup replaces it mid-await', async () => {
+  const slice = (name) => {
+    const start = html.indexOf(`async function ${name}(`);
+    return html.slice(start, html.indexOf('\n}\n', start) + 3);
+  };
+  const sent = [];
+  const context = vm.createContext({
+    signer: {}, connectedAddress: '0xowner', event: undefined, CONTRACT: '0xnft',
+    $: () => ({ value: 'bob.gwei', classList: { remove() {} } }),
+    renewYearsValue: () => 1, byteLength: (s) => s.length,
+    showStatus() {}, toggleWallet() {}, handleError: (e) => { throw e; }, doCheckName() {}, confirm: () => true,
+    waitForTx: async () => {}, wcTransaction: async (p) => p,
+  });
+  vm.runInContext(`
+    let isProcessing = false, currentTokenId = 1n, currentTokenName = 'alice', currentRenewFee = null;
+    const lookUpAnotherName = () => { currentTokenId = 2n; currentTokenName = 'mallory'; };
+    const contract = {
+      renew: async (id) => { sent.push(['renew', id]); return { hash: '0x1' }; },
+      transferFrom: async (from, to, id) => { sent.push(['transferFrom', id]); return { hash: '0x2' }; },
+    };
+    const readContract = { getFee: async (len) => { sent.push(['getFee', len]); lookUpAnotherName(); return 1n; } };
+    const resolveRecipient = async () => { lookUpAnotherName(); return { address: '0xbob', name: 'bob.gwei' }; };
+    ${slice('doRenew')}
+    ${slice('doTransfer')}
+    globalThis.run = async () => {
+      await doRenew();
+      currentTokenId = 1n; currentTokenName = 'alice';
+      await doTransfer();
+    };`, Object.assign(context, { sent }));
+  await context.run();
+  assert.deepEqual(sent.map((x) => [...x]), [['getFee', 5], ['renew', 1n], ['transferFrom', 1n]]);
+});
+
+test('names and the gateway URLs built from them are escaped wherever they reach HTML', () => {
+  // The registry accepts " < > / = in a label, and a lookup of such a name reaches showManage
+  // and the owner forms, so a raw interpolation into markup is markup injection on this origin.
+  const raw = /\$\{(name|currentTokenName|tokenName|gatewayUrl|pageUrl|base)\}/;
+  const offenders = html.split('\n').map((line, i) => [i + 1, line]).filter(([, line]) => raw.test(line) && /<[a-z]/i.test(line));
+  assert.deepEqual(offenders, []);
+});
+
+test('a coin-60 record that disagrees with the address is flagged and cleared by Set Address', async () => {
+  const slice = (marker) => {
+    const start = html.indexOf(marker);
+    return html.slice(start, html.indexOf('\n}\n', start) + 3);
+  };
+  const A = '0x00000000000000000000000000000000000000aa';
+  const SELLER = '0x00000000000000000000000000000000000000Bb';
+  const sent = [];
+  const context = vm.createContext({
+    CONTRACT: '0xnft', event: undefined,
+    $: () => ({ value: A }),
+    ethers: { isAddress: () => true },
+    showStatus() {}, handleError: (e) => { throw e; }, doCheckName() {},
+    waitForTx: async () => {}, wcTransaction: async (p) => p,
+  });
+  vm.runInContext(`
+    let isProcessing = false, currentTokenId = 7n, currentCoin60Stale = null, batching = false, batches = [];
+    const connectedAddress = '${A}';
+    const contract = {
+      interface: { encodeFunctionData: (fn, args) => [fn, ...args] },
+      setAddr: async (id, a) => { sent.push(['setAddr', id, a]); return { hash: '0x1' }; },
+      setAddrForCoin: async (id, coin, value) => { sent.push(['setAddrForCoin', id, coin, value]); return { hash: '0x2' }; },
+    };
+    const sendRecordBatch = async (calls) => { if (calls.length < 2 || !batching) return false; batches.push(calls.map((c) => c.data)); return true; };
+    ${slice('function coin60Mismatch(')}
+    ${slice('async function doSetAddr(')}
+    globalThis.api = {
+      coin60Mismatch, doSetAddr,
+      set: (stale, batch) => { currentCoin60Stale = stale; batching = batch; },
+      batches: () => batches,
+    };`, Object.assign(context, { sent }));
+  const { coin60Mismatch, doSetAddr, set, batches } = context.api;
+
+  assert.equal(coin60Mismatch('0x', A), null, 'empty: lookups fall back to the address');
+  assert.equal(coin60Mismatch(null, A), null, 'unreadable: nothing to claim');
+  assert.equal(coin60Mismatch(A.toUpperCase().replace('0X', '0x'), A), null);
+  assert.equal(coin60Mismatch(SELLER, A), SELLER.toLowerCase());
+  assert.equal(coin60Mismatch('0x1234', A), '0x1234', 'not even an address still disagrees');
+
+  await doSetAddr();
+  assert.deepEqual(sent.map((x) => [...x]), [['setAddr', 7n, A]], 'no stale record, one transaction');
+
+  sent.length = 0;
+  set(SELLER.toLowerCase(), false);
+  await doSetAddr();
+  assert.deepEqual(sent.map((x) => [...x]), [['setAddr', 7n, A], ['setAddrForCoin', 7n, 60n, '0x']]);
+
+  sent.length = 0;
+  set(SELLER.toLowerCase(), true);
+  await doSetAddr();
+  assert.deepEqual(sent, [], 'a batching wallet gets both calls in one approval');
+  assert.deepEqual(Array.from(batches(), (b) => Array.from(b, (c) => [...c])), [[['setAddr', 7n, A], ['setAddrForCoin', 7n, 60n, '0x']]]);
+});
+
+test('the QR encoder is vendored and encodes exactly like the qrcode package', async () => {
+  assert.match(html, /import\("\/vendor\/qrcode\.bundle\.mjs"\)/);
+  assert.doesNotMatch(html, /esm\.sh/, 'no unpinned CDN modules');
+  const { default: QRCode } = await import('./vendor/qrcode.bundle.mjs');
+  // Module hashes from qrcode 1.5.4's own (unbundled, Node) encoder with the dapp's options.
+  const expected = [
+    ['https://zkpassport.id/r?d=' + 'a1b2c3d4'.repeat(40), 73, '4136e149c2c3664ee26254cb33276b32eabaec654bef05bfd8530ef1523343d1'],
+    ['https://gwei.domains/', 25, 'c2f57681a6f3d823a02f6f988af298dc7b4d27fb8aa44a806b467d0b15d355dc'],
+  ];
+  for (const [url, size, hash] of expected) {
+    const { modules } = QRCode.create(url, { errorCorrectionLevel: 'M', margin: 2 });
+    assert.equal(modules.size, size);
+    assert.equal(require('node:crypto').createHash('sha256').update(modules.data).digest('hex'), hash);
+  }
+  assert.equal(typeof QRCode.toCanvas, 'function');
+  assert.equal(typeof QRCode.toDataURL, 'function');
 });
