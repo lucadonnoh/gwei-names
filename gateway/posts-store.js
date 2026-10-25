@@ -253,12 +253,13 @@ export class PostStore {
     return match ? { ...match, body: this.body(match.hash) } : null;
   }
 
-  // Newest posts across all names, for gwei.domains: one query, at most RECENT_PER_NAME per name,
-  // cached briefly. Owners are re-checked so a sold or expired name's old posts drop out.
+  // Newest posts across all names, for gwei.domains: one query, cached briefly. At most RECENT_PER_NAME
+  // per name first, so one name can't crowd out the others; room left over goes to more posts from the
+  // same names. Owners are re-checked so a sold or expired name's old posts drop out.
   async recent(limit = 20) {
     const now = this.now();
-    if (this.recentCache && now - this.recentCache.at < RECENT_CACHE_SECONDS && this.recentCache.limit >= limit) {
-      return this.recentCache.posts.slice(0, limit);
+    if (this.recentCache && now - this.recentCache.at < RECENT_CACHE_SECONDS && this.recentCache.limit === limit) {
+      return this.recentCache.posts;
     }
     const candidates = this.rows(
       `WITH latest AS (SELECT token, author, hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ` +
@@ -270,13 +271,16 @@ export class PostStore {
     );
     const owners = await this.currentOwners([...new Set(candidates.map((c) => c.token))]);
     const perName = new Map();
-    const posts = [];
-    for (const c of candidates) {
-      if (owners.get(c.token) !== c.author || (perName.get(c.token) || 0) >= RECENT_PER_NAME) continue;
+    const picked = [], spare = []; // [candidate index, post]: candidates come newest first
+    for (const [i, c] of candidates.entries()) {
+      if (owners.get(c.token) !== c.author) continue;
+      const post = { name: c.name, token: c.token, hash: c.hash, title: c.title, time: c.onchain_ts ?? c.first_ts, authorized: c.first_ts, onchain: parseOnchain(c.onchain) };
+      if ((perName.get(c.token) || 0) >= RECENT_PER_NAME) { spare.push([i, post]); continue; }
       perName.set(c.token, (perName.get(c.token) || 0) + 1);
-      posts.push({ name: c.name, token: c.token, hash: c.hash, title: c.title, time: c.onchain_ts ?? c.first_ts, authorized: c.first_ts, onchain: parseOnchain(c.onchain) });
-      if (posts.length >= limit) break;
+      picked.push([i, post]);
+      if (picked.length >= limit) break;
     }
+    const posts = picked.concat(spare.slice(0, limit - picked.length)).sort((a, b) => a[0] - b[0]).map(([, post]) => post);
     this.recentCache = { at: now, limit, posts };
     return posts;
   }

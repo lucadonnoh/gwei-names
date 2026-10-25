@@ -710,6 +710,10 @@ body.modal-open { overflow: hidden; }
 .sites-list a:hover { text-decoration: underline; }
 .sites-guide { display: block; text-align: center; margin-top: 16px; font-size: 12px; color: var(--fg-muted); text-decoration: none; letter-spacing: 0.02em; }
 .sites-guide:hover { color: var(--fg); }
+.posts-home { margin: 56px 0 8px; }
+.posts-home-note { font-size: 11px; color: var(--fg-muted); text-align: center; letter-spacing: 0.02em; margin: -6px 0 12px; }
+.new-badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid currentColor; color: #2039a3; font-size: 9px; vertical-align: 1px; }
+:root.dark .new-badge { color: #6f86e0; }
 .integrations { margin: 56px 0 8px; }
 .int-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.12em; text-align: center; margin-bottom: 8px; }
 .int-vote-caption { font-size: 11px; color: var(--fg-muted); line-height: 1.5; text-align: center; margin: 0 auto 14px; }
@@ -1191,6 +1195,13 @@ body.vote-dock-open { padding-bottom: 104px; }
       </div>
     </div>
   </div>
+</div>
+
+<!-- Recent posts: shown once the post index answers -->
+<div class="posts-home" id="statsPosts" style="display:none;">
+  <div class="sites-label">recent posts <span class="new-badge">new</span></div>
+  <div class="posts-home-note">blogs on .gwei names, stored in Ethereum blobs. Write yours from your name's Posts button.</div>
+  <div class="sites-list" id="postsList"></div>
 </div>
 
 <!-- Integrations -->
@@ -1719,7 +1730,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Network stats -->
 <div class="stats-section" id="statsSection" style="display:none;">
-  <div class="stats-loading" id="statsLoading">loading stats and recent websites…</div>
+  <div class="stats-loading" id="statsLoading">loading stats and recent custom websites…</div>
   <div id="statsContent" style="display:none;">
   <div class="stats-label">stats</div>
   <div class="stats-row">
@@ -1729,12 +1740,8 @@ body.vote-dock-open { padding-bottom: 104px; }
   </div>
   <div class="stats-hist" id="statsHist"></div>
   <div class="stats-note">names by length (bytes) · ★ = premium tier (1–4 chars)</div>
-  <div class="stats-sites" id="statsPosts" style="display:none;">
-    <div class="sites-label">recent posts</div>
-    <div class="sites-list" id="postsList"></div>
-  </div>
   <div class="stats-sites" id="statsSites" style="display:none;">
-    <div class="sites-label">recent websites</div>
+    <div class="sites-label">recent custom websites</div>
     <div class="sites-list" id="sitesList"></div>
     <a class="sites-guide" href="https://gwei.domains/guide/" target="_blank" rel="noopener">→ host your own</a>
   </div>
@@ -2228,7 +2235,7 @@ async function loadStats() {
     }
     he.innerHTML = rows;
   } else he.innerHTML = '';
-  // recent websites (gateway = mainnet only)
+  // recent custom websites (gateway = mainnet only)
   const sitesEl = document.getElementById('statsSites'), listEl = document.getElementById('sitesList');
   if (sitesEl && listEl) {
     const sites = recentWebsiteLabels(cache, 50);
@@ -2254,7 +2261,7 @@ async function loadRecentPosts() {
   const sec = document.getElementById('statsPosts'), list = document.getElementById('postsList');
   if (!sec || !list || !postsEnabled()) return;
   try {
-    const res = await fetch(POSTS_API + '/posts/recent?limit=8');
+    const res = await fetch(POSTS_API + '/posts/recent?limit=12');
     const { posts } = await res.json();
     if (!posts || !posts.length) return;
     list.innerHTML = '';

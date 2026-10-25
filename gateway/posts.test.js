@@ -719,7 +719,7 @@ test('a token without a full name never holds up the others', async () => {
   assert.deepEqual((await store.recent(5)).map((p) => p.name), ['alice.gwei']);
 });
 
-test('recent shows at most two posts per name', async () => {
+test('recent keeps one name from crowding out others, and fills spare room with more of its posts', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   world.owners = { [TOKEN]: ALICE, [TOKEN2]: BOB };
@@ -730,7 +730,9 @@ test('recent shows at most two posts per name', async () => {
   world.logs.push(authorized(400, 0, TOKEN2, bob.hash, BOB), published(400, 1, bob.hash, vh));
   posts.forEach((p, i) => world.logs.push(authorized(500 + i, 0, TOKEN, p.hash, ALICE), published(500 + i, 1, p.hash, vh)));
   await store.sync();
-  assert.deepEqual((await store.recent(10)).map((p) => p.title), ['alice 4', 'alice 3', 'bob post']);
+  assert.deepEqual((await store.recent(3)).map((p) => p.title), ['alice 4', 'alice 3', 'bob post'], 'two per name while the list is full');
+  assert.deepEqual((await store.recent(10)).map((p) => p.title), ['alice 4', 'alice 3', 'alice 2', 'alice 1', 'alice 0', 'bob post'], 'then the rest, newest first');
+  assert.deepEqual((await store.recent(4)).map((p) => p.title), ['alice 4', 'alice 3', 'alice 2', 'bob post']);
 });
 
 test('with the owner’s node down, events need two public endpoints to agree', async () => {
