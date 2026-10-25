@@ -19,6 +19,7 @@ skip() { printf '\n== %s: skipped (%s)\n' "$1" "$2"; skipped="$skipped $1"; }
 run ci-rules . node --test scripts/ci-changes.test.mjs
 run gateway gateway node --test *.test.js
 run dapp dapp node --test gweiNS.test.js
+run mirror mirror node --test *.test.mjs
 
 if command -v forge >/dev/null; then
   run contracts . forge test --no-match-contract 'ForkTest$|^SubdomainRegistrarTest$'

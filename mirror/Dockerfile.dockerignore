@@ -1,0 +1,9 @@
+# Only what mirror/Dockerfile copies (the build context is the repository root).
+*
+!gateway/posts-format.js
+!gateway/web3-auto.js
+!gateway/rpc-config.js
+!dapp/vendor/kzg.bundle.mjs
+!mirror/mirror.mjs
+!mirror/gwei-mirror.mjs
+!mirror/entrypoint.sh

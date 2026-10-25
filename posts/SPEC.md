@@ -96,7 +96,26 @@ so for one day.
 
 Blobs leave ordinary beacon nodes after about 18 days (4096 epochs). Indexers should fetch the blobs
 that authorized posts point at well before then and keep them. Blob archives such as
-[Blobscan](https://blobscan.com) keep them longer.
+[Blobscan](https://blobscan.com) keep them longer, and mirrors keep posts on IPFS for good (below).
+
+## Mirroring
+
+A post's bytes are named by its `postHash`, so they can be kept and served by anyone, and checked by
+anyone against Ethereum. On IPFS:
+
+- **A post** is a raw block whose CID is its `postHash`: CIDv1, raw codec (`0x55`), keccak-256 multihash
+  (`0x1b`), base32 (`bafkrwi…`). It follows from the `PostAuthorized` event alone, so a client can
+  fetch a post from any IPFS node without asking an index. Kubo: `ipfs block put --cid-codec raw
+  --mhtype keccak-256 --pin post.json`.
+- **A blob** is a raw block named by its sha-256: CIDv1, raw codec, sha2-256 (`bafkrei…`), what
+  `ipfs add --cid-version=1 --raw-leaves` gives for its 131,072 bytes. It doesn't follow from the
+  versioned hash (a hash of the KZG commitment), but a post's own blob follows from the post.
+
+A mirror reads the contract's events, and for each post that a published blob was named for: gets
+bytes that hash to the post from anywhere, shows that a published blob carries them (rebuilding the
+post's own blob and checking its versioned hash with KZG, or fetching the blob and checking it), and
+pins the post and the blob under the CIDs above. [`gwei-mirror`](../mirror/) does exactly this
+against any IPFS node. An index that loses its copies gets them back the same way, from IPFS.
 
 ## Publishing
 
@@ -115,12 +134,13 @@ that authorized posts point at well before then and keep them. Blob archives suc
 | Request | Answer |
 |---|---|
 | `POST /api/posts` (body: post bytes) | `{ "hash" }`; anyone may upload. Bytes no owner authorizes are dropped after a day; bytes of an already-authorized hash are always accepted |
-| `GET /api/posts/<hash>` | the post, its authorizations, and where it is on Ethereum |
+| `GET /api/posts?after=<seq>&limit=<n>` | every post a blob carries, in the order the index found them, with their CIDs: `{ "posts", "next" }`. Pass `next` back as `after` to read on; a post found later always comes after it, so polling sees each once. Nothing is filtered by the validity rules |
+| `GET /api/posts/<hash>` | the post, its CID, its authorizations, and where it is on Ethereum (with the blob's CID) |
 | `GET /api/posts/<hash>/raw` | the exact post bytes |
 | `GET /api/names/<tokenId>/posts` | posts shown for a name, newest first |
 | `GET /api/authors/<address>/paid` | fees an address put in escrow, latest per blob and publisher (to find refunds; the contract says what is left) |
 | `GET /api/posts/recent` | newest posts across all names |
-| `GET /api/blobs/<versionedHash>` | a blob the index fetched, for 30 days after it did |
+| `GET /api/blobs/<versionedHash>` | a blob the index fetched that carries a post, kept for good |
 | `POST /api/posts/preview` (body: post bytes) | `{ "title", "html" }` rendered by the gateway |
 | `POST /api/sync` | asks the index to catch up now (at most every 10 seconds) |
 
@@ -129,8 +149,9 @@ public RPCs agree on. It fetches the blobs that claim an authorized post (those 
 publisher the author named first) from Blobscan or a public beacon API, takes only bytes whose KZG
 commitment matches the versioned hash, and records only the claimed entries a blob really contains.
 A claim that arrives after its blob was checked gets the blob checked again, so an early junk claim
-can't hide a later real one. A post
-carried by a blob is kept for good; blob bytes for 30 days. Posts show on a name's page when it has
+can't hide a later real one. A blob no source has any more is rebuilt from a post it should carry
+(the index's copy, or IPFS through the gateways in `IPFS_GATEWAYS`) and checked against its versioned
+hash. Posts carried by a blob, and their blobs, are kept for good. Posts show on a name's page when it has
 no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
 
 **Publisher.** The gwei.domains publisher (`posts/poster/`) delivers blobs authors paid it for. It
@@ -142,3 +163,6 @@ headroom, packs up to six blobs into one transaction, and never lets a transacti
 blobs' safe deposits, replacements included. The dapp pays three times the current cost of a one-blob
 transaction. The publisher waits three blocks before acting on a payment and pins every published blob
 that carries an authorized post to IPFS after checking it against its versioned hash with KZG.
+
+**Mirror.** The same IPFS node runs `gwei-mirror`, so every post is also pinned under its own CID, and
+serves both at `https://ipfs.slopo.net/ipfs/<cid>`.

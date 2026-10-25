@@ -1573,6 +1573,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
     raw: answer('raw', (hash) => (hash === POST_A.hash ? utf8('{"v":1}') : null)),
     blobBytes: answer('blobBytes', (vh) => (vh === POST_A.onchain.blob ? new Uint8Array([1, 2, 3]) : null)),
     recent: answer('recent', [{ name: 'alice.gwei', ...POST_A }]),
+    archive: answer('archive', (after) => ({ posts: after ? [] : [{ seq: 1, ...POST_A }], next: after || 1 })),
     forCurrentOwner: answer('forCurrentOwner', posts),
     paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
     poke: answer('poke', { throttled: true }),
@@ -1581,6 +1582,20 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
   };
   return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
 }
+test('/api/posts lists the archive for mirrors, from a cursor, with a bounded page', async () => {
+  const POST_INDEX = fakePostIndex();
+  const api = (path) => invoke('https://gwei.domains' + path, { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });
+  let res = await api('/api/posts');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=30');
+  assert.deepEqual(await res.json(), { posts: [{ seq: 1, ...POST_A }], next: 1 });
+  res = await api('/api/posts?after=1&limit=5000');
+  assert.deepEqual(await res.json(), { posts: [], next: 1 });
+  await api('/api/posts?after=-4&limit=0');
+  assert.deepEqual(POST_INDEX.calls.filter((c) => c[0] === 'archive'), [['archive', 0, 100], ['archive', 1, 200], ['archive', 0, 100]]);
+});
+
 test('/api/stats serves the network stats from the index, cached for a minute', async () => {
   const POST_INDEX = fakePostIndex();
   const res = await invoke('https://gwei.domains/api/stats', { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });

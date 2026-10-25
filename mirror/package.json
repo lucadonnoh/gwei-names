@@ -1,0 +1,40 @@
+{
+  "name": "gwei-mirror",
+  "version": "1.0.0",
+  "description": "Keep a copy of every .gwei post on your IPFS node",
+  "type": "module",
+  "bin": {
+    "gwei-mirror": "dist/gwei-mirror.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "build": "esbuild gwei-mirror.mjs --bundle --platform=node --format=esm --target=node20 --outfile=dist/gwei-mirror.mjs",
+    "prepack": "npm run build && node dist/gwei-mirror.mjs --help > /dev/null"
+  },
+  "keywords": [
+    "gwei",
+    "gns",
+    "ipfs",
+    "ethereum",
+    "blobs",
+    "mirror"
+  ],
+  "license": "MIT",
+  "author": "lucadonnoh",
+  "homepage": "https://github.com/lucadonnoh/gwei-names/tree/main/mirror",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucadonnoh/gwei-names.git",
+    "directory": "mirror"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

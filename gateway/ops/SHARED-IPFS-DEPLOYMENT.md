@@ -1,5 +1,15 @@
 # Shared IPFS retrieval repair — 2026-09-07
 
+**2026-10-25:** the transport moved to its own hostname, `ipfs.slopo.net`
+(`nginx-ipfs-gateway.conf`, installed as `/etc/nginx/conf.d/ipfs-gateway.conf` on the rpi,
+port 15112, same limits and upstream), and the Platåberget chat it shared
+`test-chat.slopo.net` with was retired: its files, `/rpc` forwarder and Origin map are gone.
+`test-chat.slopo.net` keeps only the `/ipfs` and `/ipns` routes until the Worker deployed with
+`IPFS_GATEWAYS` on `ipfs.slopo.net` is live; then that vhost, its tunnel route and its DNS
+record are removed. Backups: `/root/service-backups/test-chat-retire-20261025/` on the rpi
+(the old nginx file, the tunnel config, and `/srv/test-chat` as a tarball). The rest of this
+file is the original 2026-09-07 record.
+
 Scope: every GNS IPFS/IPNS site, with no name/CID selection exceptions.
 The current chat contenthash and frontend files are unchanged.
 

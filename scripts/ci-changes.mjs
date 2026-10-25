@@ -25,11 +25,13 @@ export const INPUTS = {
   snap: { paths: ['snap/'] },
   poster: { paths: ['posts/poster/', ...SOLIDITY], entries: ['posts/poster/*.mjs'] }, // deploys the contracts on anvil
   image: { paths: ['Dockerfile', 'dapp/', '.railwayignore', 'scripts/check-dapp-image.sh'] }, // the dapp's container
+  // gwei-mirror: its tests (which compare it with the gateway's contract settings) and its image.
+  mirror: { paths: ['mirror/', 'gateway/wrangler.toml'], entries: ['mirror/*.test.mjs', 'mirror/gwei-mirror.mjs'] },
   // Deployed parts: what the Worker bundles, and what the Dockerfile copies.
   'deploy-gateway': { paths: ['gateway/'], entries: ['gateway/index.js'] },
   'deploy-dapp': { paths: ['dapp/', 'Dockerfile', '.railwayignore', 'scripts/railway-deploy.mjs'] },
 };
-const SUITES = ['contracts', 'gateway', 'dapp', 'sdk', 'snap', 'poster', 'image'];
+const SUITES = ['contracts', 'gateway', 'dapp', 'sdk', 'snap', 'poster', 'image', 'mirror'];
 const EVERYTHING = ['.github/', 'scripts/ci-changes.mjs'];
 
 const IMPORT = /\b(?:import|export)\s[^'"`;]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;

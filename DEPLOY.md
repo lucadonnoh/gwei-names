@@ -8,8 +8,10 @@ and the dapp from that commit and checks that the live sites serve it.
 | Gateway (`gateway/`) | Cloudflare Worker `gwei-gateway` on `*.gwei.domains`, `*.gwei.limo`, `gwei.domains/api/*` | `deploy.yml` after CI on main | `https://gwei.domains/api/version` |
 | Dapp (`dapp/`, `Dockerfile`) | Railway service `gwei-dapp` (nginx, `dapp/nginx.conf.template`), `gwei.domains` | `deploy.yml` after CI on main | `https://gwei.domains/version.txt` |
 | Publisher (`posts/poster/`) | Docker on eth-node | `posts/poster/deploy.sh`, by hand | `gwei_poster.py status` on eth-node |
+| Mirror (`mirror/`) on our node | Docker on eth-node, against its Kubo | `mirror/deploy-eth-node.sh`, by hand | `docker logs gwei-mirror` on eth-node |
+| Mirror image | `ghcr.io/lucadonnoh/gwei-mirror` | the `mirror` job in `ci.yml`, on main | GHCR |
 | Contracts (`src/`) | Ethereum | `forge script`, by hand; immutable | Etherscan, Sourcify |
-| SDK, snap | npm | `pnpm pub`, `npm publish`, by hand | npm |
+| SDK, snap, mirror | npm | `pnpm pub`, `npm publish` (`mirror/`: `npm ci && npm publish`, which bundles it first), by hand | npm |
 
 The dapp's network stats come from the gateway (`gwei.domains/api/stats`, `gateway/stats-store.js`),
 which indexes NameNFT's events next to the post index; after a gateway deploy that resets the index,

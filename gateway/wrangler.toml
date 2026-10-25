@@ -34,11 +34,12 @@ type = "durable-object"
 storage = "sqlite"
 
 [vars]
-# The same IPFS/IPNS retrieval path applies to every GNS name and CID. Filebase is the public gateway
+# The same IPFS/IPNS retrieval path applies to every GNS name and CID, and the post index recovers lost
+# posts through it. ipfs.slopo.net is the eth-node's Kubo (gateway/ops/nginx-ipfs-gateway.conf). Filebase is the public gateway
 # that still answers Worker traffic. ipfs.io and dweb.link are left out: they rate-limit Cloudflare's
 # shared egress (429 on every request in October 2026), so they never served content and would make
 # the daily health check fail every day.
-IPFS_GATEWAYS = '["https://test-chat.slopo.net","https://ipfs.filebase.io"]'
+IPFS_GATEWAYS = '["https://ipfs.slopo.net","https://ipfs.filebase.io"]'
 
 # GnsPosts (src/GnsPosts.sol) and the block it was deployed in; indexing is off while unset.
 POSTS_CONTRACT = '0x73849f6f2785BA7fd2f41b5B4573B75554417981'

@@ -22,16 +22,20 @@ test('a change runs the suites built from it, and deploys the parts that ship it
   assert.deepEqual(runs('sdk/src/index.ts'), ['sdk']);
   assert.deepEqual(runs('snap/src/index.ts'), ['snap']);
   assert.deepEqual(runs('posts/poster/gwei_poster.py'), ['poster']);
+  assert.deepEqual(runs('mirror/mirror.mjs'), ['mirror']);
+  assert.deepEqual(runs('mirror/Dockerfile'), ['mirror']);
 });
 
 test('files another directory imports count for it', () => {
   // gweiNS.test.js imports posts-format.js, which imports web3-auto.js; the poster runs the post index.
-  assert.deepEqual(runs('gateway/posts-format.js'), ['dapp', 'deploy-gateway', 'gateway', 'poster']);
-  assert.deepEqual(runs('gateway/web3-auto.js'), ['dapp', 'deploy-gateway', 'gateway', 'poster']);
-  assert.deepEqual(runs('gateway/posts-store.js'), ['deploy-gateway', 'gateway', 'poster']);
-  assert.deepEqual(runs('gateway/rpc-pool.js'), ['deploy-gateway', 'gateway', 'poster']);
+  // The mirror imports the post format and the RPC list, and its tests compare it with the post index.
+  assert.deepEqual(runs('gateway/posts-format.js'), ['dapp', 'deploy-gateway', 'gateway', 'mirror', 'poster']);
+  assert.deepEqual(runs('gateway/web3-auto.js'), ['dapp', 'deploy-gateway', 'gateway', 'mirror', 'poster']);
+  assert.deepEqual(runs('gateway/posts-store.js'), ['deploy-gateway', 'gateway', 'mirror', 'poster']);
+  assert.deepEqual(runs('gateway/rpc-pool.js'), ['deploy-gateway', 'gateway', 'mirror', 'poster']);
+  assert.deepEqual(runs('gateway/wrangler.toml'), ['deploy-gateway', 'gateway', 'mirror']);
   // The Worker bundles the dapp's KZG; the gateway's and poster's tests run it.
-  assert.deepEqual(runs('dapp/vendor/kzg.bundle.mjs'), ['dapp', 'deploy-dapp', 'deploy-gateway', 'gateway', 'image', 'poster']);
+  assert.deepEqual(runs('dapp/vendor/kzg.bundle.mjs'), ['dapp', 'deploy-dapp', 'deploy-gateway', 'gateway', 'image', 'mirror', 'poster']);
   assert.deepEqual(runs('dapp/vendor/entry.js'), ['dapp', 'deploy-dapp', 'image']);
 });
 

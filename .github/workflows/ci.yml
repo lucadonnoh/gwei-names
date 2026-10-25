@@ -41,6 +41,7 @@ jobs:
       snap: ${{ steps.changes.outputs.snap }}
       poster: ${{ steps.changes.outputs.poster }}
       image: ${{ steps.changes.outputs.image }}
+      mirror: ${{ steps.changes.outputs.mirror }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -144,6 +145,47 @@ jobs:
       - run: scripts/check-dapp-image.sh http://localhost:8080 "$GITHUB_SHA"
       - if: failure()
         run: docker logs dapp
+
+  # gwei-mirror (mirror/): its tests, then its image, started offline: the container's own IPFS node must
+  # come up and the mirror reach it, before the dead RPC fails the check. A push to main publishes the
+  # image as ghcr.io/<owner>/gwei-mirror for amd64 and arm64 (Raspberry Pis, Macs).
+  mirror:
+    needs: changes
+    if: needs.changes.outputs.mirror == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write # the image, on main only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node --test *.test.mjs
+        working-directory: mirror
+      # The npm package is one bundled file: it must build and start on its own.
+      - run: npm ci --no-audit --no-fund && npm run build && cp dist/gwei-mirror.mjs "$RUNNER_TEMP/" && node "$RUNNER_TEMP/gwei-mirror.mjs" --help > /dev/null
+        working-directory: mirror
+      - run: docker build -f mirror/Dockerfile -t gwei-mirror .
+      - run: |
+          status=0
+          timeout 180 docker run --name mirror gwei-mirror --once --rpc http://127.0.0.1:9 > mirror.log 2>&1 || status=$?
+          cat mirror.log
+          [ "$status" = 1 ] && grep -q 'pinning .gwei posts on IPFS node' mirror.log && grep -q 'the check failed' mirror.log
+      - name: Publish the image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker run --privileged --rm tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 --install arm64
+          docker buildx create --use --driver docker-container
+          image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/gwei-mirror
+          docker buildx build -f mirror/Dockerfile --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image:latest" -t "$image:${GITHUB_SHA::12}" --push .
 
   sdk:
     needs: changes

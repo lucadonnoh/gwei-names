@@ -624,6 +624,12 @@ async function answerApi(request, url, env) {
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return apiJson({ error: 'Method not allowed.' }, 405);
     if (path === '/api/stats') return apiJson(await index.networkStats(), 200, 'public, max-age=60');
+    if (path === '/api/posts') {
+      // Every post on Ethereum, oldest found first, for mirrors: pass `next` back as `after` to read on.
+      const after = Math.max(Number.parseInt(url.searchParams.get('after'), 10) || 0, 0);
+      const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 100, 1), 200);
+      return apiJson(await index.archive(after, limit), 200, 'public, max-age=30');
+    }
     if (path === '/api/posts/recent') {
       const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 20, 1), 50);
       return apiJson({ posts: await index.recent(limit) }, 200, 'public, max-age=30');

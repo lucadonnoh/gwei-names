@@ -32,6 +32,8 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 **Gateway:** `name.gwei.limo` (or the longer `name.gwei.domains`) resolves a name to its IPFS, IPNS, or Swarm content.
 
+**Posts:** blog posts on `.gwei` names, carried by EIP-4844 blobs ([posts/SPEC.md](posts/SPEC.md)). To keep a copy of every post on your IPFS node, run [`gwei-mirror`](mirror/).
+
 ---
 
 ## Overview

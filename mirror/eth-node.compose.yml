@@ -1,0 +1,23 @@
+# gwei-mirror on eth-node (deploy-eth-node.sh installs it as /opt/gwei-mirror/docker-compose.yml): pins
+# every GNS post and its blob on this node's Kubo, which serves them to everyone (ipfs.slopo.net, and
+# the IPFS network). It reads the chain from the local Erigon and talks to Kubo's API on 127.0.0.1, so
+# it shares the host network; it has no inbound port.
+services:
+  gwei-mirror:
+    build:
+      context: .
+      dockerfile: mirror/Dockerfile
+    image: gwei-mirror:local
+    container_name: gwei-mirror
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 64
+    # This node has its own Kubo, so the image's bundled node isn't started.
+    entrypoint: ["node", "/app/mirror/gwei-mirror.mjs"]
+    command: ["--ipfs", "http://127.0.0.1:5001", "--rpc", "http://127.0.0.1:28545", "--state", "/data/state.json"]
+    volumes:
+      - /var/lib/gwei-mirror:/data

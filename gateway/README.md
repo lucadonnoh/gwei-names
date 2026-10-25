@@ -124,15 +124,16 @@ and contract content keep their existing cache policy.
 
 `IPFS_GATEWAYS` is a JSON array of HTTPS origins, shared by every IPFS/IPNS-backed
 name. `SWARM_GATEWAYS` can override the Swarm origins separately. No name or CID
-appears in the selection policy. The production node transport reuses
-`https://test-chat.slopo.net/ipfs/<cid>/...` and `/ipns/<name>/...` through the
-existing tunnel, backed by Kubo at 192.168.10.140:8082. Despite the existing host's
-name, these routes are generic and are used for every site's content.
+appears in the selection policy. The production node transport is
+`https://ipfs.slopo.net/ipfs/<cid>/...` and `/ipns/<name>/...`, through the rpi's
+Cloudflare Tunnel to Kubo at 192.168.10.140:8082 (`ops/nginx-ipfs-gateway.conf`). The
+post index uses the same gateways to recover posts it lost (by their CID, which is the
+post's hash).
 
 The transport is GET/HEAD-only, rate/concurrency limited, and never proxies the
 Kubo admin API. Its CSP sandboxes direct browser visits so arbitrary IPFS HTML
-cannot access the transport host's app storage. GNS applies its existing security
-headers on the isolated per-name origin. No tunnel or Kubo restart was needed.
+cannot access anything on the transport host. GNS applies its existing security
+headers on the isolated per-name origin.
 
 The public fallback is Filebase. ipfs.io and dweb.link (the code's built-in
 defaults when `IPFS_GATEWAYS` is unset) are not configured in production: from

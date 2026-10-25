@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  BLOB_BYTES, BLOB_PAYLOAD_BYTES, MAX_POST_BYTES, POST_PATH, decodeBlob, encodeBlob, encodePost, parsePost, postHash, postPath,
+  BLOB_BYTES, BLOB_PAYLOAD_BYTES, MAX_POST_BYTES, POST_PATH, blobCid, decodeBlob, encodeBlob, encodePost, parsePost, postCid, postHash, postPath,
 } from './posts-format.js';
 import { excerpt, linkUrl, renderMarkdown } from './markdown.js';
 import { texToMathml } from './math.js';
@@ -60,6 +60,16 @@ test('blob container round-trips posts and ignores foreign blobs', () => {
   otherMagic[1] = 0x41;
   assert.deepEqual(decodeBlob(otherMagic), []);
   assert.deepEqual(decodeBlob(new Uint8Array(10)), []);
+});
+
+test('IPFS CIDs are the ones Kubo gives: a post by its keccak hash, a blob by its sha-256', async () => {
+  // From Kubo 0.43: `ipfs block put --cid-codec raw --mhtype keccak-256` of the post, and
+  // `ipfs add --cid-version=1 --raw-leaves` of its blob.
+  const post = encodePost({ title: 'Mirrored', body: 'A post kept on IPFS.' });
+  assert.equal(postCid(postHash(post)), 'bafkrwiedsdpoohpoxcmuqpr37c7cjfxktbwyera5s47yon7lznqbd3ls5y');
+  assert.equal(await blobCid(encodeBlob([post])), 'bafkreiccs2wl7aagsxbm63cbs6cbepjfc6r33eznmrqdxdttk4jc2fh4fi');
+  // donnoh.gwei's first post on mainnet, from its PostAuthorized event alone.
+  assert.equal(postCid('0x634cd7f83ccd7f1ee41766f919a1e43db9f099686aef408df0f460ac580d9830'), 'bafkrwiddjtl7qpgnp4poif3g7em2dzb5xhyjs2dk55ai34humcwfqdmyga');
 });
 
 test('post paths use a hash prefix and a readable slug', () => {
@@ -207,7 +217,7 @@ const word = (v) => pad32(BigInt(v).toString(16));
 
 // A fake chain + blob sources. `chain.logs` are served by eth_getLogs, `chain.owners` answer the
 // ownerOf/resolve multicall, and `blobs` (versioned hash → bytes) are served by Blobscan unless
-// `blobscanDown`, in which case the beacon API has them.
+// `blobscanDown`, in which case the beacon API has them. `ipfs` (CID → bytes) is a trustless gateway.
 function fakeWorld() {
   const world = {
     head: 1000, logs: [], owners: {}, names: {}, blobs: {}, blobscanDown: false, beaconDown: false, calls: [],
@@ -238,6 +248,11 @@ function fakeWorld() {
       const blob = (world.blobscanBlobs || {})[blobscan[1]] || world.blobs[blobscan[1]];
       if (world.blobscanDown || !blob) return new Response('nope', { status: world.blobscanDown ? 503 : 404 });
       return new Response(JSON.stringify('0x' + toHex(blob)));
+    }
+    const ipfs = /^https:\/\/ipfs\.test\/ipfs\/(b[a-z2-7]+)$/.exec(url);
+    if (ipfs) {
+      const bytes = (world.ipfs || {})[ipfs[1]];
+      return bytes ? new Response(bytes, { headers: { 'content-type': 'application/vnd.ipld.raw' } }) : new Response('no', { status: 504 });
     }
     const beacon = /^https:\/\/beacon\.test\/eth\/v1\/beacon\/blobs\/(\d+)\?versioned_hashes=(0x[0-9a-f]+)$/.exec(url);
     if (beacon) {
@@ -313,6 +328,7 @@ function makeStore(world, env = {}) {
     POSTS_FROM_BLOCK: '100',
     RPC_URL: 'https://rpc.test/',
     BLOB_SOURCES: JSON.stringify({ blobscan: 'https://blobscan.test', beacons: ['https://beacon.test'] }),
+    IPFS_GATEWAYS: JSON.stringify(['https://ipfs.test']),
     ...env,
   }, { fetchImpl: world.fetch, now: () => now });
   store.advance = (seconds) => { now += seconds; };
@@ -453,8 +469,8 @@ test('blobs come from the beacon API when Blobscan is down, and retries back off
   world.beaconDown = true;
   world.head = 1100;
   world.logs.push(authorized(1000, 0, TOKEN, b.hash, ALICE), published(1001, 0, b.hash, vh2));
+  await store.sync(); // no source has the blob, and no copy of the post to rebuild it from
   store.upload(b.bytes, 'ip');
-  await store.sync();
   const calls = world.calls.length;
   store.advance(30);
   await store.sync();
@@ -584,7 +600,7 @@ test('a source serving bytes that are not the blob is caught by the versioned ha
   assert.equal(toHex(store.blobBytes(vh)), toHex(world.blobs[vh]));
 
   const b = postBytes('Both sources wrong');
-  const vhB = serve(world, encodeBlob([b.bytes]));
+  const vhB = serve(world, encodeBlob([b.bytes, postBytes('also in the blob').bytes])); // not rebuildable from b alone
   const wrong = encodeBlob([b.bytes, postBytes('x').bytes]);
   world.blobscanBlobs = { [vhB]: wrong };
   world.beaconBlobs = { [vhB]: wrong };
@@ -813,12 +829,13 @@ test('a removal in the same block as its authorization hides the post at mainnet
   assert.deepEqual(store.forToken(TOKEN, ALICE), []);
 });
 
-test('authorized bytes that never reach a blob expire; blob bytes are kept for thirty days', async () => {
+test('authorized bytes that never reach a blob expire; posts in a blob and the blob are kept for good', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const stuck = postBytes('Never published');
   const done = postBytes('Published');
-  const vh = serve(world, encodeBlob([done.bytes]));
+  const blob = encodeBlob([done.bytes]);
+  const vh = serve(world, blob);
   store.upload(stuck.bytes, 'ip');
   store.upload(done.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, stuck.hash, ALICE), authorized(500, 1, TOKEN, done.hash, ALICE), published(501, 0, done.hash, vh));
@@ -827,12 +844,105 @@ test('authorized bytes that never reach a blob expire; blob bytes are kept for t
   await store.sync();
   assert.equal(store.raw(stuck.hash), null);
   assert.ok(store.raw(done.hash), 'posts carried by a blob stay');
-  assert.ok(store.blobBytes(vh));
-  store.advance(30 * 86400);
+  store.advance(10 * 365 * 86400);
   await store.sync();
-  assert.equal(store.blobBytes(vh), null);
   assert.ok(store.raw(done.hash));
+  assert.equal(toHex(store.blobBytes(vh)), toHex(blob), 'and so does the blob, padded back to its full size');
+  assert.ok(store.rows('SELECT LENGTH(bytes) AS n FROM blob WHERE vh = ?', vh)[0].n < 1000, 'stored without the zero padding');
   assert.ok(store.forToken(TOKEN, ALICE)[0].onchain, 'the post stays on Ethereum in the index');
+  const detail = store.detail(done.hash);
+  assert.equal(detail.cid, postCid(done.hash));
+  assert.equal(detail.onchain.cid, await blobCid(blob));
+});
+
+test('blobs kept before CIDs were recorded get one, and lose their padding', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Kept the old way');
+  const blob = encodeBlob([a.bytes]);
+  const vh = serve(world, blob);
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, ALICE, 0n), published(500, 1, a.hash, vh, ALICE));
+  await store.sync();
+  store.sql.exec('UPDATE blob SET bytes = ? WHERE vh = ?', blob.buffer.slice(0), vh);
+  store.sql.exec('DELETE FROM blobcid');
+  assert.equal(store.detail(a.hash).onchain.cid, null);
+  store.advance(60);
+  await store.sync();
+  assert.equal(store.detail(a.hash).onchain.cid, await blobCid(blob));
+  assert.ok(store.rows('SELECT LENGTH(bytes) AS n FROM blob WHERE vh = ?', vh)[0].n < 1000);
+  assert.equal(toHex(store.blobBytes(vh)), toHex(blob));
+});
+
+test('the archive lists every post a blob carries once, in the order the index found them', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const [a, b, c] = ['First', 'Second', 'Late claim'].map((t) => postBytes(t));
+  const vhA = serve(world, encodeBlob([a.bytes])), vhB = serve(world, encodeBlob([b.bytes]));
+  const vhC = serve(world, encodeBlob([c.bytes, postBytes('not a claimed post').bytes]));
+  world.names[TOKEN] = 'alice.gwei';
+  world.logs.push(
+    authorized(500, 0, TOKEN, a.hash, ALICE, ALICE, 0n), published(500, 1, a.hash, vhA, ALICE),
+    authorized(510, 0, TOKEN2, b.hash, BOB, BOB, 0n), published(510, 1, b.hash, vhB, BOB),
+    authorized(510, 2, TOKEN2, a.hash, BOB), // someone else vouching for the same post
+    published(520, 0, c.hash, vhC, BOB), // published before anyone claims it
+    removed(530, 0, TOKEN2, b.hash, BOB),
+  );
+  await store.sync();
+  let page = store.archive(0, 1);
+  assert.deepEqual(page.posts.map((p) => p.title), ['First']);
+  const [first] = page.posts;
+  assert.equal(first.cid, postCid(a.hash));
+  assert.equal(first.onchain.blob, vhA);
+  assert.equal(first.onchain.cid, await blobCid(encodeBlob([a.bytes])));
+  assert.equal(first.time, world.timestamp(500));
+  assert.deepEqual(first.authorizations, [{ token: TOKEN, name: 'alice.gwei', author: ALICE }, { token: TOKEN2, name: null, author: BOB }]);
+  page = store.archive(page.next, 10);
+  assert.deepEqual(page.posts.map((p) => p.title), ['Second'], 'removed posts are listed too: they are on Ethereum');
+  const cursor = page.next;
+  assert.deepEqual(store.archive(cursor, 10), { posts: [], next: cursor }, 'caught up');
+
+  // A claim on the blob published at block 520 lands later; the post is listed after the cursor.
+  world.head = 1100;
+  world.logs.push(authorized(1000, 0, TOKEN, c.hash, ALICE, ALICE, 0n, vhC));
+  store.advance(60);
+  await store.sync();
+  page = store.archive(cursor, 10);
+  assert.deepEqual(page.posts.map((p) => [p.title, p.time]), [['Late claim', world.timestamp(520)]]);
+  assert.equal(store.archive(0, 10).posts.length, 3, 'each post once');
+});
+
+test('an index that lost its data gets posts back from IPFS once their blobs are gone', async () => {
+  const world = fakeWorld();
+  const a = postBytes('Old post', 'from long ago');
+  const blob = encodeBlob([a.bytes]);
+  const vh = blobVersionedHash(blob); // past the beacon window, and not on Blobscan
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
+  world.owners[TOKEN] = ALICE;
+  world.ipfs = { [postCid(a.hash)]: postBytes('Old post', 'tampered').bytes }; // a gateway lying first
+  const store = makeStore(world);
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE).length, 0, 'bytes that are not the post are not taken');
+  world.ipfs = { [postCid(a.hash)]: a.bytes };
+  store.advance(120);
+  await store.sync();
+  const [post] = store.forToken(TOKEN, ALICE);
+  assert.equal(post.onchain.blob, vh, 'the blob was rebuilt from the post and checked against its versioned hash');
+  assert.equal(store.body(a.hash), 'from long ago');
+  assert.equal(toHex(store.blobBytes(vh)), toHex(blob));
+});
+
+test('a blob no source has is rebuilt from an uploaded copy of its post', async () => {
+  const world = fakeWorld();
+  world.blobscanDown = true;
+  world.beaconDown = true;
+  const store = makeStore(world);
+  const a = postBytes('Sources down');
+  const vh = blobVersionedHash(encodeBlob([a.bytes]));
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.blob, vh);
+  assert.equal(world.calls.filter((u) => u.startsWith('https://ipfs.test')).length, 0, 'IPFS is only asked when the index has no copy');
 });
 
 test('the post list query stays bounded however many posts a name has', async () => {

@@ -4,15 +4,17 @@
 // because their keccak-256 hash is what the name's owner authorized, so the source doesn't matter).
 //
 // Everything an outsider can add is bounded by what it costs them on-chain or by a cap: only blobs
-// that claim an authorized post are fetched, only the claimed entries in them are stored, blob
-// bytes are kept for 30 days (the gwei.domains publisher pins them to IPFS for good), and bytes
-// that never make it into a blob expire.
+// that claim an authorized post are fetched, only the claimed entries in them are stored, and bytes
+// that never make it into a blob expire. Posts carried by a blob and the blobs that carry them are
+// kept for good (blobs without their zero padding), and listed for mirrors in the order they were
+// found (archive()). Lost ones come back from IPFS, where anyone can pin a post under its hash.
 //
 // The logic lives here, over a SQLite handle shaped like Durable Object storage (`sql.exec`), so it
 // runs under Node in tests; posts-index.js wraps it in the Durable Object.
 
-import { MAX_POST_BYTES, BLOB_BYTES, decodeBlob, parsePost, postHash } from './posts-format.js';
+import { MAX_POST_BYTES, BLOB_BYTES, blobCid, decodeBlob, encodeBlob, parsePost, postCid, postHash } from './posts-format.js';
 import { MULTICALL3, decodeAggregate3, encodeAggregate3 } from './profile-page.js';
+import { configuredGateways } from './content-gateways.js';
 import { readRpcJson } from './rpc-pool.js';
 import { rpcEndpointConfig } from './rpc-config.js';
 import { hexToBytes } from './web3-auto.js';
@@ -30,7 +32,6 @@ const LOG_RANGE = 2000; // blocks per eth_getLogs (public RPCs cap ranges)
 const LOG_RANGES_PER_SYNC = 5;
 const BLOBS_PER_SYNC = 6;
 const BLOB_MAX_TRIES = 60; // with the 6-hour backoff cap, about two weeks
-const BLOB_KEEP_SECONDS = 30 * 86400; // long enough for mirrors to copy a blob
 const PENDING_SECONDS = 86400; // an authorized post shows for a day while it waits for its blob
 const UPLOAD_TTL_SECONDS = 86400; // uploaded bytes no owner authorized are dropped after this
 const AUTHORIZED_TTL_SECONDS = 3 * 86400; // authorized bytes that never reach a blob, after this
@@ -47,15 +48,22 @@ const MAX_LIST = 200;
 const BEACON_GENESIS = 1606824023; // mainnet beacon genesis time; slots are 12 s
 const RPC_TIMEOUT_MS = 10_000;
 const BLOB_TIMEOUT_MS = 15_000;
+const IPFS_TIMEOUT_MS = 8_000; // as the website gateway allows
+const REBUILD_CLAIMS = 3; // posts tried per blob when rebuilding one (each try is a KZG commitment)
+const CIDS_PER_SYNC = 20;
 export const DEFAULT_BLOB_SOURCES = {
   blobscan: 'https://api.blobscan.com',
   beacons: ['https://ethereum-beacon-api.publicnode.com'],
 };
+// IPFS gateways for posts the index lost: the ones the Worker serves websites from (IPFS_GATEWAYS),
+// else Filebase, which answers Worker traffic (ipfs.io and dweb.link rate-limit it). A post is a raw
+// block, so any gateway's answer is the bytes themselves, checked against the post hash here.
+export const DEFAULT_IPFS_GATEWAYS = ['https://ipfs.filebase.io'];
 
 // Bumped whenever the tables change shape; a different version (or a different contract) starts the
 // index over from the contract's deployment block.
 const SCHEMA_VERSION = '3';
-const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'checked', 'names'];
+const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'checked', 'names', 'blobcid'];
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS content (hash TEXT PRIMARY KEY, bytes BLOB NOT NULL, title TEXT NOT NULL, time INTEGER, received INTEGER NOT NULL)',
   // PostAuthorized: `blob` is the blob the author built for the post (its versioned hash).
@@ -74,9 +82,10 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS removal (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, token TEXT NOT NULL, hash TEXT NOT NULL, author TEXT NOT NULL, PRIMARY KEY (block, idx))',
   'CREATE INDEX IF NOT EXISTS removal_key ON removal (token, hash, author)',
   // A blob named by PostPublished. status: 'due' (not fetched yet), 'kept' (some claim held; bytes
-  // kept for BLOB_KEEP_SECONDS) or 'rejected' (no claim held; nothing kept).
+  // kept, without the trailing zeros) or 'rejected' (no claim held; nothing kept).
   "CREATE TABLE IF NOT EXISTS blob (vh TEXT PRIMARY KEY, block INTEGER NOT NULL, ts INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'due', bytes BLOB, fetched INTEGER, tries INTEGER NOT NULL DEFAULT 0, next_try INTEGER NOT NULL DEFAULT 0)",
-  // Claimed posts a fetched blob really contains.
+  // Claimed posts a fetched blob really contains. Rows are never deleted, so the rowid orders posts by
+  // when the index found them (archive()).
   'CREATE TABLE IF NOT EXISTS carried (vh TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (vh, hash))',
   'CREATE INDEX IF NOT EXISTS carried_hash ON carried (hash)',
   // Claims a fetched blob was checked against, held or not. A claim not in here sends the blob back
@@ -84,11 +93,25 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS checked (vh TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (vh, hash))',
   // A token's full name; '' while unknown (retried after NAME_RETRY_SECONDS).
   'CREATE TABLE IF NOT EXISTS names (token TEXT PRIMARY KEY, name TEXT NOT NULL, checked INTEGER NOT NULL)',
+  // A kept blob's IPFS CID (sha-256 of its bytes, as the publisher pins it).
+  'CREATE TABLE IF NOT EXISTS blobcid (vh TEXT PRIMARY KEY, cid TEXT NOT NULL)',
 ];
 
 const HASH = /^0x[0-9a-f]{64}$/;
 const toBytes = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
 const toBuffer = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+// A short post's blob is mostly zero padding, so blobs are stored without their trailing zeros.
+function trimBlob(blob) {
+  let n = blob.length;
+  while (n && blob[n - 1] === 0) n--;
+  return blob.subarray(0, n);
+}
+function padBlob(stored) {
+  if (stored.length === BLOB_BYTES) return stored;
+  const blob = new Uint8Array(BLOB_BYTES);
+  blob.set(stored);
+  return blob;
+}
 const word = (data, i) => '0x' + data.slice(2 + i * 64, 2 + (i + 1) * 64);
 const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
 // Events are ordered by block * 2^32 + log index, however many logs a block has. The constant is an
@@ -198,7 +221,15 @@ export class PostStore {
 
   blobBytes(vh) {
     const row = this.rows('SELECT bytes FROM blob WHERE vh = ? AND bytes IS NOT NULL', vh)[0];
-    return row ? toBytes(row.bytes) : null;
+    return row ? padBlob(toBytes(row.bytes)) : null;
+  }
+
+  blobCidOf(vh) {
+    return this.rows('SELECT cid FROM blobcid WHERE vh = ?', vh)[0]?.cid ?? null;
+  }
+
+  withCid(onchain) {
+    return onchain && { ...onchain, cid: this.blobCidOf(onchain.blob) };
   }
 
   onchain(hash) {
@@ -214,8 +245,29 @@ export class PostStore {
       'SELECT a.token, a.author, a.blob, a.publisher, a.fee, a.tx, a.block, a.ts, n.name FROM auth a LEFT JOIN names n ON n.token = a.token ' +
       'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
     ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, blob: a.blob, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
-    const onchain = this.onchain(hash);
-    return { hash, title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
+    const onchain = this.withCid(this.onchain(hash));
+    return { hash, cid: postCid(hash), title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
+  }
+
+  // Every post a blob carries, in the order the index found them, for mirrors and other frontends.
+  // A post found later always comes after every `seq` handed out before (a late claim can make an
+  // old blob carry a post), so reading on from the last `seq` sees each post once. Nothing is
+  // filtered: whether a removed post or a sold name's post shows is the reader's call (posts/SPEC.md).
+  archive(after = 0, limit = 100) {
+    const rows = this.rows(
+      `SELECT l.rowid AS seq, l.hash, c.title, ${ONCHAIN} AS onchain FROM carried l JOIN content c ON c.hash = l.hash ` +
+      'WHERE l.rowid > ? AND NOT EXISTS (SELECT 1 FROM carried e WHERE e.hash = l.hash AND e.rowid < l.rowid) ORDER BY l.rowid LIMIT ?',
+      Math.max(Number(after) || 0, 0), Math.min(Math.max(limit, 1), MAX_LIST),
+    );
+    const posts = rows.map((row) => {
+      const onchain = this.withCid(parseOnchain(row.onchain));
+      const authorizations = this.rows(
+        'SELECT a.token, a.author, n.name, MIN(a.block) AS block FROM auth a LEFT JOIN names n ON n.token = a.token ' +
+        'WHERE a.hash = ? GROUP BY a.token, a.author ORDER BY block LIMIT 10', row.hash,
+      ).map((a) => ({ token: a.token, name: a.name || null, author: a.author }));
+      return { seq: row.seq, hash: row.hash, cid: postCid(row.hash), title: row.title, time: onchain?.time ?? null, authorizations, onchain };
+    });
+    return { posts, next: posts.length ? posts[posts.length - 1].seq : Math.max(Number(after) || 0, 0) };
   }
 
   // Fees one address put in escrow, latest per (blob, publisher), for the dapp's refund list. Only a
@@ -351,6 +403,7 @@ export class PostStore {
     }
     await this.fillNames();
     const blobs = await this.fetchBlobs();
+    await this.fillCids();
     this.prune();
     if (events || blobs) this.recentCache = null;
     return { head, cursor, events, blobs };
@@ -460,8 +513,8 @@ export class PostStore {
     );
     let fetched = 0;
     for (const { vh, ts, tries, bytes } of due) {
-      const kept = bytes ? toBytes(bytes) : null;
-      const blob = kept || await this.fetchBlob(vh, ts);
+      const kept = bytes ? padBlob(toBytes(bytes)) : null;
+      const blob = kept || await this.fetchBlob(vh, ts) || await this.rebuildBlob(vh);
       if (!blob) {
         const wait = Math.min(60 * 2 ** tries, 6 * 3600);
         this.sql.exec('UPDATE blob SET tries = tries + 1, next_try = ? WHERE vh = ?', now + wait, vh);
@@ -480,7 +533,7 @@ export class PostStore {
         if (post) this.storeContent(hash, entry, post);
       }
       if (kept) this.sql.exec("UPDATE blob SET status = 'kept' WHERE vh = ?", vh); // it held a claim before
-      else if (held) this.sql.exec("UPDATE blob SET status = 'kept', bytes = ?, fetched = ?, tries = tries + 1 WHERE vh = ?", toBuffer(blob), now, vh);
+      else if (held) this.sql.exec("UPDATE blob SET status = 'kept', bytes = ?, fetched = ?, tries = tries + 1 WHERE vh = ?", toBuffer(trimBlob(blob)), now, vh);
       else this.sql.exec("UPDATE blob SET status = 'rejected', fetched = ?, tries = tries + 1 WHERE vh = ?", now, vh);
       fetched++;
     }
@@ -509,6 +562,53 @@ export class PostStore {
     return null;
   }
 
+  // A blob no source has any more (beacon nodes keep them about 18 days), rebuilt from a post it
+  // should carry: a post's own blob follows from the post's bytes, and the versioned hash says whether
+  // this is it. The bytes come from the index or, once it lost them, from IPFS by the post's hash. A
+  // blob holding several posts can't be rebuilt this way; Blobscan or a mirror's copy of it can.
+  async rebuildBlob(vh) {
+    const { blobVersionedHash } = await import('../dapp/vendor/kzg.bundle.mjs');
+    const claims = this.rows('SELECT hash FROM pub WHERE blob = ? GROUP BY hash ORDER BY MIN(block), MIN(idx) LIMIT ?', vh, REBUILD_CLAIMS);
+    for (const { hash } of claims) {
+      const bytes = this.raw(hash) || await this.postFromIpfs(hash);
+      const blob = bytes && encodeBlob([bytes]);
+      if (blob && blobVersionedHash(blob) === vh) return blob;
+    }
+    return null;
+  }
+
+  async postFromIpfs(hash) {
+    for (const gateway of this.ipfsGateways()) {
+      try {
+        const response = await this.fetchImpl(`${gateway}/ipfs/${postCid(hash)}`, {
+          headers: { 'user-agent': 'gwei.domains posts indexer' },
+          signal: AbortSignal.timeout(IPFS_TIMEOUT_MS),
+        });
+        const bytes = response.ok ? await readCapped(response, MAX_POST_BYTES) : null;
+        if (!response.ok) await response.body?.cancel().catch(() => {});
+        if (bytes && postHash(bytes) === hash) return bytes;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  ipfsGateways() {
+    try { return configuredGateways(this.env.IPFS_GATEWAYS, DEFAULT_IPFS_GATEWAYS); } catch (_) { return DEFAULT_IPFS_GATEWAYS; }
+  }
+
+  // CIDs for kept blobs that have none yet (blobs kept before CIDs were recorded), and the zero
+  // padding off any blob still stored with it.
+  async fillCids() {
+    const rows = this.rows(
+      'SELECT vh, bytes FROM blob b WHERE bytes IS NOT NULL AND NOT EXISTS (SELECT 1 FROM blobcid c WHERE c.vh = b.vh) LIMIT ?', CIDS_PER_SYNC,
+    );
+    for (const { vh, bytes } of rows) {
+      const stored = toBytes(bytes);
+      this.sql.exec('INSERT OR IGNORE INTO blobcid (vh, cid) VALUES (?, ?)', vh, await blobCid(padBlob(stored)));
+      if (stored.length === BLOB_BYTES) this.sql.exec('UPDATE blob SET bytes = ? WHERE vh = ?', toBuffer(trimBlob(stored)), vh);
+    }
+  }
+
   blobSources() {
     try {
       const configured = JSON.parse(this.env.BLOB_SOURCES || 'null');
@@ -530,7 +630,7 @@ export class PostStore {
   }
 
   // Bytes that never made it into a blob expire (a day if nobody authorized them, three days if
-  // someone did), and blob bytes go after 30 days. Posts carried by a blob are kept for good.
+  // someone did). Posts carried by a blob, and the blobs, are kept for good.
   prune() {
     const now = this.now();
     this.sql.exec(
@@ -538,7 +638,6 @@ export class PostStore {
       'OR (received < ? AND NOT EXISTS (SELECT 1 FROM auth a WHERE a.hash = content.hash)))',
       now - AUTHORIZED_TTL_SECONDS, now - UPLOAD_TTL_SECONDS,
     );
-    this.sql.exec('UPDATE blob SET bytes = NULL WHERE bytes IS NOT NULL AND fetched < ?', now - BLOB_KEEP_SECONDS);
   }
 
   // --- RPC -------------------------------------------------------------------------------------------
@@ -623,6 +722,31 @@ export class PostStore {
 }
 
 export const isPostHash = (value) => HASH.test(value || '');
+
+// A response body, or null once it passes `max` bytes.
+async function readCapped(response, max) {
+  if (Number(response.headers.get('content-length')) > max) {
+    await response.body?.cancel().catch(() => {});
+    return null;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.byteLength; }
+  return bytes;
+}
 
 // Rate limits apply per IPv4 address and per IPv6 /64, since one IPv6 host holds a whole /64.
 export function clientKey(ip) {

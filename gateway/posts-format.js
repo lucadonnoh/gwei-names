@@ -1,7 +1,7 @@
 // The byte formats of GNS posts (posts/SPEC.md): a post is a small JSON document named by its
 // keccak-256 hash, and a blob carries one or more posts in a length-prefixed container.
 
-import { keccak256 } from './web3-auto.js';
+import { hexToBytes, keccak256 } from './web3-auto.js';
 
 export const BLOB_BYTES = 131072; // 4096 field elements of 32 bytes
 const FIELD_ELEMENTS = 4096;
@@ -16,6 +16,21 @@ export const MAX_TITLE_CHARS = 200;
 
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
 export const postHash = (bytes) => '0x' + toHex(keccak256(bytes));
+
+// IPFS addresses (CIDv1, raw codec, base32). A post's is its keccak-256 hash, the one PostAuthorized
+// records, so it follows from Ethereum alone; a blob's is its sha-256, as `ipfs add --cid-version=1
+// --raw-leaves` pins it. See "Mirroring" in posts/SPEC.md.
+const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
+function rawCid(hashCode, digest) {
+  let out = 'b', value = 0, bits = 0;
+  for (const byte of [0x01, 0x55, hashCode, digest.length, ...digest]) {
+    value = ((value << 8) | byte) & 0xffff;
+    for (bits += 8; bits >= 5; bits -= 5) out += BASE32[(value >> (bits - 5)) & 31];
+  }
+  return bits ? out + BASE32[(value << (5 - bits)) & 31] : out;
+}
+export const postCid = (hash) => rawCid(0x1b, hexToBytes(hash.slice(2)));
+export const blobCid = async (blob) => rawCid(0x12, new Uint8Array(await crypto.subtle.digest('SHA-256', blob)));
 
 // A v1 post: { "v": 1, "title": string, "body": string }. Unknown fields are ignored, so later
 // versions can add some. A post has no date of its own: it is dated by the block of the blob that
