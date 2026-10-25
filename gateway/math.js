@@ -58,6 +58,11 @@ function tokenize(tex) {
   return tokens;
 }
 
+// A script after a closing bracket belongs to the whole bracketed group: (k+1)^2 is the square of
+// (k+1). Attached to the lone bracket, browsers lay it out as a script base and it drops below the line.
+const OPENER = { ')': '(', ']': '[', '}': '{', '⟩': '⟨', '⌉': '⌈', '⌋': '⌊' };
+const FENCE = /^<mo>([(\[{⟨⌈⌊)\]}⟩⌉⌋])<\/mo>$/;
+
 class Parser {
   constructor(tokens) {
     this.tokens = tokens;
@@ -72,6 +77,7 @@ class Parser {
   row(close) {
     if (++this.depth > MAX_DEPTH) throw new MathError('too deep');
     const items = [];
+    const opens = []; // [bracket, index in items] of brackets not closed yet in this row
     for (;;) {
       const t = this.peek();
       if (!t) {
@@ -81,15 +87,22 @@ class Parser {
       if (close && t.ch === close) { this.next(); break; }
       if (t.ch === '}') throw new MathError('unbalanced brace');
       if (t.cmd === 'right') break;
-      items.push(this.scripted());
+      let base = this.atom();
+      const fence = FENCE.exec(base)?.[1];
+      if (fence && !OPENER[fence]) opens.push([fence, items.length]);
+      else if (fence && opens.length && opens[opens.length - 1][0] === OPENER[fence]) {
+        const [, start] = opens.pop();
+        const next = this.peek()?.ch;
+        if (next === '^' || next === '_' || next === "'") base = `<mrow>${items.splice(start).join('')}${base}</mrow>`;
+      }
+      items.push(this.scripted(base));
     }
     this.depth--;
     return items.length === 1 ? items[0] : `<mrow>${items.join('')}</mrow>`;
   }
 
   // An atom with any ^ and _ after it.
-  scripted() {
-    const base = this.atom();
+  scripted(base) {
     let sub = null, sup = null;
     for (;;) {
       const t = this.peek();

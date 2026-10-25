@@ -159,6 +159,12 @@ test('TeX math becomes MathML', () => {
   assert.match(texToMathml('a < b'), /<mo>&lt;<\/mo>/);
   for (const bad of ['\\unknown', '{', '}', 'x_', '\\frac{a}', '\\right)', 'a_b_c', '']) assert.equal(texToMathml(bad), null, bad);
   assert.equal(texToMathml('{'.repeat(40) + 'x' + '}'.repeat(40)), null, 'nesting is bounded');
+  // A script after a closing bracket takes the whole group as its base, or browsers drop the bracket.
+  assert.equal(texToMathml('(k+1)^2'), '<math><msup><mrow><mo>(</mo><mi>k</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow><mn>2</mn></msup></math>');
+  assert.equal(texToMathml('f(x)_i'), '<math><mrow><mi>f</mi><msub><mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow><mi>i</mi></msub></mrow></math>');
+  assert.match(texToMathml('((a)^2)^3'), /^<math><msup><mrow><mo>\(<\/mo><msup><mrow><mo>\(<\/mo><mi>a<\/mi><mo>\)<\/mo><\/mrow>/);
+  assert.equal(texToMathml('x)^2'), '<math><mrow><mi>x</mi><msup><mo>)</mo><mn>2</mn></msup></mrow></math>', 'an unmatched bracket stays as it was');
+  assert.equal(texToMathml('(a+b)'), '<math><mrow><mo>(</mo><mi>a</mi><mo>+</mo><mi>b</mi><mo>)</mo></mrow></math>', 'no script, no extra group');
 
   const html = renderMarkdown('length-$k$ and $$\\frac{y-y_0}{y_1-y_0}$$ cost $5 and $10, \\$ sign, `$x$`');
   assert.match(html, /length-<math><mi>k<\/mi><\/math>/);
