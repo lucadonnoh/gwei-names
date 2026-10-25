@@ -30,7 +30,7 @@ The result is a neutral public good: fixed rules nobody can change, and money no
 
 **MetaMask Snap:** [`@donnoh/gwei-name-service-snap`](https://www.npmjs.com/package/@donnoh/gwei-name-service-snap) — forward and reverse `.gwei` resolution in MetaMask. It reads GNS through MetaMask's Ethereum provider.
 
-**Gateway:** [`gwei.domains`](https://gwei.domains) resolves `name.gwei.domains` to IPFS, IPNS, or Swarm content.
+**Gateway:** `name.gwei.limo` (or the longer `name.gwei.domains`) resolves a name to its IPFS, IPNS, or Swarm content.
 
 ---
 
@@ -605,7 +605,7 @@ struct NameRecord {
 
 ## IPFS and IPNS Contenthash
 
-To host a website at `name.gwei.domains`:
+To host a website at `name.gwei.limo`:
 
 1. Pin your site to IPFS (Pinata, web3.storage, etc.)
 2. Get the CID (`Qm...` or `baf...`)
@@ -666,9 +666,9 @@ Two notes on how this differs from the spec and from other gateways:
 
 ## Gateway (gwei.domains)
 
-The gateway is a Cloudflare Worker (or equivalent) on the `gwei.domains` wildcard domain that:
+The gateway is a Cloudflare Worker (or equivalent) on the `gwei.limo` and `gwei.domains` wildcard domains that:
 
-1. Extracts name from subdomain (`name.gwei.domains`)
+1. Extracts name from subdomain (`name.gwei.limo` or `name.gwei.domains`)
 2. Queries contract for contenthash, falling back to the `contentcontract` text record
 3. Decodes the IPFS, IPNS, or Swarm reference and fetches it from the matching public gateway, or
    calls the contract directly for a `contentcontract` record

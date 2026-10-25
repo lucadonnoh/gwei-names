@@ -1301,7 +1301,7 @@ body.vote-dock-open { padding-bottom: 104px; }
     "links": [
       {
         "label": "Website",
-        "url": "https://reality.gwei.domains/"
+        "url": "https://reality.gwei.limo/"
       },
       {
         "label": "GitHub",
@@ -1335,7 +1335,7 @@ body.vote-dock-open { padding-bottom: 104px; }
     "links": [
       {
         "label": "Website",
-        "url": "https://ethereumrock.gwei.domains/"
+        "url": "https://ethereumrock.gwei.limo/"
       },
       {
         "label": "GitHub",
@@ -1399,7 +1399,7 @@ body.vote-dock-open { padding-bottom: 104px; }
     "links": [
       {
         "label": "Website",
-        "url": "https://tatsumaki.gwei.domains/"
+        "url": "https://tatsumaki.gwei.limo/"
       },
       {
         "label": "GitHub",
@@ -2234,9 +2234,9 @@ async function loadStats() {
       listEl.innerHTML = '';
       for (const label of sites) {
         const a = document.createElement('a');
-        a.href = 'https://' + encodeURIComponent(label) + '.gwei.domains';
+        a.href = 'https://' + encodeURIComponent(label) + '.' + GWEI_GATEWAY;
         a.target = '_blank'; a.rel = 'noopener';
-        a.textContent = label + '.gwei.domains';
+        a.textContent = label + '.' + GWEI_GATEWAY;
         listEl.appendChild(a);
       }
       sitesEl.style.display = '';
@@ -2259,7 +2259,7 @@ async function loadRecentPosts() {
     for (const p of posts) {
       if (!/\.gwei$/.test(p.name || '')) continue;
       const a = document.createElement('a');
-      a.href = new URL(postPathFor(p.hash, p.title), 'https://' + p.name.slice(0, -5) + '.gwei.domains').href;
+      a.href = new URL(postPathFor(p.hash, p.title), 'https://' + p.name.slice(0, -5) + '.' + GWEI_GATEWAY).href;
       a.target = '_blank'; a.rel = 'noopener';
       a.textContent = p.title + ' · ' + p.name;
       list.appendChild(a);
@@ -2572,9 +2572,9 @@ window.addEventListener('zkp-ready', updateZkClaimEnabled);
 // In case the module loaded before this listener was attached.
 if (window.zkpReady === true) updateZkClaimEnabled();
 
-// Gateway for .gwei websites - resolves name.gwei.domains to IPFS contenthash
-// URL pattern: https://name.gwei.domains (not name.gwei.gwei.domains)
-const GWEI_GATEWAY = 'gwei.domains';
+// Gateway for .gwei websites: name.gwei.limo (gwei.limo is the shorter alias of gwei.domains; both serve
+// the same sites). URL pattern: https://name.gwei.limo (not name.gwei.gwei.limo)
+const GWEI_GATEWAY = 'gwei.limo';
 
 // --- web3:// websites (ERC-6821 contentcontract) ------------------------------
 // A name can serve its site straight out of a smart contract instead of IPFS or Swarm. That pointer
@@ -6119,7 +6119,7 @@ function websiteSwitchNote() {
 }
 
 // ── Edit profile ──
-// The records a name's page (<name>.gwei.domains, while no website is set) and other apps read. Standard
+// The records a name's page (<name>.gwei.limo, while no website is set) and other apps read. Standard
 // ENS keys, plus `gwei-page`: a small JSON object with the page's accent colour and extra links.
 const PROFILE_FIELDS = [
   { key: 'avatar', label: 'Avatar', placeholder: 'https://…, ipfs://… or eip155:1/erc721:0x…/id' },

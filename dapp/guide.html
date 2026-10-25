@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Host a website on your .gwei name</title>
-<meta name="description" content="Store a site on IPFS, set it on your .gwei name, and serve it at yourname.gwei.domains — no servers, no DNS.">
+<meta name="description" content="Store a site on IPFS, set it on your .gwei name, and serve it at yourname.gwei.limo — no servers, no DNS.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
 <style>
   :root { color-scheme: light dark; }
@@ -45,7 +45,7 @@
   </svg>
 
   <h1>Host a website on your .gwei name</h1>
-  <p class="sub">No servers, no DNS. Store a site on IPFS, set it on your name once, and it's served at <code>yourname.gwei.domains</code>.</p>
+  <p class="sub">No servers, no DNS. Store a site on IPFS, set it on your name once, and it's served at <code>yourname.gwei.limo</code>.</p>
 
   <h2><span class="n">1</span>Build your site</h2>
   <p>Make a self-contained site — at minimum an <code>index.html</code>. Keep links relative and put assets (CSS, images) next to it. A single folder is ideal.</p>
@@ -71,7 +71,7 @@ npx bgipfs upload ./my-site                                  # -&gt; CID: bafy..
   <p class="hint"><a href="https://www.ethswarm.org/" target="_blank" rel="noopener">Swarm</a> is supported too — if your site lives on Swarm, paste a <code>bzz://…</code> reference in step&nbsp;3 instead. It's stored the same way, with a Swarm codec marker. This guide walks through IPFS.</p>
 
   <h2><span class="n">4</span>Visit it</h2>
-  <p>Open <strong><code>yourname.gwei.domains</code></strong>. The gateway reads your name's <code>contenthash</code>, decodes the CID, and reverse-proxies the content from a public IPFS gateway. That's the whole stack.</p>
+  <p>Open <strong><code>yourname.gwei.limo</code></strong>. The gateway reads your name's <code>contenthash</code>, decodes the CID, and reverse-proxies the content from a public IPFS gateway. That's the whole stack.</p>
 
   <hr>
 

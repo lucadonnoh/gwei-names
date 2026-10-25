@@ -2849,3 +2849,10 @@ test('the QR encoder is vendored and encodes exactly like the qrcode package', a
   assert.equal(typeof QRCode.toCanvas, 'function');
   assert.equal(typeof QRCode.toDataURL, 'function');
 });
+
+test('name sites are linked under the short gwei.limo domain', () => {
+  assert.match(html, /^const GWEI_GATEWAY = 'gwei\.limo';$/m);
+  // Every <name>.gwei.domains link goes through GWEI_GATEWAY now; only the diff service is left.
+  const left = [...html.matchAll(/[a-z0-9-]+\.gwei\.domains/gi)].map((m) => m[0].toLowerCase());
+  assert.deepEqual([...new Set(left)], ['diff.gwei.domains']);
+});
