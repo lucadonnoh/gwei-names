@@ -2018,112 +2018,7 @@ test('Remove contenthash keeps the original name in its transaction and success 
   assert.doesNotMatch(harness.statuses.at(-1).message, /another-name/);
 });
 
-function recentWebsites(cache, limit) {
-  const start = html.indexOf('function recentWebsiteLabels(cache, limit)');
-  const end = html.indexOf('async function loadStats()', start);
-  assert.notEqual(start, -1, 'the recent-websites helper must exist');
-  assert.notEqual(end, -1, 'the recent-websites helper must be bounded');
-
-  const context = vm.createContext({});
-  vm.runInContext(
-    html.slice(start, end) + '\nglobalThis.recentWebsiteLabels = recentWebsiteLabels;',
-    context
-  );
-  return [...context.recentWebsiteLabels(cache, limit)]; // copy out of the vm realm so deepEqual works
-}
-
-test('a re-registration drops website records from the prior record version', () => {
-  const start = html.indexOf('function statsRecordName(cache, node, label, len, top)');
-  const end = html.indexOf('// Names that serve a website', start);
-  assert.notEqual(start, -1, 'the name-record helper must exist');
-  assert.notEqual(end, -1, 'the name-record helper must be bounded');
-  const context = vm.createContext({});
-  vm.runInContext(html.slice(start, end) + '\nglobalThis.statsRecordName = statsRecordName;', context);
-
-  const cache = {
-    names: { node: { label: 'old-owner', len: 9, top: true } },
-    ch: { node: { len: 36, block: 50 } },
-    cc: { node: { len: 46, block: 60 } }
-  };
-  context.statsRecordName(cache, 'node', 'new-owner', 9, true);
-
-  assert.equal(cache.names.node.label, 'new-owner');
-  assert.equal(cache.ch.node, undefined);
-  assert.equal(cache.cc.node, undefined);
-});
-
-// One name per case: an IPFS, a Swarm and an IPNS contenthash, a web3:// contract, a name whose
-// contenthash was cleared in favour of its contract, a name with neither record left, a subdomain
-// and a name that never set anything.
-const websiteCache = {
-  names: {
-    '0x01': { label: 'ipfs-site', top: true },
-    '0x02': { label: 'swarm-site', top: true },
-    '0x03': { label: 'ipns-site', top: true },
-    '0x04': { label: 'ethereumrock', top: true },
-    '0x05': { label: 'switched', top: true },
-    '0x06': { label: 'cleared', top: true },
-    '0x07': { label: 'sub', top: false },
-    '0x08': { label: 'no-site', top: true }
-  },
-  ch: {
-    '0x01': { len: 38, block: 300 },
-    '0x02': { len: 38, block: 100 },
-    '0x03': { len: 38, block: 200 },
-    '0x05': { len: 0, block: 400 },
-    '0x06': { len: 0, block: 420 },
-    '0x07': { len: 38, block: 500 }
-  },
-  cc: {
-    '0x04': { len: 45, block: 250 },
-    '0x05': { len: 45, block: 150 },
-    '0x06': { len: 0, block: 430 },
-    '0x07': { len: 45, block: 500 }
-  }
-};
-
-test('recent websites rank contenthash and web3:// contract sites together', () => {
-  assert.deepEqual(recentWebsites(websiteCache, 50), [
-    'ipfs-site',
-    'ethereumrock',
-    'ipns-site',
-    'switched',
-    'swarm-site'
-  ]);
-});
-
-test('recent websites date a name by the record the gateway serves', () => {
-  const cache = {
-    names: { '0x01': { label: 'shadowed', top: true }, '0x02': { label: 'contract-only', top: true } },
-    ch: { '0x01': { len: 38, block: 100 } },
-    cc: { '0x01': { len: 45, block: 900 }, '0x02': { len: 45, block: 500 } }
-  };
-
-  // 0x01 serves its contenthash, so the newer shadowed contract record must not move it up.
-  assert.deepEqual(recentWebsites(cache, 50), ['contract-only', 'shadowed']);
-});
-
-test('recent websites keep the limit', () => {
-  assert.deepEqual(recentWebsites(websiteCache, 2), ['ipfs-site', 'ethereumrock']);
-});
-
-test('the stats scan reads contentcontract records alongside contenthashes', () => {
-  const start = html.indexOf('const STATS_NAME_TOPIC');
-  const end = html.indexOf('loadStats();', start);
-  assert.notEqual(start, -1, 'the stats section must exist');
-  assert.notEqual(end, -1, 'the stats section must be bounded');
-  const statsSource = html.slice(start, end);
-
-  // TextChanged(bytes32,string,string) and keccak256('contentcontract'), its indexed key.
-  assert.match(statsSource, /STATS_TEXT_TOPIC = '0xd8c9334b1a9c2f9da342a0a2b32629c1a229b6445dad78947f674b44444a7550'/);
-  assert.match(statsSource, /STATS_CC_KEY = '0x58d1a44eb778f49875f62ace52dcda3a77ed4f1b085b6668edba23e2aea510ec'/);
-  assert.match(statsSource, /topics: \[\[STATS_NAME_TOPIC, STATS_CH_TOPIC, STATS_TEXT_TOPIC\]\]/);
-  assert.match(statsSource, /log\.topics\[2\] === STATS_CC_KEY/);
-  // A cache from before contentcontract was scanned has to be discarded, not resumed from.
-  assert.match(statsSource, /c\.names && c\.ch && c\.cc &&/);
-});
-
-test('the stats scan waits until the visitor scrolls or its section is about to be seen', async () => {
+test('the stats wait until the visitor scrolls or their section is about to be seen', async () => {
   const start = html.indexOf('function nearViewport(el)');
   const end = html.indexOf('async function loadStats()', start);
   assert.notEqual(start, -1, 'the viewport helper must exist');
@@ -2163,9 +2058,9 @@ test('the stats scan waits until the visitor scrolls or its section is about to 
   assert.equal(byScroll.observer.disconnected, true);
   assert.equal(byScroll.scroll.size, 0);
 
-  // Nothing is fetched before then: not the logs, not the burned balance.
+  // Nothing is fetched before then.
   const loadStats = html.slice(end, html.indexOf('loadStats();', end));
-  assert.ok(loadStats.indexOf('await nearViewport(sec)') < loadStats.indexOf('statsRpc('));
+  assert.ok(loadStats.indexOf('await nearViewport(sec)') < loadStats.indexOf("fetch(POSTS_API + '/stats')"));
 });
 
 test('the first paint holds room for what the script draws, and shows the free-name links, so nothing shifts', () => {
@@ -2494,7 +2389,7 @@ test('icons and the manifest exist and are copied by the Dockerfile', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'Dockerfile'), 'utf8');
   for (const file of ['favicon.ico', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'manifest.json']) {
     assert.ok(fs.existsSync(path.join(__dirname, file)), `dapp/${file} must exist`);
-    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /www/${file.replace('.', '\\.')}$`, 'm'));
+    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /usr/share/nginx/html/${file.replace('.', '\\.')}$`, 'm'));
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'manifest.json'), 'utf8'));
   for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(__dirname, icon.src.slice(1))), icon.src);
@@ -2523,10 +2418,10 @@ test('the dapp and the guide preview as large 1200x630 cards that the image copi
     const png = fs.readFileSync(path.join(__dirname, file));
     assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], file);
     assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630], file);
-    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /www/${file.replace('.', '\\.')}$`, 'm'));
+    assert.match(dockerfile, new RegExp(`^COPY dapp/${file.replace('.', '\\.')} /usr/share/nginx/html/${file.replace('.', '\\.')}$`, 'm'));
   }
-  // Crawlers read the charset from the header, which busybox only sends when its config says so.
-  assert.match(fs.readFileSync(path.join(__dirname, 'httpd.conf'), 'utf8'), /^\.html:text\/html;charset=utf-8$/m);
+  // Crawlers read the charset from the header, which the server sends for every text type.
+  assert.match(fs.readFileSync(path.join(__dirname, 'nginx.conf.template'), 'utf8'), /^\s*charset utf-8;$/m);
 });
 
 test('heavy libraries load on demand and ethers no longer blocks rendering', () => {
@@ -2953,4 +2848,36 @@ test('the page is Ethereum only, even for a visitor who once picked Sepolia', ()
   assert.equal(context.picked, 'ethereum');
   assert.equal(store.has('gwei_network'), false, 'the old choice is cleared');
   assert.doesNotMatch(html, /id="netBar"|setActiveNetwork|net-pill/, 'no network picker left');
+});
+
+test('the stats come from the gateway, and a stats index still catching up is not shown', async () => {
+  const start = html.indexOf('async function loadStats()');
+  const end = html.indexOf('\n}\n', start) + 3;
+  const els = {};
+  const el = (id) => (els[id] ||= { id, style: {}, textContent: '', innerHTML: '', children: [], appendChild(c) { this.children.push(c); } });
+  const run = async (answer) => {
+    for (const k of Object.keys(els)) delete els[k];
+    const fetched = [], removed = [];
+    const context = vm.createContext({
+      CHAIN_ID: 1, POSTS_API: 'https://gwei.domains/api', GWEI_GATEWAY: 'gwei.limo', BigInt, Number, Object, Array,
+      document: { getElementById: el, createElement: () => ({}) },
+      localStorage: { removeItem: (k) => removed.push(k) },
+      nearViewport: async () => {},
+      fetch: async (url) => { fetched.push(url); return { ok: true, json: async () => answer }; },
+    });
+    vm.runInContext(html.slice(start, end) + '\nglobalThis.loadStats = loadStats;', context);
+    await context.loadStats();
+    return { fetched, removed };
+  };
+  const { fetched, removed } = await run({ ready: true, names: 4382, subdomains: 120, burnedWei: '1500000000000000000', lengths: { 3: 10, 20: 2 }, sites: ['donnoh', 'reality'] });
+  assert.deepEqual(fetched, ['https://gwei.domains/api/stats'], 'one small request, no log scan');
+  assert.deepEqual(removed, ['gwei_stats_1'], 'the old scan cache is cleared');
+  assert.equal(els.statNames.textContent, (4382).toLocaleString());
+  assert.equal(els.statBurned.textContent, '1.50');
+  assert.match(els.statsHist.innerHTML, /20\+/);
+  assert.deepEqual(els.sitesList.children.map((a) => a.href), ['https://donnoh.gwei.limo', 'https://reality.gwei.limo']);
+  assert.equal(els.statsContent.style.display, '');
+
+  await run({ ready: false, names: 3 });
+  assert.equal(els.statsSection.style.display, 'none', 'partial counts while the index catches up are hidden');
 });

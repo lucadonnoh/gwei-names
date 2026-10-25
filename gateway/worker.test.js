@@ -1577,9 +1577,22 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
     paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
     poke: answer('poke', { throttled: true }),
     sync: answer('sync', { events: 2, blobs: 1 }),
+    networkStats: answer('networkStats', { ready: true, block: 26270000, names: 4382, subdomains: 120, burnedWei: '1500000000000000000', lengths: { 3: 10 }, sites: ['donnoh'] }),
   };
   return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
 }
+test('/api/stats serves the network stats from the index, cached for a minute', async () => {
+  const POST_INDEX = fakePostIndex();
+  const res = await invoke('https://gwei.domains/api/stats', { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('cache-control'), 'public, max-age=60');
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  const body = await res.json();
+  assert.equal(body.names, 4382);
+  assert.deepEqual(body.sites, ['donnoh']);
+  assert.ok(POST_INDEX.calls.some(([name]) => name === 'networkStats'));
+});
+
 const aliceProfile = () => makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) }) });
 const TOKEN_HEX = '0x9e0f6f68e7256d6a947a0578c7e746a0ff47e3b83c72fca64c940351d60da810'; // computeId('alice.gwei') on mainnet
 

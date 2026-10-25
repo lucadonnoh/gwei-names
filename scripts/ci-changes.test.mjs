@@ -12,8 +12,9 @@ test('a change runs the suites built from it, and deploys the parts that ship it
   assert.deepEqual(runs('README.md', 'DEPLOY.md', 'audit/report.md'), [], 'docs run nothing');
   assert.deepEqual(runs('gateway/markdown.js'), ['deploy-gateway', 'gateway']);
   assert.deepEqual(runs('gateway/worker.test.js'), ['deploy-gateway', 'gateway']);
-  assert.deepEqual(runs('dapp/gweiNS.html'), ['dapp', 'deploy-dapp']);
-  assert.deepEqual(runs('Dockerfile'), ['deploy-dapp']);
+  assert.deepEqual(runs('dapp/gweiNS.html'), ['dapp', 'deploy-dapp', 'image']);
+  assert.deepEqual(runs('Dockerfile'), ['deploy-dapp', 'image']);
+  assert.deepEqual(runs('scripts/check-dapp-image.sh'), ['image']);
   assert.deepEqual(runs('test/NameNFT.t.sol'), ['contracts']);
   assert.deepEqual(runs('src/NameNFT.sol'), ['contracts', 'poster', 'sdk']);
   assert.deepEqual(runs('lib/solady'), ['contracts', 'poster', 'sdk'], 'a submodule bump');
@@ -30,8 +31,8 @@ test('files another directory imports count for it', () => {
   assert.deepEqual(runs('gateway/posts-store.js'), ['deploy-gateway', 'gateway', 'poster']);
   assert.deepEqual(runs('gateway/rpc-pool.js'), ['deploy-gateway', 'gateway', 'poster']);
   // The Worker bundles the dapp's KZG; the gateway's and poster's tests run it.
-  assert.deepEqual(runs('dapp/vendor/kzg.bundle.mjs'), ['dapp', 'deploy-dapp', 'deploy-gateway', 'gateway', 'poster']);
-  assert.deepEqual(runs('dapp/vendor/entry.js'), ['dapp', 'deploy-dapp']);
+  assert.deepEqual(runs('dapp/vendor/kzg.bundle.mjs'), ['dapp', 'deploy-dapp', 'deploy-gateway', 'gateway', 'image', 'poster']);
+  assert.deepEqual(runs('dapp/vendor/entry.js'), ['dapp', 'deploy-dapp', 'image']);
 });
 
 test('a workflow change, or one to the rules themselves, runs everything', () => {

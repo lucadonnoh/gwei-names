@@ -623,6 +623,7 @@ async function answerApi(request, url, env) {
       return result.error ? apiJson({ error: result.error }, result.status || 400) : apiJson(result, 201);
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return apiJson({ error: 'Method not allowed.' }, 405);
+    if (path === '/api/stats') return apiJson(await index.networkStats(), 200, 'public, max-age=60');
     if (path === '/api/posts/recent') {
       const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 20, 1), 50);
       return apiJson({ posts: await index.recent(limit) }, 200, 'public, max-age=30');
@@ -1266,7 +1267,9 @@ export default {
       const index = postIndex(env);
       if (index) {
         ctx.waitUntil(index.sync().then(
-          (result) => { if (result?.events || result?.blobs) console.log(JSON.stringify({ event: 'posts_sync', ...result })); },
+          (result) => {
+            if (result?.events || result?.blobs || result?.stats?.events || result?.stats?.error || result?.postsError) console.log(JSON.stringify({ event: 'posts_sync', ...result }));
+          },
           (error) => console.error(JSON.stringify({ event: 'posts_sync_failed', message: String(error?.message || error).slice(0, 200) })),
         ));
       }

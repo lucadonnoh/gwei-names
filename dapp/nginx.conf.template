@@ -1,0 +1,30 @@
+# The dapp's web server (see the root Dockerfile). The nginx image fills in ${PORT} at start-up;
+# Railway sets it.
+server {
+  listen ${PORT};
+  root /usr/share/nginx/html;
+  index index.html;
+  charset utf-8;
+  charset_types text/plain text/css text/javascript application/javascript application/json application/manifest+json;
+  server_tokens off;
+
+  # Everything that can change with a deploy is revalidated on every use: an unchanged file answers
+  # 304 against its ETag, so a repeat visit doesn't download the 450 KB page again.
+  location / {
+    add_header Cache-Control "no-cache" always;
+    try_files $uri $uri/ =404;
+  }
+  # Vendored chunks whose names carry a content hash never change.
+  location ~ "^/vendor/.+-[A-Z0-9]{8}\.js$" {
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+  }
+  # Module bundles: nginx's MIME table has no .mjs, and browsers refuse a module without a JS type.
+  location ~ \.mjs$ {
+    types { }
+    default_type text/javascript;
+    add_header Cache-Control "no-cache" always;
+  }
+  location ~ \.(png|ico)$ {
+    add_header Cache-Control "public, max-age=86400" always;
+  }
+}

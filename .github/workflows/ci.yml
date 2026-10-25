@@ -40,6 +40,7 @@ jobs:
       sdk: ${{ steps.changes.outputs.sdk }}
       snap: ${{ steps.changes.outputs.snap }}
       poster: ${{ steps.changes.outputs.poster }}
+      image: ${{ steps.changes.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,6 +125,25 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - run: node --test gweiNS.test.js
         working-directory: dapp
+
+  # The dapp's container (root Dockerfile, dapp/nginx.conf.template): built, started, and checked for
+  # the types, cache headers, ETags and 304s browsers rely on (scripts/check-dapp-image.sh).
+  image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build --build-arg RAILWAY_GIT_COMMIT_SHA=$GITHUB_SHA -t gwei-dapp .
+      - run: |
+          docker run -d --name dapp -p 8080:8080 gwei-dapp
+          for i in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8080/ && break; sleep 1; done
+      - run: scripts/check-dapp-image.sh http://localhost:8080 "$GITHUB_SHA"
+      - if: failure()
+        run: docker logs dapp
 
   sdk:
     needs: changes

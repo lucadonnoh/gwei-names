@@ -6,10 +6,14 @@ and the dapp from that commit and checks that the live sites serve it.
 | Part | Where it runs | How it ships | How to see what's live |
 |---|---|---|---|
 | Gateway (`gateway/`) | Cloudflare Worker `gwei-gateway` on `*.gwei.domains`, `*.gwei.limo`, `gwei.domains/api/*` | `deploy.yml` after CI on main | `https://gwei.domains/api/version` |
-| Dapp (`dapp/`, `Dockerfile`) | Railway service `gwei-dapp`, `gwei.domains` | `deploy.yml` after CI on main | `https://gwei.domains/version.txt` |
+| Dapp (`dapp/`, `Dockerfile`) | Railway service `gwei-dapp` (nginx, `dapp/nginx.conf.template`), `gwei.domains` | `deploy.yml` after CI on main | `https://gwei.domains/version.txt` |
 | Publisher (`posts/poster/`) | Docker on eth-node | `posts/poster/deploy.sh`, by hand | `gwei_poster.py status` on eth-node |
 | Contracts (`src/`) | Ethereum | `forge script`, by hand; immutable | Etherscan, Sourcify |
 | SDK, snap | npm | `pnpm pub`, `npm publish`, by hand | npm |
+
+The dapp's network stats come from the gateway (`gwei.domains/api/stats`, `gateway/stats-store.js`),
+which indexes NameNFT's events next to the post index; after a gateway deploy that resets the index,
+the stats section stays hidden until it has caught up (a few minutes).
 
 ## Tests
 

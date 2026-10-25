@@ -2088,16 +2088,9 @@ if (NET.chainId !== 1) {
 { const _eh = document.getElementById('humanExplorerLink'); if (_eh) { if (zkEnabled()) { _eh.href = EXPLORER + '/address/' + HUMAN_REGISTRAR; _eh.style.display = ''; } else { _eh.style.display = 'none'; } } }
 { const _ev = document.getElementById('votingExplorerLink'); if (_ev) _ev.href = EXPLORER + '/address/' + VOTING_CONTRACT; }
 
-// ── Network stats: scan NameRegistered + ContenthashChanged logs (cached) ──
-// Top-level names have expiresAt>0; free subdomains have expiresAt==0 (see NameNFT._register).
-// Burned = NameNFT ETH balance (no withdraw exists, so collected fees are locked = burned).
-const STATS_NAME_TOPIC = '0xe9b829b8676c143f46f458c54ab9eedea80dc58eaec9c3df7e0134aabf7f9d28'; // NameRegistered
-const STATS_CH_TOPIC = '0xe379c1624ed7e714cc0937528a32359d69d5281337765313dba4e081b72d7578';   // ContenthashChanged
-const STATS_TEXT_TOPIC = '0xd8c9334b1a9c2f9da342a0a2b32629c1a229b6445dad78947f674b44444a7550'; // TextChanged
-const STATS_CC_KEY = '0x58d1a44eb778f49875f62ace52dcda3a77ed4f1b085b6668edba23e2aea510ec';     // keccak256('contentcontract'), the indexed key of a TextChanged log
+// ── Historical reads (zkpassport claims, integration votes) and the network stats ──
+// The stats themselves come from the gateway (loadStats); these RPCs serve the other scans.
 const STATS_RPCS = NET.logsRpcs || [];
-const STATS_DEPLOY = NET.deployBlock || 0;
-const STATS_KEY = 'gwei_stats_' + CHAIN_ID;
 const STATS_RPC_TIMEOUT_MS = 8000;
 async function statsRpc(method, params) {
   for (const url of STATS_RPCS) {
@@ -2117,11 +2110,6 @@ async function statsRpc(method, params) {
   }
   throw new Error('stats rpc ' + method);
 }
-function statsHexUtf8(hex) {
-  const b = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
-  try { return new TextDecoder().decode(b); } catch (e) { return ''; }
-}
 // eth_getLogs over [from, to]: one call usually covers it (Tenderly serves 2M+ blocks per query);
 // on an error the span is halved, so an RPC with a stricter range cap still gets there in chunks.
 async function statsGetLogs(filter, from, to, onLogs) {
@@ -2139,29 +2127,6 @@ async function statsGetLogs(filter, from, to, onLogs) {
     from = end + 1;
   }
 }
-function statsRecordName(cache, node, label, len, top) {
-  cache.names[node] = { label: label, len: len, top: top };
-  // Re-registration increments recordVersion, so resolver records from the prior owner are stale.
-  delete cache.ch[node];
-  delete cache.cc[node];
-}
-// Names that serve a website, newest record first. A site lives either in the contenthash (IPFS,
-// IPNS, Swarm) or, when that is empty, in the ERC-6821 `contentcontract` text record (web3://).
-// Contenthash wins where both are set, the same precedence the gateway applies, so an entry is
-// dated by the record actually being served. Top-level names only: a subdomain has no gateway host.
-function recentWebsiteLabels(cache, limit) {
-  const cc = cache.cc || {};
-  const blocks = {};
-  for (const node of Object.keys(cache.names)) {
-    if (!cache.names[node].top) continue;
-    const rec = cache.ch[node] && cache.ch[node].len > 0 ? cache.ch[node] : (cc[node] && cc[node].len > 0 ? cc[node] : null);
-    if (rec) blocks[node] = rec.block;
-  }
-  return Object.keys(blocks)
-    .sort(function (a, b) { return blocks[b] - blocks[a]; })
-    .slice(0, limit)
-    .map(function (node) { return cache.names[node].label; });
-}
 // Resolves once the visitor scrolls or `el` is within a few screens of the viewport, whichever comes
 // first (at once without IntersectionObserver).
 function nearViewport(el) {
@@ -2175,70 +2140,47 @@ function nearViewport(el) {
     window.addEventListener('scroll', near, { passive: true });
   });
 }
+// The network stats come from the gateway's index of NameNFT's events (gateway/stats-store.js), so no
+// visitor scans the logs themselves (a first visit used to download about 700 KB of them).
 async function loadStats() {
   const sec = document.getElementById('statsSection');
-  if (!sec || !STATS_RPCS.length || !STATS_DEPLOY) return;
+  if (!sec || CHAIN_ID !== 1) return;
+  // The scan's old local cache, which could run to megabytes.
+  try { localStorage.removeItem('gwei_stats_' + CHAIN_ID); } catch (e) {}
   sec.style.display = ''; // reveal the section with its loading line immediately, before any await
-  // A first visit's scan downloads every registration since the deploy block (about 700 KB, 4 MB of
-  // JSON), for a section far below the fold, so it waits until the section is about to be seen.
   await nearViewport(sec);
-  let burned = null;
-  try { burned = Number(BigInt(await statsRpc('eth_getBalance', [CONTRACT, 'latest']))) / 1e18; } catch (e) {}
-  // cache: { lastBlock, names:{node:{label,len,top}}, ch:{node:{len,block}}, cc:{node:{len,block}} }
-  // A cache written before `cc` existed is dropped, not upgraded: its lastBlock is already at the
-  // head, so keeping it would hide every contentcontract record set before this version shipped.
-  let cache = { lastBlock: STATS_DEPLOY - 1, names: {}, ch: {}, cc: {} };
-  try { const c = JSON.parse(localStorage.getItem(STATS_KEY)); if (c && c.names && c.ch && c.cc && c.lastBlock >= STATS_DEPLOY - 1) cache = c; } catch (e) {}
-  let ok = false;
+  let stats = null;
   try {
-    const latest = parseInt(await statsRpc('eth_blockNumber', []), 16);
-    await statsGetLogs({ address: CONTRACT, topics: [[STATS_NAME_TOPIC, STATS_CH_TOPIC, STATS_TEXT_TOPIC]] }, cache.lastBlock + 1, latest, function (logs) {
-      for (const log of logs) {
-        const h = log.data.slice(2);
-        if (log.topics[0] === STATS_NAME_TOPIC) {
-          const expires = BigInt('0x' + h.slice(64, 128));
-          const len = parseInt(h.slice(128, 192), 16);
-          statsRecordName(cache, log.topics[1], statsHexUtf8(h.slice(192, 192 + len * 2)), len, expires > 0n);
-        } else if (log.topics[0] === STATS_CH_TOPIC) {
-          cache.ch[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
-        } else if (log.topics[2] === STATS_CC_KEY) {
-          // TextChanged for every other key rides along in the same query; only the length matters,
-          // an empty value means the record was cleared.
-          cache.cc[log.topics[1]] = { len: parseInt(h.slice(64, 128), 16), block: parseInt(log.blockNumber, 16) };
-        }
-      }
-    });
-    cache.lastBlock = latest; ok = true;
-    try { localStorage.setItem(STATS_KEY, JSON.stringify(cache)); } catch (e) {}
+    const res = await fetch(POSTS_API + '/stats');
+    if (res.ok) stats = await res.json();
   } catch (e) {}
-  const nameVals = Object.values(cache.names);
-  const names = nameVals.filter(function (n) { return n.top; }).length;
-  const subs = nameVals.length - names;
-  const haveCounts = ok || nameVals.length > 0;
-  if (burned == null && !haveCounts) { sec.style.display = 'none'; return; }
-  document.getElementById('statNames').textContent = haveCounts ? names.toLocaleString() : '—';
-  document.getElementById('statSubs').textContent = haveCounts ? subs.toLocaleString() : '—';
+  // While the index is still catching up after a deploy its counts would be low, so it isn't shown.
+  if (!stats || !stats.ready) { sec.style.display = 'none'; return; }
+  document.getElementById('statNames').textContent = Number(stats.names).toLocaleString();
+  document.getElementById('statSubs').textContent = Number(stats.subdomains).toLocaleString();
+  let burned = null;
+  try { burned = Number(BigInt(stats.burnedWei)) / 1e18; } catch (e) {}
   document.getElementById('statBurned').textContent = burned == null ? '—' : (burned >= 0.1 ? burned.toFixed(2) : burned.toFixed(4));
-  // lengths >= 20 collapse into a single "20+" bucket so one very long name can't add rows of empty bars
+  // lengths >= 20 share a single "20+" bucket (the gateway's HIST_CAP), so one very long name can't add rows of empty bars
   const HIST_CAP = 20;
-  const hist = {}; let maxLen = 0, maxCt = 0;
-  for (const n of nameVals) if (n.top) { const l = Math.min(n.len, HIST_CAP); hist[l] = (hist[l] || 0) + 1; if (l > maxLen) maxLen = l; }
-  for (const ct of Object.values(hist)) if (ct > maxCt) maxCt = ct;
+  const hist = stats.lengths || {};
+  let maxLen = 0, maxCt = 0;
+  for (const [l, ct] of Object.entries(hist)) { if (Number(l) > maxLen) maxLen = Math.min(Number(l), HIST_CAP); if (ct > maxCt) maxCt = ct; }
   const he = document.getElementById('statsHist');
-  if (haveCounts && maxLen) {
+  if (maxLen) {
     let rows = '';
     for (let l = 1; l <= maxLen; l++) {
-      const ct = hist[l] || 0, w = maxCt ? ct / maxCt * 100 : 0, star = l <= 4 ? '<span class="hbar-prem">★</span>' : '';
+      const ct = Number(hist[l]) || 0, w = maxCt ? ct / maxCt * 100 : 0, star = l <= 4 ? '<span class="hbar-prem">★</span>' : '';
       const lbl = l === HIST_CAP ? HIST_CAP + '+' : l;
       rows += '<div class="hbar"><span class="hbar-len">' + lbl + star + '</span><span class="hbar-track"><span class="hbar-fill" style="width:' + w + '%"></span></span><span class="hbar-ct">' + ct + '</span></div>';
     }
     he.innerHTML = rows;
   } else he.innerHTML = '';
-  // recent custom websites (gateway = mainnet only)
+  // recent custom websites, newest record first
   const sitesEl = document.getElementById('statsSites'), listEl = document.getElementById('sitesList');
   if (sitesEl && listEl) {
-    const sites = recentWebsiteLabels(cache, 50);
-    if (CHAIN_ID === 1 && sites.length) {
+    const sites = Array.isArray(stats.sites) ? stats.sites : [];
+    if (sites.length) {
       listEl.innerHTML = '';
       for (const label of sites) {
         const a = document.createElement('a');
