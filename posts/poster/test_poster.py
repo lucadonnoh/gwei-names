@@ -312,6 +312,141 @@ class Griefing(unittest.TestCase):
         self.assertEqual(self.chain.sent, [])
         self.assertEqual(self.poster.db.execute("SELECT status FROM jobs").fetchone()[0], "mismatch")
 
+    def front_run(self, junk_uploaded):
+        data = post("victim " + str(junk_uploaded), "the real post")
+        vh = gp.blob_hash(blob_of(data), SETUP)
+        junk = post("junk " + str(junk_uploaded), "front-run")
+        if junk_uploaded:
+            FakeApi.posts[post_hash(junk)] = junk
+        self.chain.authorize(junk, "0x" + "66" * 20, 1, vh=vh, block=10, idx=0)  # first, for 1 wei
+        FakeApi.posts[post_hash(data)] = data
+        self.chain.authorize(data, self.alice, self.quote, block=10, idx=1)
+        self.poster.step()
+        self.assertEqual(self.sent_hashes(), [vh])
+        self.assertEqual(self.poster.db.execute("SELECT post FROM jobs").fetchone()[0], post_hash(data))
+
+    def test_a_junk_claim_on_someone_elses_blob_cant_block_it(self):
+        self.front_run(junk_uploaded=True)
+
+    def test_a_claim_with_no_bytes_on_someone_elses_blob_cant_block_it(self):
+        self.front_run(junk_uploaded=False)
+
+    def test_a_pile_of_underpaid_jobs_cannot_starve_a_paid_one(self):
+        clock = [self.chain.time]
+        self.poster.now = lambda: clock[0]
+
+        def tick():
+            self.poster.step()
+            clock[0] += 60
+            self.chain.time = clock[0]
+
+        for i in range(210):  # more than the 200-job window, each paid 1 wei, bytes available
+            data = post(f"one wei {i}", "x")
+            FakeApi.posts[post_hash(data)] = data
+            self.chain.authorize(data, "0x" + "66" * 20, 1, block=10, idx=i)
+        for _ in range(15):
+            tick()
+        held = self.poster.db.execute("SELECT COUNT(*) FROM jobs WHERE bytes IS NOT NULL").fetchone()[0]
+        self.assertGreaterEqual(held, 200, "the underpaid jobs hold their bytes")
+        vh, _ = self.job("paid", self.quote, block=self.chain.head)
+        self.chain.head += gp.CONFIRMATIONS
+        for _ in range(3):
+            if self.chain.sent:
+                break
+            tick()
+        self.assertEqual(self.sent_hashes(), [vh])
+
+    def test_an_underpaid_job_with_nothing_left_in_escrow_expires_until_paid_again(self):
+        clock = [self.chain.time]
+        self.poster.now = lambda: clock[0]
+        data = post("one wei", "x")
+        FakeApi.posts[post_hash(data)] = data
+        vh = self.chain.authorize(data, self.alice, 1)
+        self.poster.step()
+        status = lambda: self.poster.db.execute("SELECT status FROM jobs WHERE blob = ?", (vh,)).fetchone()[0]
+        self.assertEqual(status(), "new")
+        clock[0] += 2 * 86400
+        self.chain.time = clock[0]  # the 1 wei is refundable now, so nothing safe is left
+        self.poster.db.execute("UPDATE jobs SET next_try = 0")
+        self.poster.step()
+        self.assertEqual(status(), "expired")
+        self.chain.authorize(data, self.alice, self.quote, block=self.chain.head)
+        self.chain.head += gp.CONFIRMATIONS
+        self.poster.step()
+        self.assertEqual(self.sent_hashes(), [vh], "a new payment reopens it")
+
+    def test_many_bogus_claims_only_delay_the_right_one(self):
+        data = post("victim", "the real post")
+        vh = gp.blob_hash(blob_of(data), SETUP)
+        for i in range(30):  # claims whose bytes never show up, each a paid authorization
+            self.chain.authorize(post(f"bogus {i}", ""), "0x" + "66" * 20, 1, vh=vh, block=10, idx=i)
+        FakeApi.posts[post_hash(data)] = data
+        self.chain.authorize(data, self.alice, self.quote, block=10, idx=99)
+        for _ in range(3):
+            if self.chain.sent:
+                break
+            self.poster.step()
+        self.assertEqual(self.sent_hashes(), [vh])
+
+    def test_a_job_that_gave_up_gets_another_go_when_paid_again(self):
+        clock = [self.chain.time]
+        self.poster.now = lambda: clock[0]
+        data = post("late bytes", "uploaded after three days")
+        vh = self.chain.authorize(data, self.alice, self.quote)
+        self.poster.step()
+        clock[0] += gp.BYTES_GIVE_UP_SECONDS + 1
+        self.poster.db.execute("UPDATE jobs SET next_try = 0")
+        self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs").fetchone()[0], "failed")
+        FakeApi.posts[post_hash(data)] = data
+        self.chain.time = clock[0]
+        self.chain.authorize(data, self.alice, self.quote, block=self.chain.head)
+        self.chain.head += gp.CONFIRMATIONS
+        self.poster.step()
+        self.assertEqual(self.sent_hashes(), [vh])
+
+    def test_a_job_whose_claims_were_all_wrong_reopens_for_a_new_claim(self):
+        data = post("right", "x")
+        vh = gp.blob_hash(blob_of(data), SETUP)
+        junk = post("wrong", "y")
+        FakeApi.posts[post_hash(junk)] = junk
+        self.chain.authorize(junk, "0x" + "66" * 20, 1, vh=vh)
+        self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs").fetchone()[0], "mismatch")
+        FakeApi.posts[post_hash(data)] = data
+        self.chain.authorize(data, self.alice, self.quote, block=self.chain.head)
+        self.chain.head += gp.CONFIRMATIONS
+        self.poster.step()
+        self.assertEqual(self.sent_hashes(), [vh])
+
+    def test_only_already_known_counts_as_accepted(self):
+        for text in ("already known", "AlreadyKnown", "TRANSACTION_ALREADY_KNOWN", "known transaction: 0xab"):
+            self.assertTrue(gp.already_known(gp.RpcError("eth_sendRawTransaction: " + text)), text)
+        for text in ("unknown transaction type", "unknown block", "nonce too low", "insufficient funds"):
+            self.assertFalse(gp.already_known(gp.RpcError("eth_sendRawTransaction: " + text)), text)
+
+    def test_an_unknown_error_refuses_the_transaction(self):
+        vh, _ = self.job("p", self.quote)
+        self.chain.send_error = gp.RpcError("eth_sendRawTransaction: unknown transaction type")
+        with self.assertRaises(gp.RpcError):
+            self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM txs").fetchone()[0], "refused")
+        self.assertEqual(self.poster.db.execute("SELECT status FROM jobs WHERE blob = ?", (vh,)).fetchone()[0], "new")
+
+    def test_an_already_known_transaction_is_tracked(self):
+        self.job("p", self.quote)
+        self.chain.send_error = gp.RpcError("eth_sendRawTransaction: already known")
+        self.poster.step()
+        self.assertEqual(self.poster.db.execute("SELECT status FROM txs").fetchone()[0], "pending")
+
+    def test_a_database_belongs_to_one_contract(self):
+        db = sqlite3.connect(":memory:")
+        gp.Poster(rpc=self.chain, api="http://127.0.0.1:9/api", contract=CONTRACT, from_block=0, signer=self.signer, db=db, setup=SETUP)
+        gp.Poster(rpc=self.chain, api="http://127.0.0.1:9/api", contract=CONTRACT.upper().replace("0X", "0x"), from_block=0,
+                  signer=self.signer, db=db, setup=SETUP)
+        with self.assertRaises(SystemExit):
+            gp.Poster(rpc=self.chain, api="http://127.0.0.1:9/api", contract="0x" + "12" * 20, from_block=0, signer=self.signer, db=db, setup=SETUP)
+
     def test_deposits_close_to_their_refund_time_dont_count(self):
         self.job("late", self.quote)
         self.chain.time += 86400 - gp.SAFETY_MARGIN + 1  # refundable in under SAFETY_MARGIN

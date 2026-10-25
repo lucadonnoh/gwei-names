@@ -118,6 +118,7 @@ that authorized posts point at well before then and keep them. Blob archives suc
 | `GET /api/posts/<hash>` | the post, its authorizations, and where it is on Ethereum |
 | `GET /api/posts/<hash>/raw` | the exact post bytes |
 | `GET /api/names/<tokenId>/posts` | posts shown for a name, newest first |
+| `GET /api/authors/<address>/paid` | fees an address put in escrow, latest per blob and publisher (to find refunds; the contract says what is left) |
 | `GET /api/posts/recent` | newest posts across all names |
 | `GET /api/blobs/<versionedHash>` | a blob the index fetched, for 30 days after it did |
 | `POST /api/posts/preview` (body: post bytes) | `{ "title", "html" }` rendered by the gateway |
@@ -125,14 +126,17 @@ that authorized posts point at well before then and keep them. Blob archives suc
 
 The index reads events every minute from the owner's node, or, when it's down, only events two
 public RPCs agree on. It fetches the blobs that claim an authorized post (those sent by the
-publisher the author named first) from Blobscan and a public beacon API, requiring the two to agree
-when both have the blob, and records only the claimed entries a blob really contains. A post
+publisher the author named first) from Blobscan or a public beacon API, takes only bytes whose KZG
+commitment matches the versioned hash, and records only the claimed entries a blob really contains.
+A claim that arrives after its blob was checked gets the blob checked again, so an early junk claim
+can't hide a later real one. A post
 carried by a blob is kept for good; blob bytes for 30 days. Posts show on a name's page when it has
 no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
 
 **Publisher.** The gwei.domains publisher (`posts/poster/`) delivers blobs authors paid it for. It
 rebuilds each blob from the post's bytes (`GET /api/posts/<hash>/raw`) and checks its versioned hash
-is the one the author named. It counts as paid only the deposits for a blob that can't be refunded for
+is the one the author named; when several posts claim the same blob it tries each, so a wrong claim
+can't block the right one. It counts as paid only the deposits for a blob that can't be refunded for
 at least six more hours, sends a blob only if those cover sending it alone at current prices with some
 headroom, packs up to six blobs into one transaction, and never lets a transaction spend more than its
 blobs' safe deposits, replacements included. The dapp pays three times the current cost of a one-blob

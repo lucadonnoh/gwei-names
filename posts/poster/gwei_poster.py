@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -70,7 +71,8 @@ MAX_REVERTS = 1  # publish() can't revert in practice; if it does, never pay for
 FETCHES_PER_STEP = 20  # post-byte downloads per pass, so a flood of jobs can't stall the loop
 FETCH_TIMEOUT = 8
 FETCH_BUDGET_SECONDS = 30
-RECHECK_SECONDS = 60  # an underpaid job's deposits are read again after this
+RECHECK_SECONDS = 60  # an underpaid job's deposits are read again after this, doubling each time
+EXPIRE_SECONDS = 86400  # an underpaid job with nothing safe left in escrow after this stops being checked
 DROPPED_AFTER_BLOCKS = 3  # a used nonce with no receipt of ours: wait this long before requeueing
 MIRRORS_PER_STEP = 3
 BYTES_GIVE_UP_SECONDS = 3 * 86400
@@ -223,6 +225,13 @@ def quote(base_fee: int, tip: int, blob_base_fee: int) -> int:
 
 
 # --- I/O ------------------------------------------------------------------------------------------
+def already_known(error) -> bool:
+    """The node already has this exact transaction (geth, reth, erigon: "already known", older geth:
+    "known transaction: …", nethermind: "AlreadyKnown", besu: "TRANSACTION_ALREADY_KNOWN"). Not
+    "unknown …", which would leave a refused transaction tracked as pending."""
+    return re.search(r"already[ _]?known|(?<![a-z])known transaction", str(error).lower()) is not None
+
+
 class RpcError(Exception):
     pass
 
@@ -257,6 +266,11 @@ CREATE TABLE IF NOT EXISTS jobs (blob TEXT PRIMARY KEY, post TEXT NOT NULL, bloc
   bytes BLOB, status TEXT NOT NULL DEFAULT 'new', tries INTEGER NOT NULL DEFAULT 0, next_try INTEGER NOT NULL DEFAULT 0,
   reverts INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, tx TEXT);
 CREATE INDEX IF NOT EXISTS jobs_ready ON jobs (status, next_try);
+-- Every post a paid authorization said the job's blob carries. Anyone can name any blob, so a wrong
+-- claim (or one whose bytes never show up) can't stand in for the right one: each is tried in turn,
+-- and the one whose bytes make the blob becomes the job's post.
+CREATE TABLE IF NOT EXISTS job_posts (blob TEXT NOT NULL, post TEXT NOT NULL, wrong INTEGER NOT NULL DEFAULT 0,
+  tried INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (blob, post));
 -- Every blob transaction sent; replacements share a nonce. paid caps what any of them may spend.
 CREATE TABLE IF NOT EXISTS txs (hash TEXT PRIMARY KEY, nonce INTEGER NOT NULL, blobs TEXT NOT NULL,
   tip TEXT NOT NULL, max_fee TEXT NOT NULL, max_blob_fee TEXT NOT NULL, gas INTEGER NOT NULL, paid TEXT NOT NULL,
@@ -293,6 +307,13 @@ class Poster:
         self.rebroadcasts = {}
         self.used_nonces = {}
         db.executescript(SCHEMA)
+        # Cursor, jobs and blobs only make sense for one deployment.
+        bound = self.meta("contract")
+        if bound is None:
+            self.set_meta("contract", self.contract)
+            db.commit()
+        elif bound != self.contract:
+            raise SystemExit(f"this database belongs to {bound}, not {self.contract}: start a new one")
 
     # state helpers
     def meta(self, key, default=None):
@@ -345,10 +366,16 @@ class Poster:
                     self.db.execute("INSERT OR IGNORE INTO claims (post, vh) VALUES (?, ?)", (post, vh))
                     if publisher != self.signer.address or fee == 0:
                         continue
+                    self.db.execute("INSERT OR IGNORE INTO job_posts (blob, post) VALUES (?, ?)", (vh, post))
                     row = self.db.execute("SELECT payers FROM jobs WHERE blob = ?", (vh,)).fetchone()
                     if row:
                         payers = sorted(set(json.loads(row[0])) | {author})
-                        self.db.execute("UPDATE jobs SET payers = ?, next_try = 0 WHERE blob = ?", (json.dumps(payers), vh))
+                        # A new payment gives a job whose claims all failed, or whose bytes never came,
+                        # another go (the bytes may be there now). One that reverted stays failed.
+                        self.db.execute(
+                            "UPDATE jobs SET payers = ?, next_try = 0, created = CASE WHEN status IN ('mismatch', 'failed', 'expired') AND reverts < ? "
+                            "THEN ? ELSE created END, status = CASE WHEN status IN ('mismatch', 'failed', 'expired') AND reverts < ? THEN 'new' ELSE status END "
+                            "WHERE blob = ?", (json.dumps(payers), MAX_REVERTS, self.now(), MAX_REVERTS, vh))
                     else:
                         self.db.execute("INSERT INTO jobs (blob, post, block, payers, created) VALUES (?, ?, ?, ?, ?)",
                                         (vh, post, block, json.dumps([author]), self.now()))
@@ -405,40 +432,61 @@ class Poster:
         ready, fetches = [], 0
         rows = self.db.execute(
             "SELECT blob, post, payers, created, tries, bytes FROM jobs WHERE status = 'new' AND next_try <= ? "
-            "ORDER BY bytes IS NULL, tries, block LIMIT 200", (now,)).fetchall()
+            "ORDER BY next_try, block LIMIT 200", (now,)).fetchall()
         for vh, post, payers_json, created, tries, raw in rows:
             if len(ready) >= MAX_BLOBS_PER_TX:
                 break
             if raw is None:
-                if fetches >= FETCHES_PER_STEP or time.monotonic() - started > FETCH_BUDGET_SECONDS:
-                    continue
-                fetches += 1
-                try:
-                    raw = self.post_bytes(post)
-                except Exception as error:
-                    log.warning("fetching %s: %s", post, error)
-                    raw = None
+                # The blob must be exactly the one a claimed post makes. Claims are tried least
+                # recently tried first, so a pile of bogus ones only delays the right one.
+                candidates = [r[0] for r in self.db.execute(
+                    "SELECT post FROM job_posts WHERE blob = ? AND wrong = 0 ORDER BY tried, rowid", (vh,)).fetchall()]
+                missing = out_of_budget = False
+                for candidate in candidates:
+                    if fetches >= FETCHES_PER_STEP or time.monotonic() - started > FETCH_BUDGET_SECONDS:
+                        out_of_budget = True
+                        break
+                    fetches += 1
+                    self.db.execute("UPDATE job_posts SET tried = ? WHERE blob = ? AND post = ?", (now, vh, candidate))
+                    try:
+                        found = self.post_bytes(candidate)
+                    except Exception as error:
+                        log.warning("fetching %s: %s", candidate, error)
+                        found = None
+                    if found is None:
+                        missing = True
+                    elif blob_hash(encode_blob([found]), self.setup) == vh:
+                        post, raw = candidate, found
+                        break
+                    else:
+                        self.db.execute("UPDATE job_posts SET wrong = 1 WHERE blob = ? AND post = ?", (vh, candidate))
+                        log.warning("%s: post %s doesn't make that blob", vh, candidate)
                 if raw is None:
-                    if now - created > BYTES_GIVE_UP_SECONDS:
+                    if out_of_budget:
+                        continue
+                    if not missing:
+                        self.db.execute("UPDATE jobs SET status = 'mismatch' WHERE blob = ?", (vh,))
+                        log.warning("%s: no claimed post makes that blob; not publishing", vh)
+                    elif now - created > BYTES_GIVE_UP_SECONDS:
                         self.db.execute("UPDATE jobs SET status = 'failed' WHERE blob = ?", (vh,))
                         log.warning("giving up on %s: no bytes", vh)
                     else:
                         self.db.execute("UPDATE jobs SET tries = tries + 1, next_try = ? WHERE blob = ?",
                                         (now + min(60 * 2 ** tries, 3600), vh))
                     continue
-                # The author named the blob; it must be exactly the one this post makes.
-                if blob_hash(encode_blob([raw]), self.setup) != vh:
-                    self.db.execute("UPDATE jobs SET status = 'mismatch' WHERE blob = ?", (vh,))
-                    log.warning("%s: post %s doesn't make that blob; not publishing", vh, post)
-                    continue
-                self.db.execute("UPDATE jobs SET bytes = ? WHERE blob = ?", (raw, vh))
+                self.db.execute("UPDATE jobs SET bytes = ?, post = ? WHERE blob = ?", (raw, post, vh))
             payers = json.loads(payers_json)
             paid = self.safe_paid(vh, payers, chain_time)
             if paid is None:
                 self.db.execute("UPDATE jobs SET status = 'done' WHERE blob = ?", (vh,))
                 continue
             if paid < floor:
-                self.db.execute("UPDATE jobs SET next_try = ? WHERE blob = ?", (now + RECHECK_SECONDS, vh))
+                # Underpaid jobs back off, and once nothing safe is left in escrow they stop being
+                # checked at all (a new payment reopens them), so no pile of them can crowd out the
+                # window that paid jobs are picked from.
+                expired = paid == 0 and now - created > EXPIRE_SECONDS
+                self.db.execute("UPDATE jobs SET tries = tries + 1, next_try = ?, status = ? WHERE blob = ?",
+                                (now + min(RECHECK_SECONDS * 2 ** tries, 3600), "expired" if expired else "new", vh))
                 continue
             ready.append((vh, encode_blob([bytes(raw)]), paid, payers))
         return ready
@@ -487,7 +535,7 @@ class Poster:
         try:
             self.rpc("eth_sendRawTransaction", raw)
         except RpcError as error:
-            if "known" not in str(error).lower():
+            if not already_known(error):
                 # The node answered and refused it, so it can't be mined. A first send gives the
                 # blobs back to the queue; a refused replacement leaves the original pending.
                 self.db.execute("UPDATE txs SET status = 'refused' WHERE hash = ?", (tx_hash,))
@@ -598,7 +646,7 @@ class Poster:
             self.rpc("eth_sendRawTransaction", raw)
             log.info("rebroadcast %s", tx_hash)
         except RpcError as error:
-            if "known" not in str(error).lower():
+            if not already_known(error):
                 log.warning("rebroadcasting %s: %s", tx_hash, error)
 
     # IPFS copies

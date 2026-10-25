@@ -54,8 +54,8 @@ export const DEFAULT_BLOB_SOURCES = {
 
 // Bumped whenever the tables change shape; a different version (or a different contract) starts the
 // index over from the contract's deployment block.
-const SCHEMA_VERSION = '2';
-const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'names'];
+const SCHEMA_VERSION = '3';
+const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'checked', 'names'];
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS content (hash TEXT PRIMARY KEY, bytes BLOB NOT NULL, title TEXT NOT NULL, time INTEGER, received INTEGER NOT NULL)',
   // PostAuthorized: `blob` is the blob the author built for the post (its versioned hash).
@@ -63,6 +63,7 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS auth_blob ON auth (blob)',
   'CREATE INDEX IF NOT EXISTS auth_token ON auth (token, author)',
   'CREATE INDEX IF NOT EXISTS auth_hash ON auth (hash)',
+  'CREATE INDEX IF NOT EXISTS auth_author ON auth (author)',
   // BlobPublished, and from it a claim per post an author named that blob for: `pub` says "this blob,
   // published here, should carry this post", which fetching the blob then checks.
   'CREATE TABLE IF NOT EXISTS blobpub (block INTEGER NOT NULL, idx INTEGER NOT NULL, tx TEXT NOT NULL, ts INTEGER NOT NULL, vh TEXT NOT NULL, publisher TEXT NOT NULL, PRIMARY KEY (block, idx))',
@@ -78,6 +79,9 @@ const SCHEMA = [
   // Claimed posts a fetched blob really contains.
   'CREATE TABLE IF NOT EXISTS carried (vh TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (vh, hash))',
   'CREATE INDEX IF NOT EXISTS carried_hash ON carried (hash)',
+  // Claims a fetched blob was checked against, held or not. A claim not in here sends the blob back
+  // to 'due', so an early junk claim can't keep a later real one from ever being checked.
+  'CREATE TABLE IF NOT EXISTS checked (vh TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (vh, hash))',
   // A token's full name; '' while unknown (retried after NAME_RETRY_SECONDS).
   'CREATE TABLE IF NOT EXISTS names (token TEXT PRIMARY KEY, name TEXT NOT NULL, checked INTEGER NOT NULL)',
 ];
@@ -87,8 +91,10 @@ const toBytes = (v) => (v instanceof Uint8Array ? v : new Uint8Array(v));
 const toBuffer = (b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 const word = (data, i) => '0x' + data.slice(2 + i * 64, 2 + (i + 1) * 64);
 const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
-const POS = 4294967296; // block * 2^32 + log index orders events, however many logs a block has
-const sameBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+// Events are ordered by block * 2^32 + log index, however many logs a block has. The constant is an
+// SQL integer literal: bound as a JS number it can turn the product into a REAL, which rounds at mainnet
+// block heights and makes a same-block removal look no later than the authorization.
+const POS = '4294967296';
 // The first blob that really carries a post, as one string column (a correlated subquery).
 // A post's date: the block of the first blob that carries it, else its first authorization.
 const ONCHAIN_TS = '(SELECT p.ts FROM pub p JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
@@ -212,19 +218,29 @@ export class PostStore {
     return { hash, title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
   }
 
+  // Fees one address put in escrow, latest per (blob, publisher), for the dapp's refund list. Only a
+  // hint for finding them: the contract's deposits() says whether a fee is still there.
+  paidBy(author, limit = 100) {
+    return this.rows(
+      'SELECT a.hash, a.blob, a.publisher, a.token, MAX(a.block) AS block, c.title FROM auth a LEFT JOIN content c ON c.hash = a.hash ' +
+      "WHERE a.author = ? AND a.fee != '0' GROUP BY a.blob, a.publisher ORDER BY block DESC LIMIT ?",
+      String(author).toLowerCase(), Math.min(Math.max(limit, 1), MAX_LIST),
+    ).map((r) => ({ hash: r.hash, blob: r.blob, publisher: r.publisher, token: r.token, block: r.block, title: r.title ?? null }));
+  }
+
   // Posts shown for a name: authorized by its current owner, not withdrawn since, with known bytes,
   // and either carried by a blob or still inside the pending window. One query, newest first.
   forToken(token, owner, limit = 50, prefix = null) {
     token = token.toLowerCase();
     owner = (owner || '').toLowerCase();
     const rows = this.rows(
-      'WITH latest AS (SELECT hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ' +
+      `WITH latest AS (SELECT hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ` +
       'FROM auth WHERE token = ? AND author = ? GROUP BY hash) ' +
       `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
-      'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ? + r.idx > l.pos) ' +
+      `WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ${POS} + r.idx > l.pos) ` +
       (prefix ? 'AND substr(l.hash, 3, ?) = ? ' : '') +
       ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(onchain_ts, first_ts) DESC LIMIT ?',
-      POS, token, owner, token, owner, POS, ...(prefix ? [prefix.length, prefix] : []),
+      token, owner, token, owner, ...(prefix ? [prefix.length, prefix] : []),
       this.now() - PENDING_SECONDS, Math.min(Math.max(limit, 1), MAX_LIST),
     );
     return rows.map((row) => ({
@@ -245,12 +261,12 @@ export class PostStore {
       return this.recentCache.posts.slice(0, limit);
     }
     const candidates = this.rows(
-      'WITH latest AS (SELECT token, author, hash, MAX(block * ? + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ' +
+      `WITH latest AS (SELECT token, author, hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ` +
       `SELECT * FROM (SELECT l.token, l.author, l.hash, l.pos, l.first_ts, l.last_ts, n.name, c.title, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain ` +
       "FROM latest l JOIN content c ON c.hash = l.hash JOIN names n ON n.token = l.token AND n.name != '' " +
-      'WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = l.token AND r.hash = l.hash AND r.author = l.author AND r.block * ? + r.idx > l.pos)) ' +
+      `WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = l.token AND r.hash = l.hash AND r.author = l.author AND r.block * ${POS} + r.idx > l.pos)) ` +
       'WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY pos DESC LIMIT ?',
-      POS, POS, now - PENDING_SECONDS, limit * 6,
+      now - PENDING_SECONDS, limit * 6,
     );
     const owners = await this.currentOwners([...new Set(candidates.map((c) => c.token))]);
     const perName = new Map();
@@ -366,6 +382,7 @@ export class PostStore {
           'INSERT OR IGNORE INTO pub (block, idx, tx, ts, hash, blob, publisher) SELECT block, idx, tx, ts, ?, vh, publisher FROM blobpub WHERE vh = ?',
           b, vh,
         );
+        this.recheck(vh);
       } else if (topic === T_BLOB_PUBLISHED && log.topics.length === 3) {
         this.sql.exec(
           'INSERT OR IGNORE INTO blobpub (block, idx, tx, ts, vh, publisher) VALUES (?, ?, ?, ?, ?, ?)',
@@ -387,6 +404,17 @@ export class PostStore {
       count++;
     }
     return count;
+  }
+
+  // A claim that arrives after its blob was checked (say, an author naming a blob someone else
+  // already published with a junk claim): check the blob again, from its kept bytes if it has them.
+  // Each new claim costs its author a transaction, so this can't be made to loop.
+  recheck(vh) {
+    this.sql.exec(
+      "UPDATE blob SET status = 'due', tries = 0, next_try = 0 WHERE vh = ? AND status != 'due' AND EXISTS " +
+      '(SELECT 1 FROM pub p WHERE p.blob = blob.vh AND NOT EXISTS (SELECT 1 FROM checked c WHERE c.vh = p.blob AND c.hash = p.hash))',
+      vh,
+    );
   }
 
   // Full names for tokens that posted, via NameNFT.getFullName (a token's name never changes). A
@@ -420,21 +448,23 @@ export class PostStore {
   async fetchBlobs() {
     const now = this.now();
     const due = this.rows(
-      'SELECT b.vh, b.ts, b.tries, EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh ' +
+      'SELECT b.vh, b.ts, b.tries, b.bytes, EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh ' +
       'AND (p.publisher = a.publisher OR p.publisher = a.author)) AS named FROM blob b ' +
       "WHERE b.status = 'due' AND b.tries < ? AND b.next_try <= ? AND EXISTS (SELECT 1 FROM pub p JOIN auth a ON a.hash = p.hash WHERE p.blob = b.vh) " +
       'ORDER BY named DESC, b.block LIMIT ?',
       BLOB_MAX_TRIES, now, BLOBS_PER_SYNC,
     );
     let fetched = 0;
-    for (const { vh, ts, tries } of due) {
-      const blob = await this.fetchBlob(vh, ts);
+    for (const { vh, ts, tries, bytes } of due) {
+      const kept = bytes ? toBytes(bytes) : null;
+      const blob = kept || await this.fetchBlob(vh, ts);
       if (!blob) {
         const wait = Math.min(60 * 2 ** tries, 6 * 3600);
         this.sql.exec('UPDATE blob SET tries = tries + 1, next_try = ? WHERE vh = ?', now + wait, vh);
         continue;
       }
       const claimed = new Set(this.rows('SELECT hash FROM pub WHERE blob = ?', vh).map((r) => r.hash));
+      for (const hash of claimed) this.sql.exec('INSERT OR IGNORE INTO checked (vh, hash) VALUES (?, ?)', vh, hash);
       let held = 0;
       for (const entry of decodeBlob(blob)) {
         const hash = postHash(entry);
@@ -445,16 +475,18 @@ export class PostStore {
         const post = parsePost(entry);
         if (post) this.storeContent(hash, entry, post);
       }
-      if (held) this.sql.exec("UPDATE blob SET status = 'kept', bytes = ?, fetched = ?, tries = tries + 1 WHERE vh = ?", toBuffer(blob), now, vh);
+      if (kept) this.sql.exec("UPDATE blob SET status = 'kept' WHERE vh = ?", vh); // it held a claim before
+      else if (held) this.sql.exec("UPDATE blob SET status = 'kept', bytes = ?, fetched = ?, tries = tries + 1 WHERE vh = ?", toBuffer(blob), now, vh);
       else this.sql.exec("UPDATE blob SET status = 'rejected', fetched = ?, tries = tries + 1 WHERE vh = ?", now, vh);
       fetched++;
     }
     return fetched;
   }
 
-  // A blob from the first source that has it. When a second source has it too, they must agree:
-  // the gateway can't check KZG itself, so it doesn't take one source's word when it can compare.
+  // A blob from the first source whose bytes match its versioned hash (KZG commitment, with the
+  // dapp's vendored KZG), so no source is taken on its word: a wrong answer just means the next one.
   async fetchBlob(vh, ts) {
+    const { blobVersionedHash } = await import('../dapp/vendor/kzg.bundle.mjs');
     const sources = this.blobSources();
     const attempts = [];
     if (sources.blobscan) attempts.push(async () => this.getJson(`${sources.blobscan}/blobs/${vh}/data`));
@@ -462,18 +494,15 @@ export class PostStore {
     for (const beacon of sources.beacons) {
       attempts.push(async () => (await this.getJson(`${beacon}/eth/v1/beacon/blobs/${slot}?versioned_hashes=${vh}`))?.data?.[0]);
     }
-    let first = null;
     for (const attempt of attempts) {
       let hex = null;
       try { hex = await attempt(); } catch (_) {}
       if (typeof hex !== 'string' || !/^0x[0-9a-fA-F]+$/.test(hex) || hex.length !== 2 + BLOB_BYTES * 2) continue;
       const bytes = hexToBytes(hex.slice(2));
-      if (!first) { first = bytes; continue; }
-      if (sameBytes(first, bytes)) return first;
+      if (blobVersionedHash(bytes) === vh) return bytes;
       console.error(JSON.stringify({ event: 'posts_blob_mismatch', vh }));
-      return null;
     }
-    return first;
+    return null;
   }
 
   blobSources() {
@@ -528,11 +557,20 @@ export class PostStore {
         if (Array.isArray(logs)) return logs;
       } catch (_) {}
     }
-    const [a, b] = await this.publicAnswers('eth_getLogs', [filter]);
-    if (!Array.isArray(a) || !Array.isArray(b)) throw new Error('eth_getLogs: malformed answer');
+    // Without the owner's node, a range counts only when two public endpoints return the same log
+    // set. Endpoints that disagree are not an answer: ask the next one, and if no two agree, throw so
+    // the cursor stays and the range is read again next sync. One endpoint can't add or hide an event.
     const key = (log) => [log.blockNumber, log.logIndex, log.transactionHash, ...(log.topics || []), log.data, log.removed ? 1 : 0].join('|').toLowerCase();
-    const inB = new Set(b.map(key));
-    return a.filter((log) => inB.has(key(log)));
+    const seen = new Map();
+    for (const url of rpcEndpointConfig(1, this.env).endpoints.filter((u) => u !== preferred)) {
+      let logs;
+      try { logs = await this.rpcAt([url], 'eth_getLogs', [filter]); } catch (_) { continue; }
+      if (!Array.isArray(logs)) continue;
+      const set = logs.map(key).sort().join('\n');
+      if (seen.has(set)) return seen.get(set);
+      seen.set(set, logs);
+    }
+    throw new Error('eth_getLogs: no two public endpoints agree');
   }
 
   // Answers from two different public endpoints, or an error.

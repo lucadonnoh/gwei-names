@@ -471,6 +471,18 @@ async function ethCall(chainId, to, data, route, options) {
   const r = await rpcCall(chainId, to, data, route, options);
   return r && r.result ? r.result : null;
 }
+// True if a request path could address something outside the content root it is appended to:
+// an encoded slash or backslash, or a segment that is '.' or '..' once decoded.
+export function pathLeavesRoot(pathname) {
+  if (/%(2f|5c)/i.test(pathname) || pathname.includes('\\')) return true;
+  for (const segment of pathname.split('/')) {
+    let decoded;
+    try { decoded = decodeURIComponent(segment); } catch { return true; }
+    if (decoded === '.' || decoded === '..') return true;
+  }
+  return false;
+}
+
 // --- posts --------------------------------------------------------------------------------------
 // Posts (posts/SPEC.md) are indexed by one PostIndex Durable Object, synced every minute by the cron
 // trigger. Name pages read it directly; gwei.domains/api/* exposes it to the dapp and to anyone else.
@@ -597,6 +609,9 @@ async function answerApi(request, url, env) {
     if ((m = hashIn(/^\/api\/names\/(0x[0-9a-fA-F]{64})\/posts$/))) {
       return apiJson({ posts: await index.forCurrentOwner(m, 100) }, 200, 'public, max-age=30');
     }
+    if ((m = hashIn(/^\/api\/authors\/(0x[0-9a-fA-F]{40})\/paid$/))) {
+      return apiJson({ authorizations: await index.paidBy(m, 100) }, 200, 'public, max-age=10');
+    }
     if ((m = hashIn(/^\/api\/blobs\/(0x01[0-9a-fA-F]{62})$/))) {
       const bytes = await index.blobBytes(m);
       return bytes ? apiBytes(bytes, 'application/octet-stream') : apiJson({ error: 'Unknown blob.' }, 404, 'public, max-age=10');
@@ -697,7 +712,10 @@ async function resolveName(name, route, cache, ctx) {
     ).catch(() => {}),
   );
   store(key, ttl);
+  // The last-known-good copy only ever stands in for the latest answer: once a lookup says the name
+  // has no website (expired, re-registered, cleared), an outage must not bring the old site back.
   if (result.kind) store(lkgKey, RESOLVE_LKG_TTL);
+  else ctx.waitUntil(Promise.resolve().then(() => cache.delete(lkgKey)).catch(() => {}));
   return result;
 }
 
@@ -1079,6 +1097,12 @@ export default {
       return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);
     }
 
+    // A storage path must stay inside the name's content root. Gateways decode %2F and then resolve
+    // '..', so /..%2F<other CID>/ would otherwise serve another CID on this name's origin.
+    if (r.kind !== 'web3' && pathLeavesRoot(url.pathname)) {
+      return page(name, '<p>That path isn\u2019t valid for this site.</p>', 400);
+    }
+
     // Bind cached content to the resolved reference. Once the resolution entry expires, a repointed
     // name selects a different key even if an older page response still exists at the edge.
     const version = r.kind === 'web3' ? `web3:${r.chainId}:${r.address}` : `${r.kind}:${r.ref}`;
@@ -1117,9 +1141,17 @@ export default {
 
     // 2b. Reverse-proxy the content from the matching storage gateway (IPFS, IPNS, or Swarm).
     const gateways = configuredGateways(r.kind === 'swarm' ? env.SWARM_GATEWAYS : env.IPFS_GATEWAYS, proto.gateways);
-    const upstream = await retrieveContent(gateways, `${proto.prefix}${r.ref}${url.pathname}${url.search}`, {
-      accept: request.headers.get('accept') || '*/*',
-    });
+    // Accept is not forwarded: gateways pick other representations from it (raw blocks, CAR, tar),
+    // and the cache key doesn't vary on it, so one visitor's Accept would decide everyone's page.
+    const root = `${proto.prefix}${r.ref}`;
+    let upstream = await retrieveContent(gateways, `${root}${url.pathname}${url.search}`, { accept: '*/*' });
+    // Redirects are followed (gateways add trailing slashes; subdomain gateways move the ref into the
+    // host), but never out of the content root.
+    const landed = upstream?.url ? new URL(upstream.url) : null;
+    if (landed && !landed.pathname.startsWith(root) && !landed.hostname.startsWith(`${r.ref.toLowerCase()}.`)) {
+      void upstream.body?.cancel().catch(() => {});
+      upstream = new Response(null, { status: 404 });
+    }
     if (upstream?.status === 404) {
       return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
     }

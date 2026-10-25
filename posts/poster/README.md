@@ -12,6 +12,17 @@ checked again in `send`). Payments count after 3 confirmations and exactly once.
 test for each griefing case, and its end-to-end tests check on anvil that the publisher's balance
 never ends lower than it started.
 
+**What it can still lose.** A sent transaction stays valid until it is mined. If prices stay above its
+fee caps for most of a day, it is neither resent nor replaced once its deposits near their refund time,
+but it can still land later, after authors took their fees back. The most that costs is that one
+transaction's fee caps, which are at most what its blobs paid (the dapp pays three times the cost at
+quote time, so it takes a sustained price spike).
+
+Anyone can name any blob for their own post, so a job keeps every post claimed for its blob and tries
+each one (least recently tried first); the one whose bytes make the blob is the one sent. A new payment
+gives a job that gave up (no bytes for three days, or no claim that makes the blob) another go. The
+database is bound to the contract it was started for.
+
 **Run it** (eth-node): `/opt/gwei-poster` holds this directory, with an `.env` setting
 `POSTER_CONTRACT`, `POSTER_FROM_BLOCK` and optionally `POSTER_NTFY_URL` and
 `POSTER_NTFY_TOKEN_FILE=/run/secrets/ntfy-token`.

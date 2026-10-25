@@ -12,6 +12,7 @@ import { excerpt, linkUrl, renderMarkdown } from './markdown.js';
 import { texToMathml } from './math.js';
 import { PostStore, T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED, clientKey } from './posts-store.js';
 import { keccak256 } from './web3-auto.js';
+import { blobVersionedHash } from '../dapp/vendor/kzg.bundle.mjs';
 
 const utf8 = (s) => new TextEncoder().encode(s);
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -96,6 +97,13 @@ test('markdown never passes HTML or unsafe URLs through', () => {
     '`</code><script>`',
     '$\\text{<script>}$',
     '**<b>**',
+    // A held span inside a link or image destination, or inside alt text, must not be expanded there.
+    '[click](/![x](https://i.example/a;style=color:red))',
+    '[x](/![a](https://i.example/p/data-probe=1))',
+    '![![a](https://i.example/b.png)](https://i.example/a.png)',
+    '![`code`](https://i.example/a.png)',
+    '![$\\mathrm{a}$](https://i.example/a.png)',
+    '![x](https://i.example/`a`)',
   ];
   // Every tag and attribute in the output must be one the renderer emits itself.
   const TAGS = new Set(['p', 'a', 'img', 'code', 'pre', 'em', 'strong', 'del', 'br', 'math', 'mi', 'mo', 'mn', 'mtext', 'mrow']);
@@ -120,11 +128,24 @@ test('markdown never passes HTML or unsafe URLs through', () => {
     'https://ipfs.filebase.io/ipfs/bafkreigw36dmko6bpsp355lk5k6u35zbhu3egeaxkm42wfczvfrbcimsnq');
 });
 
+test('long lines of whitespace parse in linear time', () => {
+  for (const line of ['# a' + ' '.repeat(100000) + 'x', '#' + ' '.repeat(100000) + '#x', '```' + ' '.repeat(100000) + 'x']) {
+    const start = performance.now();
+    renderMarkdown(line);
+    assert.ok(performance.now() - start < 500, `${JSON.stringify(line.slice(0, 8))}… took ${performance.now() - start} ms`);
+  }
+  assert.match(renderMarkdown('### Title ##   '), /<h3 id="title">Title<\/h3>/);
+  assert.match(renderMarkdown('# C# #'), /<h2[^>]*>C#<\/h2>/);
+  assert.match(renderMarkdown('# #'), /<h2[^>]*><\/h2>/);
+  assert.match(renderMarkdown('```js   \nx\n```'), /<pre><code[^>]*>x<\/code><\/pre>/);
+});
+
 test('links, images and bare URLs', () => {
   assert.equal(renderMarkdown('[ok](https://a.example/?a=1&b=2)'), '<p><a href="https://a.example/?a=1&amp;b=2" rel="nofollow ugc noopener">ok</a></p>');
   assert.match(renderMarkdown('![alt](ipfs://bafkreigw36dmko6bpsp355lk5k6u35zbhu3egeaxkm42wfczvfrbcimsnq)'),
     /<img src="https:\/\/ipfs\.filebase\.io\/ipfs\/bafkrei[^"]+" alt="alt" loading="lazy" referrerpolicy="no-referrer">/);
   assert.match(renderMarkdown('[![i](https://i.example/a.png)](https://l.example)'), /<a href="https:\/\/l\.example\/"[^>]*><img src="https:\/\/i\.example\/a\.png"/);
+  assert.match(renderMarkdown('![`a<b` and $x$ and \\_](https://i.example/a.png)'), /alt="a&lt;b and x and _"/);
   assert.match(renderMarkdown('see https://a.example/path_with_under_scores.'), /<a href="https:\/\/a\.example\/path_with_under_scores"[^>]*>https:\/\/a\.example\/path_with_under_scores<\/a>\./);
 });
 
@@ -208,7 +229,7 @@ function fakeWorld() {
     }
     const blobscan = /^https:\/\/blobscan\.test\/blobs\/(0x[0-9a-f]+)\/data$/.exec(url);
     if (blobscan) {
-      const blob = world.blobs[blobscan[1]];
+      const blob = (world.blobscanBlobs || {})[blobscan[1]] || world.blobs[blobscan[1]];
       if (world.blobscanDown || !blob) return new Response('nope', { status: world.blobscanDown ? 503 : 404 });
       return new Response(JSON.stringify('0x' + toHex(blob)));
     }
@@ -275,7 +296,9 @@ const published = (block, idx, hash, vh, publisher = PUBLISHER) => {
   return logOf(block, idx, [T_BLOB_PUBLISHED, vh, topicAddr(publisher)], '0x' + word(0));
 };
 const removed = (block, idx, token, hash, author) => logOf(block, idx, [T_REMOVED, token, hash, topicAddr(author)]);
-const versionedHash = (n) => '0x01' + pad32(n.toString(16)).slice(2);
+const versionedHash = (n) => '0x01' + pad32(n.toString(16)).slice(2); // for blobs that are never fetched
+// A blob's real versioned hash (the index checks every fetched blob against it), and serving it.
+const serve = (world, blob) => { const vh = blobVersionedHash(blob); world.blobs[vh] = blob; return vh; };
 
 function makeStore(world, env = {}) {
   let now = world.timestamp(world.head);
@@ -357,8 +380,7 @@ test('a blob that carries the post confirms it, from any publisher', async () =>
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Confirmed');
-  const vh = versionedHash(1);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(510, 3, a.hash, vh, BOB));
   const result = await store.sync();
@@ -383,8 +405,7 @@ test('a PostPublished claim for a blob that lacks the post is ignored', async ()
   const store = makeStore(world);
   const a = postBytes('Real');
   const other = postBytes('Other');
-  const vh = versionedHash(2);
-  world.blobs[vh] = encodeBlob([other.bytes]);
+  const vh = serve(world, encodeBlob([other.bytes]));
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(510, 0, a.hash, vh));
   await store.sync();
@@ -401,8 +422,7 @@ test('a self-published post needs no upload: its bytes come from the blob', asyn
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Only in a blob', 'from **somewhere** else');
-  const vh = versionedHash(3);
-  world.blobs[vh] = encodeBlob([postBytes('unrelated').bytes, a.bytes]);
+  const vh = serve(world, encodeBlob([postBytes('unrelated').bytes, a.bytes]));
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, ALICE, 0n), published(500, 1, a.hash, vh, ALICE));
   await store.sync();
   const [post] = store.forToken(TOKEN, ALICE);
@@ -415,15 +435,15 @@ test('blobs come from the beacon API when Blobscan is down, and retries back off
   world.blobscanDown = true;
   const store = makeStore(world);
   const a = postBytes('Beacon');
-  const vh = versionedHash(4);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(600, 0, a.hash, vh));
   await store.sync();
   assert.ok(store.forToken(TOKEN, ALICE)[0].onchain);
   assert.equal(world.beaconSlot, Math.floor((world.timestamp(600) - 1606824023) / 12));
 
   const b = postBytes('Unavailable');
-  const vh2 = versionedHash(5);
+  const blobB = encodeBlob([b.bytes]);
+  const vh2 = blobVersionedHash(blobB);
   world.beaconDown = true;
   world.head = 1100;
   world.logs.push(authorized(1000, 0, TOKEN, b.hash, ALICE), published(1001, 0, b.hash, vh2));
@@ -433,7 +453,7 @@ test('blobs come from the beacon API when Blobscan is down, and retries back off
   store.advance(30);
   await store.sync();
   assert.equal(world.calls.filter((u, i) => i >= calls && u.includes(vh2)).length, 0, 'no refetch before the backoff');
-  world.blobs[vh2] = encodeBlob([b.bytes]);
+  world.blobs[vh2] = blobB;
   world.blobscanDown = false;
   store.advance(120);
   await store.sync();
@@ -443,8 +463,7 @@ test('blobs come from the beacon API when Blobscan is down, and retries back off
 test('blobs no owner authorized are never fetched', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
-  const vh = versionedHash(6);
-  world.blobs[vh] = encodeBlob([postBytes('spam').bytes]);
+  const vh = serve(world, encodeBlob([postBytes('spam').bytes]));
   world.logs.push(published(500, 0, postBytes('spam').hash, vh));
   await store.sync();
   assert.equal(world.calls.filter((u) => u.includes(vh)).length, 0);
@@ -455,8 +474,7 @@ test('removal hides a post until its author authorizes it again', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Removable');
-  const vh = versionedHash(7);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(500, 1, a.hash, vh), removed(600, 0, TOKEN, a.hash, ALICE));
   await store.sync();
@@ -479,8 +497,7 @@ test('recent lists posts across names and drops names whose owner changed', asyn
   const store = makeStore(world);
   const a = postBytes('Alice post', 'a');
   const b = postBytes('Bob post', 'b');
-  const vh = versionedHash(8);
-  world.blobs[vh] = encodeBlob([a.bytes, b.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes, b.bytes]));
   world.owners = { [TOKEN]: ALICE, [TOKEN2]: BOB };
   world.names = { [TOKEN]: 'alice.gwei', [TOKEN2]: 'bob.gwei' };
   world.logs.push(
@@ -536,8 +553,7 @@ test('a claimed blob stuffed with junk only records the claimed entries', async 
   const store = makeStore(world);
   const real = postBytes('Real');
   const junk = Array.from({ length: 500 }, (_, i) => postBytes('j' + i, '').bytes);
-  const vh = versionedHash(20);
-  world.blobs[vh] = encodeBlob([...junk, real.bytes]);
+  const vh = serve(world, encodeBlob([...junk, real.bytes]));
   world.logs.push(authorized(500, 0, TOKEN, real.hash, ALICE, ALICE, 0n), published(501, 0, real.hash, vh, BOB));
   await store.sync();
   assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.blob, vh);
@@ -545,33 +561,88 @@ test('a claimed blob stuffed with junk only records the claimed entries', async 
   assert.equal(store.rows('SELECT COUNT(*) AS n FROM content')[0].n, 1);
 });
 
-test('blob sources must agree when both answer', async () => {
+test('a source serving bytes that are not the blob is caught by the versioned hash', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
-  const a = postBytes('Agreed');
-  const vh = versionedHash(21);
-  world.blobs[vh] = encodeBlob([a.bytes]);
-  world.beaconBlobs = { [vh]: encodeBlob([postBytes('forged').bytes]) };
+  const a = postBytes('Checked');
+  const vh = serve(world, encodeBlob([a.bytes]));
+  world.blobscanBlobs = { [vh]: encodeBlob([a.bytes, postBytes('smuggled').bytes]) }; // carries the post, but isn't the blob
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
   const error = console.error;
   const logged = [];
   console.error = (line) => logged.push(line);
   try { await store.sync(); } finally { console.error = error; }
-  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain, null);
   assert.match(logged.join(), /posts_blob_mismatch/);
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.blob, vh, 'the beacon API had the real blob');
+  assert.equal(toHex(store.blobBytes(vh)), toHex(world.blobs[vh]));
+
+  const b = postBytes('Both sources wrong');
+  const vhB = serve(world, encodeBlob([b.bytes]));
+  const wrong = encodeBlob([b.bytes, postBytes('x').bytes]);
+  world.blobscanBlobs = { [vhB]: wrong };
+  world.beaconBlobs = { [vhB]: wrong };
+  store.upload(b.bytes, 'ip');
+  world.head = 1100;
+  world.logs.push(authorized(1000, 0, TOKEN, b.hash, ALICE), published(1001, 0, b.hash, vhB));
+  console.error = () => {};
+  try { await store.sync(); } finally { console.error = error; }
+  assert.equal(store.forToken(TOKEN, ALICE).find((p) => p.hash === b.hash).onchain, null, 'a wrong blob is not taken');
+  world.blobscanBlobs = {};
   world.beaconBlobs = {};
   store.advance(120);
   await store.sync();
-  assert.ok(store.forToken(TOKEN, ALICE)[0].onchain);
+  assert.equal(store.forToken(TOKEN, ALICE).find((p) => p.hash === b.hash).onchain.blob, vhB, 'and it is retried');
+});
+
+test('a junk claim on a blob cannot keep a later real claim from being checked', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const real = postBytes('Front-run');
+  const junk = postBytes('Junk claim');
+  const vh = serve(world, encodeBlob([real.bytes]));
+  // Someone publishes the author's blob first, with a junk claim, and the index checks it.
+  world.logs.push(authorized(500, 0, TOKEN2, junk.hash, BOB, BOB, 0n, vh), published(501, 0, junk.hash, vh, BOB));
+  await store.sync();
+  assert.equal(store.rows('SELECT status FROM blob WHERE vh = ?', vh)[0].status, 'rejected');
+  // Then the author authorizes the post they built that blob for.
+  world.head = 1100;
+  world.logs.push(authorized(1000, 0, TOKEN, real.hash, ALICE, PUBLISHER, 10n ** 13n, vh));
+  store.advance(60);
+  await store.sync();
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain?.blob, vh, 'the blob is checked again for the new claim');
+  assert.equal(store.forToken(TOKEN, ALICE)[0].onchain.publisher, BOB);
+  // Re-announcing claims that were already checked doesn't refetch anything.
+  const calls = world.calls.length;
+  world.head = 1200;
+  world.logs.push(authorized(1100, 0, TOKEN2, junk.hash, BOB, BOB, 0n, vh), logOf(1101, 0, [T_BLOB_PUBLISHED, vh, topicAddr(PUBLISHER)], '0x' + word(0)));
+  store.advance(60);
+  await store.sync();
+  assert.equal(world.calls.slice(calls).filter((u) => u.includes(vh)).length, 0);
+});
+
+test('a later claim on a kept blob is checked from the kept bytes', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('First in the blob');
+  const b = postBytes('Second in the blob');
+  const vh = serve(world, encodeBlob([a.bytes, b.bytes]));
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, ALICE, 0n, vh), published(500, 1, a.hash, vh, ALICE));
+  await store.sync();
+  assert.ok(store.forToken(TOKEN, ALICE).find((p) => p.hash === a.hash).onchain);
+  delete world.blobs[vh]; // no source has it any more
+  world.head = 1100;
+  world.logs.push(authorized(1000, 0, TOKEN2, b.hash, BOB, BOB, 0n, vh));
+  store.advance(60);
+  await store.sync();
+  assert.equal(store.forToken(TOKEN2, BOB)[0].onchain?.blob, vh);
 });
 
 test('blobs nobody named for a post are never fetched, however many there are', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Paid post');
-  const vh = versionedHash(99);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   store.upload(a.bytes, 'ip');
   for (let i = 0; i < 20; i++) {
     const junkVh = versionedHash(100 + i);
@@ -588,8 +659,7 @@ test('the blob the author named counts only once it is published, whoever publis
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Named');
-  const vh = versionedHash(98);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE, PUBLISHER, 10n ** 13n, vh));
   await store.sync();
@@ -602,12 +672,33 @@ test('the blob the author named counts only once it is published, whoever publis
   assert.equal(store.detail(a.hash).authorizations[0].blob, vh);
 });
 
+test('an author’s paid authorizations are listed for refunds, even once the post is off the page', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Paid, never delivered');
+  const b = postBytes('Self-published');
+  const vh = versionedHash(70);
+  store.upload(a.bytes, 'ip');
+  world.logs.push(
+    authorized(500, 0, TOKEN, a.hash, ALICE, PUBLISHER, 10n ** 13n, vh),
+    authorized(510, 0, TOKEN, a.hash, ALICE, PUBLISHER, 10n ** 13n, vh), // topped up: one row
+    authorized(520, 0, TOKEN, b.hash, ALICE, ALICE, 0n),
+    authorized(530, 0, TOKEN2, a.hash, BOB, PUBLISHER, 1n, vh),
+  );
+  await store.sync();
+  store.advance(2 * 86400);
+  assert.equal(store.forToken(TOKEN, ALICE).length, 0, 'past its pending window');
+  assert.deepEqual(store.paidBy(ALICE.toUpperCase().replace('0X', '0x')), [
+    { hash: a.hash, blob: vh, publisher: PUBLISHER, token: TOKEN, block: 510, title: 'Paid, never delivered' },
+  ]);
+  assert.equal(store.paidBy(BOB).length, 1);
+});
+
 test('a token without a full name never holds up the others', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const a = postBytes('Named');
-  const vh = versionedHash(22);
-  world.blobs[vh] = encodeBlob([a.bytes]);
+  const vh = serve(world, encodeBlob([a.bytes]));
   for (let i = 0; i < 40; i++) {
     const token = '0x' + pad32((0xdead00 + i).toString(16));
     world.owners[token] = BOB;
@@ -629,8 +720,7 @@ test('recent shows at most two posts per name', async () => {
   world.names = { [TOKEN]: 'alice.gwei', [TOKEN2]: 'bob.gwei' };
   const posts = Array.from({ length: 5 }, (_, i) => postBytes('alice ' + i, 'b'));
   const bob = postBytes('bob post', 'b');
-  const vh = versionedHash(23);
-  world.blobs[vh] = encodeBlob([...posts.map((p) => p.bytes), bob.bytes]);
+  const vh = serve(world, encodeBlob([...posts.map((p) => p.bytes), bob.bytes]));
   world.logs.push(authorized(400, 0, TOKEN2, bob.hash, BOB), published(400, 1, bob.hash, vh));
   posts.forEach((p, i) => world.logs.push(authorized(500 + i, 0, TOKEN, p.hash, ALICE), published(500 + i, 1, p.hash, vh)));
   await store.sync();
@@ -654,13 +744,73 @@ test('with the owner’s node down, events need two public endpoints to agree', 
   assert.deepEqual(store.forToken(TOKEN, ALICE).map((p) => p.title), ['Real']);
 });
 
+test('with the owner’s node down, one public endpoint leaving a log out cannot hide it', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const a = postBytes('Withdrawn');
+  store.upload(a.bytes, 'ip');
+  world.owners[TOKEN] = ALICE;
+  const auth = authorized(500, 0, TOKEN, a.hash, ALICE);
+  const removal = removed(600, 0, TOKEN, a.hash, ALICE);
+  world.logs.push(auth, removal);
+  // The first public endpoint omits the removal; the next two agree on the full set.
+  const hidden = world.fetch;
+  world.fetch = async (url, init) => {
+    if (init?.method === 'POST' && url.startsWith('https://eth.drpc.org') && JSON.parse(init.body).method === 'eth_getLogs') {
+      const res = await hidden(url, init);
+      const json = await res.json();
+      json.result = json.result.filter((l) => l !== removal && l.topics[0] !== T_REMOVED);
+      return new Response(JSON.stringify(json));
+    }
+    return hidden(url, init);
+  };
+  store.fetchImpl = world.fetch;
+  await store.sync();
+  assert.deepEqual(store.forToken(TOKEN, ALICE), [], 'the removal was indexed');
+});
+
+test('with the owner’s node down and no two public endpoints agreeing, the range is read again', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const auth = authorized(500, 0, TOKEN, postBytes('x').hash, ALICE);
+  world.logs.push(auth);
+  const base = world.fetch;
+  let n = 0;
+  world.fetch = async (url, init) => {
+    if (init?.method === 'POST' && JSON.parse(init.body).method === 'eth_getLogs') {
+      const json = await (await base(url, init)).json();
+      n += 1; // every endpoint adds a different made-up log, so no two answers match
+      json.result.push({ ...auth, logIndex: '0x' + (100 + n).toString(16), transactionHash: '0x' + pad32((1000 + n).toString(16)) });
+      return new Response(JSON.stringify(json));
+    }
+    return base(url, init);
+  };
+  store.fetchImpl = world.fetch;
+  const cursorBefore = store.meta('cursor');
+  await assert.rejects(store.sync(), /no two public endpoints agree/);
+  assert.equal(store.meta('cursor'), cursorBefore, 'the cursor did not move past the range');
+  assert.equal(store.rows('SELECT COUNT(*) AS n FROM auth')[0].n, 0, 'nothing from the disagreeing answers was recorded');
+});
+
+test('a removal in the same block as its authorization hides the post at mainnet block heights', async () => {
+  const world = fakeWorld();
+  world.head = 26_300_100;
+  const store = makeStore(world, { POSTS_FROM_BLOCK: '26299999' });
+  const a = postBytes('Same block');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(26_300_000, 3, TOKEN, a.hash, ALICE), removed(26_300_000, 5, TOKEN, a.hash, ALICE));
+  await store.sync();
+  assert.deepEqual(store.forToken(TOKEN, ALICE), []);
+});
+
 test('authorized bytes that never reach a blob expire; blob bytes are kept for thirty days', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
   const stuck = postBytes('Never published');
   const done = postBytes('Published');
-  const vh = versionedHash(24);
-  world.blobs[vh] = encodeBlob([done.bytes]);
+  const vh = serve(world, encodeBlob([done.bytes]));
   store.upload(stuck.bytes, 'ip');
   store.upload(done.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, stuck.hash, ALICE), authorized(500, 1, TOKEN, done.hash, ALICE), published(501, 0, done.hash, vh));
@@ -725,9 +875,7 @@ test('a post is dated by the block of the blob that carries it, else by its auth
   const early = postBytes('Authorized first, published later');
   const late = postBytes('Authorized second, published first');
   const pending = postBytes('Not in a blob yet');
-  const vhA = versionedHash(30), vhB = versionedHash(31);
-  world.blobs[vhA] = encodeBlob([late.bytes]);
-  world.blobs[vhB] = encodeBlob([early.bytes]);
+  const vhA = serve(world, encodeBlob([late.bytes])), vhB = serve(world, encodeBlob([early.bytes]));
   for (const p of [early, late, pending]) store.upload(p.bytes, 'ip');
   world.logs.push(
     authorized(500, 0, TOKEN, early.hash, ALICE), authorized(510, 0, TOKEN, late.hash, ALICE),

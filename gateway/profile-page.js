@@ -132,6 +132,7 @@ function webLink(value) {
 }
 export function avatarUrl(value) {
   const v = (value || '').trim();
+  if (v.includes('\u0000')) return null;
   const ipfs = /^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]{46,100})(\/[^\s?#"'<>]*)?$/.exec(v);
   // Filebase rather than ipfs.io: ipfs.io rate-limits heavily, and a 429 would be a broken image.
   if (ipfs) return `https://ipfs.filebase.io/ipfs/${ipfs[1]}${ipfs[2] || ''}`;
@@ -281,8 +282,9 @@ export const AVATAR_PNG_PATH = '/.well-known/gwei-avatar.png';
 // The share card's name types, plus what makes a name stand out.
 function nameBadges(name, profile) {
   const badges = [];
-  if (name.endsWith('.zkpassport.gwei')) badges.push('Proof of humanity');
-  else if (name.endsWith('.id.gwei')) badges.push('Free name');
+  // Only the registrars' own children: a deeper name was minted by whoever owns its parent.
+  if (/^[^.]+\.zkpassport\.gwei$/.test(name)) badges.push('Proof of humanity');
+  else if (/^[^.]+\.id\.gwei$/.test(name)) badges.push('Free name');
   if (profile.primary) badges.push('Primary name');
   const labels = name.slice(0, -'.gwei'.length).split('.');
   if (labels.length === 1) {

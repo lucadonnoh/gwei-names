@@ -134,6 +134,9 @@ function makeCache() {
       if (e.expiresAt != null && now > e.expiresAt) { store.delete(url); return undefined; }
       return new Response(e.body, { status: e.status, headers: new Headers(e.headers) });
     },
+    async delete(req) {
+      return store.delete(typeof req === 'string' ? req : req.url);
+    },
     async put(req, res) {
       const method = typeof req === 'string' ? 'GET' : (req.method || 'GET');
       if (method !== 'GET') throw new TypeError('Cache API: only GET responses can be cached');
@@ -1228,6 +1231,25 @@ test('when a fresh lookup fails, the last known site is served', async () => {
   assert.equal((await invoke('https://donnoh.gwei.domains/', { cache, fetchMock })).status, 502);
 });
 
+test('once a lookup says the website is gone, an outage does not bring the old site back', async () => {
+  const cache = makeCache();
+  let state = 'site';
+  const fetchMock = makeFetch({
+    rpc: (data) => (state === 'down' ? null : rpcReturning(state === 'site' ? CH_IPFS : CH_NONE)(data)),
+    ipfs: () => new Response('<h1>previous owner</h1>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  });
+  assert.equal((await invoke('https://donnoh.gwei.domains/', { cache, fetchMock })).status, 200);
+  state = 'gone'; // expired, re-registered or cleared: the chain now says there is no website
+  cache.advance(301);
+  const gone = await invoke('https://donnoh.gwei.domains/', { cache, fetchMock });
+  assert.notEqual(await gone.text(), '<h1>previous owner</h1>');
+  state = 'down';
+  cache.advance(61);
+  const res = await invoke('https://donnoh.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 502);
+  assert.doesNotMatch(await res.text(), /previous owner/);
+});
+
 test('the daily health check reports each endpoint that no longer answers', async () => {
   const original = globalThis.fetch;
   const logged = [];
@@ -1434,6 +1456,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
     blobBytes: answer('blobBytes', (vh) => (vh === POST_A.onchain.blob ? new Uint8Array([1, 2, 3]) : null)),
     recent: answer('recent', [{ name: 'alice.gwei', ...POST_A }]),
     forCurrentOwner: answer('forCurrentOwner', posts),
+    paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
     poke: answer('poke', { throttled: true }),
     sync: answer('sync', { events: 2, blobs: 1 }),
   };
@@ -1556,6 +1579,11 @@ test('the posts API: uploads, reads, CORS and sandboxing', async () => {
 
   res = await api(`/api/names/${TOKEN_HEX}/posts`);
   assert.equal((await res.json()).posts.length, 2);
+  res = await api('/api/authors/0x' + 'A1'.repeat(20) + '/paid');
+  assert.equal((await res.json()).authorizations[0].blob, POST_A.onchain.blob);
+  assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'paidBy'), ['paidBy', '0x' + 'a1'.repeat(20), 100]);
+  res = await api('/api/authors/0x1234/paid');
+  assert.equal(res.status, 404);
   res = await api('/api/posts/recent?limit=500');
   assert.equal((await res.json()).posts[0].name, 'alice.gwei');
   assert.deepEqual(POST_INDEX.calls.find((c) => c[0] === 'recent'), ['recent', 50], 'limit is capped');
@@ -1588,4 +1616,40 @@ test('the every-minute cron syncs the post index; the daily one checks endpoints
   }
   assert.deepEqual(POST_INDEX.calls.map((c) => c[0]), ['getByName', 'sync']);
   assert.match(logged.join('\n'), /"event":"posts_sync","events":2,"blobs":1/);
+});
+
+test('storage paths cannot leave the name\'s content root (encoded slashes, encoded dot segments)', async () => {
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('<h1>other cid</h1>', { status: 200, headers: { 'content-type': 'text/html' } }) });
+  for (const path of ['/..%2Fbafyattacker/evil.html', '/%2e%2e%2fbafyattacker/x', '/a/..%5Cb', '/x%2fy']) {
+    const res = await invoke(`https://donnoh.gwei.domains${path}`, { cache: makeCache(), fetchMock });
+    assert.equal(res.status, 400, path);
+  }
+  assert.equal(fetchMock.calls.ipfs, 0, 'nothing was fetched upstream');
+  const ok = await invoke('https://donnoh.gwei.domains/a%20b/c.html', { cache: makeCache(), fetchMock });
+  assert.equal(ok.status, 200, 'ordinary percent-encoding still works');
+  assert.ok(fetchMock.calls.ipfsUrls.at(-1).endsWith(`/ipfs/${DONNOH_CID}/a%20b/c.html`), fetchMock.calls.ipfsUrls.at(-1));
+});
+
+test('a gateway redirect out of the content root is not served', async () => {
+  const away = new Response('<h1>other cid</h1>', { status: 200 });
+  Object.defineProperty(away, 'url', { value: 'https://ipfs.io/ipfs/bafyattacker/evil.html' });
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => away });
+  const res = await invoke('https://donnoh.gwei.domains/x.html', { cache: makeCache(), fetchMock });
+  assert.equal(res.status, 404);
+  const sub = new Response('<h1>donnoh</h1>', { status: 200 });
+  Object.defineProperty(sub, 'url', { value: `https://${DONNOH_CID}.ipfs.dweb.link/x.html` });
+  const ok = await invoke('https://donnoh.gwei.domains/x.html', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => sub }) });
+  assert.equal(ok.status, 200, 'a subdomain gateway redirect for the same CID is fine');
+});
+
+test('the visitor\'s Accept header is not forwarded to storage gateways', async () => {
+  let seen;
+  const fetchMock = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('ok', { status: 200 }) });
+  const wrapped = async (input, init = {}) => {
+    if (String(typeof input === 'string' ? input : input.url).includes('/ipfs/')) seen = new Headers(init.headers).get('accept');
+    return fetchMock(input, init);
+  };
+  wrapped.calls = fetchMock.calls;
+  await invoke('https://donnoh.gwei.domains/', { cache: makeCache(), fetchMock: wrapped, headers: { accept: 'application/vnd.ipld.raw' } });
+  assert.equal(seen, '*/*');
 });

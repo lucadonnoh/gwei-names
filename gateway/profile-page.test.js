@@ -140,6 +140,8 @@ test('badges mark proof-of-humanity and free names, short, number and emoji name
     .matchAll(/<span class="badge">([^<]+)<\/span>/g)].map((m) => m[1]);
   assert.deepEqual(badges('alice.zkpassport.gwei'), ['Proof of humanity']);
   assert.deepEqual(badges('bob.id.gwei'), ['Free name']);
+  assert.deepEqual(badges('bot.alice.zkpassport.gwei'), [], 'a child of a claimed name proved nothing');
+  assert.deepEqual(badges('x.bob.id.gwei'), []);
   assert.deepEqual(badges('abc.gwei'), ['Short name']);
   assert.deepEqual(badges('4242.gwei'), ['Number']);
   assert.deepEqual(badges('🦄.gwei', { primary: true }), ['Primary name', 'Emoji', 'Short name']);

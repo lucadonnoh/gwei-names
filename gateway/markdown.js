@@ -16,6 +16,8 @@ const MAX_QUOTE_DEPTH = 4;
 
 export function linkUrl(value) {
   const v = (value || '').trim();
+  // A held span (\u0000N\u0000) inside a destination would be expanded inside the attribute later.
+  if (v.includes('\u0000')) return null;
   // Same-page anchors and paths on the name's own site, which keep working wherever a post is shown.
   if (/^#[\p{L}\p{N}_-]{1,100}$/u.test(v) || /^\/(?![/\\])[^\s"'<>]{0,2000}$/.test(v)) return v;
   if (/^mailto:[^\s@<>"']{1,64}@[^\s@<>"']{1,190}$/i.test(v)) return v;
@@ -38,6 +40,9 @@ const DEST = '(?:[^\\s()<>]|\\([^\\s()<>]*\\)){1,2000}';
 function inline(text) {
   const slots = [];
   const hold = (html) => `\u0000${slots.push(html) - 1}\u0000`;
+  // The text of a held span, for alt text: expanded as markup there it would break out of the attribute.
+  const plain = (html) => html.replace(/\u0000(\d+)\u0000/g, (_, i) => plain(slots[Number(i)] ?? '')).replace(/<[^>]*>/g, '')
+    .replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" }[e]));
   const math = (tex, display) => hold(texToMathml(tex, display) ?? `<code>${escapeHtml(display ? `$$${tex}$$` : `$${tex}$`)}</code>`);
   let s = text
     .replace(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g, (_, __, code) => hold(`<code>${escapeHtml(code.trim() || code)}</code>`))
@@ -46,8 +51,9 @@ function inline(text) {
     .replace(/(^|[^\\$\w])\$(?=[^\s$])([^$\n]{0,2000}?[^\s$\\])\$(?![\w$])/g, (_, lead, tex) => lead + math(tex, false))
     .replace(/\\([\\`*_{}[\]()#+\-.!~>|$])/g, (_, c) => hold(escapeHtml(c)))
     .replace(new RegExp(`!\\[([^\\]\\n]{0,300})\\]\\(\\s*(${DEST})(?:\\s+"[^"\\n]{0,200}")?\\s*\\)`, 'g'), (_, alt, src) => {
-      const url = avatarUrl(src);
-      return url ? hold(`<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy" referrerpolicy="no-referrer">`) : hold(escapeHtml(alt));
+      const text = plain(alt);
+      const url = src.includes('\u0000') ? null : avatarUrl(src);
+      return url ? hold(`<img src="${escapeHtml(url)}" alt="${escapeHtml(text)}" loading="lazy" referrerpolicy="no-referrer">`) : hold(escapeHtml(text));
     })
     .replace(new RegExp(`\\[([^\\]\\n]{1,500})\\]\\(\\s*(${DEST})(?:\\s+"[^"\\n]{0,200}")?\\s*\\)`, 'g'), (_, label, href) => {
       const url = linkUrl(href);
@@ -74,8 +80,21 @@ function emphasis(s) {
     .replace(/~~(?=\S)([^~]*?\S)~~/g, '<del>$1</del>');
 }
 
-const FENCE = /^ {0,3}(```+|~~~+)\s*([\w+-]*)\s*$/;
-const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+// Fences and headings are matched on the line with trailing whitespace already removed, and the
+// heading's closing #s are stripped separately: the one-regex forms backtracked polynomially on long
+// runs of spaces (a 4096-space heading line took seconds).
+const FENCE_RE = /^ {0,3}(```+|~~~+)\s*([\w+-]*)$/;
+const HEADING_RE = /^ {0,3}(#{1,6})\s+([\s\S]*)$/;
+const FENCE = { exec: (line) => FENCE_RE.exec(line.trimEnd()), test: (line) => FENCE_RE.test(line.trimEnd()) };
+const HEADING = {
+  exec(line) {
+    const m = HEADING_RE.exec(line.trimEnd());
+    if (!m) return null;
+    const closing = /(^|\s)#+$/.exec(m[2]);
+    return [m[0], m[1], (closing ? m[2].slice(0, closing.index) : m[2]).trimEnd()];
+  },
+  test: (line) => HEADING_RE.test(line.trimEnd()),
+};
 const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const QUOTE = /^ {0,3}>\s?/;
 const BULLET = /^ {0,3}[-*+]\s+(.*)$/;
