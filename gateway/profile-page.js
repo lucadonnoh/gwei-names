@@ -376,6 +376,7 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.btn{display:inline-block;padding:12px 24px;font-size:12px;text-transform:uppercase;letter-spacing:.1em;background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--btn-bg);text-decoration:none;margin:8px 8px 0 0}' +
   '.btn:hover{background:var(--btn-hover);opacity:1}.btn.secondary{background:var(--bg);color:var(--fg)}' +
   '.note{font-size:12px;color:var(--muted);margin-top:40px;line-height:1.6}.note a{color:var(--muted)}' +
+  '.notice{font-size:13px;line-height:1.55;padding:10px 14px;margin-bottom:24px;background:var(--panel);overflow-wrap:anywhere}' +
   '.section{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:32px 0 4px}' +
   '.post-link{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--panel);color:var(--fg);text-decoration:none;font-size:14px}' +
   '.post-link:hover{opacity:.55}.post-date{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}' +
@@ -405,7 +406,8 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
 
 // The visitor's theme choice is one cookie per site (gwei.domains, shared by the dapp and every name
 // page there, or gwei.limo): the cookie's domain is the last two labels of the page's host.
-// This is the only script these pages run; the CSP allows exactly this text, by hash.
+// This is the only script these pages run (besides SITE_CHECK_SCRIPT below); the CSP allows exactly
+// this text, by hash.
 export const THEME_SCRIPT = "(()=>{const r=document.documentElement,m=document.cookie.match(/(?:^|; )gwei-theme=(dark|light)/);" +
   "r.classList.add('js');if(m)r.classList.add(m[1]);document.addEventListener('click',(e)=>{" +
   "if(!e.target.closest||!e.target.closest('.theme-toggle'))return;" +
@@ -413,6 +415,11 @@ export const THEME_SCRIPT = "(()=>{const r=document.documentElement,m=document.c
   "r.classList.remove('dark','light');r.classList.add(next);" +
   "document.cookie='gwei-theme='+next+';domain='+location.hostname.split('.').slice(-2).join('.')+';path=/;max-age=31536000;samesite=lax;secure'})})()";
 export const THEME_SCRIPT_HASH = "'sha256-QSbCQDQ4kljhA7vttnh5J+kRtdviwGQcubS+uAk0zO0='";
+// On the profile that stands in for a website that didn't load: ask for the page again every 10 s, for
+// 5 minutes, and open the site as soon as it answers.
+export const SITE_CHECK_SCRIPT = '(()=>{let n=0;const t=setInterval(async()=>{if(++n>30)return clearInterval(t);' +
+  'try{const r=await fetch(location.href,{cache:"no-store"});if(r.ok){clearInterval(t);location.reload()}}catch(_){}},10000)})()';
+export const SITE_CHECK_SCRIPT_HASH = "'sha256-10L00cdDbPZlaYSc1CAC6Raw+HcVxzsIeM4vq71f1fU='";
 const THEME_TOGGLE = '<button class="theme-toggle" type="button" title="Switch light or dark" aria-label="Switch light or dark mode">' +
   '<svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>' +
   '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>' +
@@ -520,7 +527,8 @@ export function postListHtml(posts, postPath) {
     '</div>';
 }
 
-export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = '' }) {
+// `siteDown` ('IPFS', 'IPNS' or 'Swarm'): the profile stands in for the name's website, which didn't load.
+export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = '', siteDown = null }) {
   const t = profile.text || {};
   const page = profile.page || {};
   const accent = page.color || null;
@@ -534,6 +542,8 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
   const badges = nameBadges(name, profile);
   const share = `https://x.com/intent/post?text=${encodeURIComponent(name)}&url=${encodeURIComponent(pageUrl)}`;
   const body =
+    (siteDown ? `<div class="notice">The website of <b>${escapeHtml(name)}</b> isn\u2019t loading right now, so here is its profile. ` +
+      'The website will open by itself as soon as it\u2019s back.</div>' : '') +
     (banner ? `<img class="banner" src="${escapeHtml(banner)}" alt="" referrerpolicy="no-referrer">` : '') +
     (avatar
       ? `<img class="avatar" src="${escapeHtml(avatar)}" alt="" referrerpolicy="no-referrer">`
@@ -549,9 +559,12 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
     `<div class="panel">${rows}</div>` +
     `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="${dapp}">View on gwei.domains</a>` +
     `<a class="btn secondary" href="${escapeHtml(share)}" rel="noopener">Share</a></div>` +
-    `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
-    `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
-    '<a href="https://gwei.domains/guide/">host a website →</a></p>';
+    (siteDown
+      ? `<p class="note">Websites on ${siteDown} load while some node keeps a copy online. If this one doesn\u2019t come back, ` +
+        `its owner can put it online again: <a href="https://gwei.domains/guide/">how sites are hosted →</a></p><script>${SITE_CHECK_SCRIPT}</script>`
+      : `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
+        `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
+        '<a href="https://gwei.domains/guide/">host a website →</a></p>');
   const feed = postsHtml ? `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` : '';
   return renderLayout({
     title: name,
@@ -602,3 +615,5 @@ export function renderUnregistered({ name, dappHash, pageUrl, price }) {
 
 // No scripts on these pages; images (avatars) over https or inline, styles inline.
 export const PROFILE_CSP = `default-src 'none'; script-src ${THEME_SCRIPT_HASH}; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`;
+// The stand-in profile also runs SITE_CHECK_SCRIPT, which asks this origin for the page.
+export const SITE_DOWN_CSP = `default-src 'none'; script-src ${THEME_SCRIPT_HASH} ${SITE_CHECK_SCRIPT_HASH}; connect-src 'self'; img-src https: data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`;

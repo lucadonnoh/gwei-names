@@ -211,6 +211,10 @@ test('the theme switch: one hash-pinned script, shared cookie, system theme by d
   const { THEME_SCRIPT, THEME_SCRIPT_HASH, PROFILE_CSP, renderLayout } = await import('./profile-page.js');
   const { createHash } = await import('node:crypto');
   assert.equal(THEME_SCRIPT_HASH, `'sha256-${createHash('sha256').update(THEME_SCRIPT).digest('base64')}'`, 'the CSP hash matches the script');
+  const { SITE_CHECK_SCRIPT, SITE_CHECK_SCRIPT_HASH, SITE_DOWN_CSP } = await import('./profile-page.js');
+  assert.equal(SITE_CHECK_SCRIPT_HASH, `'sha256-${createHash('sha256').update(SITE_CHECK_SCRIPT).digest('base64')}'`, 'and the site check’s');
+  assert.ok(SITE_DOWN_CSP.includes(`script-src ${THEME_SCRIPT_HASH} ${SITE_CHECK_SCRIPT_HASH};`));
+  assert.doesNotMatch(SITE_DOWN_CSP, /unsafe-inline'; img|script-src[^;]*unsafe/);
   assert.match(PROFILE_CSP, new RegExp(`script-src ${THEME_SCRIPT_HASH.replace(/[+/]/g, '\\$&')};`));
   assert.doesNotMatch(PROFILE_CSP, /unsafe-inline'; img|script-src[^;]*unsafe/);
   const html = renderLayout({ title: 't', body: '<p>x</p>' });

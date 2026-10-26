@@ -17,7 +17,7 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, keccak256, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, avatarPng, cardVersion,
+  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, avatarPng, cardVersion,
   decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
   renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
@@ -832,16 +832,7 @@ async function lookupName(name, route) {
           if (profile.price) result.price = profile.price;
           if (profile.registered) {
             profile.seed = tokenIdHex; // generative avatar
-            const ref = nftAvatarRef(profile.text.avatar);
-            const bannerRef = nftAvatarRef(profile.text.header);
-            const [image, banner, primary] = await Promise.all([
-              ref ? nftImage(ref, route) : null,
-              bannerRef ? nftImage(bannerRef, route) : null,
-              ethCall(1, NAMENFT, '0x' + SEL_REVERSE + pad32(profile.address.slice(2)), route).catch(() => null),
-            ]);
-            if (image) profile.avatarImage = image;
-            if (banner) profile.bannerImage = banner;
-            if (primary) profile.primary = readText(primary.slice(2), word(primary.slice(2), 0))?.toLowerCase() === name.toLowerCase();
+            await completeProfile(profile, name, route);
             result.profile = profile;
           }
         }
@@ -859,9 +850,31 @@ async function lookupName(name, route) {
     } else {
       result = { state: 'unsupported' };
     }
+    // The same results carry the profile, for the page that stands in when the website doesn't load.
+    if (result.kind) {
+      try {
+        const profile = profileFromResults(results.slice(2));
+        if (profile?.registered) result.profile = { ...profile, seed: tokenIdHex };
+      } catch (_) {}
+    }
   }
 
   return result;
+}
+
+// What a profile page needs beyond the records: NFT avatar and banner images, and whether this is the
+// owner's primary name. Each lookup that fails just leaves its part out.
+async function completeProfile(profile, name, route) {
+  const ref = nftAvatarRef(profile.text.avatar);
+  const bannerRef = nftAvatarRef(profile.text.header);
+  const [image, banner, primary] = await Promise.all([
+    ref ? nftImage(ref, route) : null,
+    bannerRef ? nftImage(bannerRef, route) : null,
+    ethCall(1, NAMENFT, '0x' + SEL_REVERSE + pad32(profile.address.slice(2)), route).catch(() => null),
+  ]);
+  if (image) profile.avatarImage = image;
+  if (banner) profile.bannerImage = banner;
+  if (primary) profile.primary = readText(primary.slice(2), word(primary.slice(2), 0))?.toLowerCase() === name.toLowerCase();
 }
 
 // An ENSIP-12 NFT avatar: the token's metadata (from tokenURI / uri) names its image. Every step is
@@ -1261,6 +1274,22 @@ export default {
         ctx.waitUntil(cache.put(contentKey, stored).catch(() => {}));
       }
       return resp;
+    }
+    console.log(JSON.stringify({ event: 'site_unavailable', name, kind: r.kind }));
+    // Rather than a dead end, the name's profile stands in for a home page that didn't load: it says so,
+    // and opens the site by itself once it answers. Other paths keep the retrying error page.
+    if (url.pathname === '/' && r.profile) {
+      const profile = structuredClone(r.profile);
+      await completeProfile(profile, name, route).catch(() => {});
+      const index = postIndex(env);
+      const posts = index && profile.owner ? await fromIndex(() => cachedPosts(index, '0x' + profile.seed, profile.owner, 50, cache, ctx), []) : [];
+      const html = renderProfile({
+        name, dappHash: encodeURIComponent(decodedSub), pageUrl: `https://${host}/`, profile,
+        postsHtml: postListHtml(posts, postPath), siteDown: { ipfs: 'IPFS', ipns: 'IPNS', swarm: 'Swarm' }[r.kind],
+      });
+      const response = htmlResponse(html, 503, 'no-store', SITE_DOWN_CSP);
+      response.headers.set('retry-after', '10');
+      return response;
     }
     return transientPage(name, 'Content is set but couldn’t be fetched right now.', 504);
   },

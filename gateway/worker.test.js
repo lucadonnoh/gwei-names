@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { checkEndpoints, nameTokenId } from './worker.js';
-import { PROFILE_TEXT_KEYS } from './profile-page.js';
+import { PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT } from './profile-page.js';
 import {
   RPCS,
   RPC_PAGE_TIMEOUT_MS,
@@ -1326,6 +1326,35 @@ test('an unregistered name gets a register page; a registered one without a site
 
   res = await invoke('https://xn--ls8h.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
   assert.match(await res.text(), /href="https:\/\/gwei\.domains\/#%F0%9F%92%A9">Register it/);
+});
+
+test('a website that doesn’t load shows its profile instead of a dead end, then opens once it is back', async () => {
+  let up = false;
+  const records = rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16), text: { description: 'builds things' } });
+  const fetchMock = makeFetch({
+    rpc: (data) => (data.startsWith(SEL.ch) ? rpcReturning(CH_IPFS)(data) : records(data)),
+    ipfs: () => (up ? new Response('<h1>the site</h1>', { headers: { 'content-type': 'text/html' } }) : new Response('x', { status: 504 })),
+  });
+  const cache = makeCache();
+  let res = await invoke('https://alice.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.equal(res.headers.get('retry-after'), '10');
+  assert.match(res.headers.get('content-security-policy'), /connect-src 'self'/);
+  const html = await res.text();
+  assert.match(html, /The website of <b>alice\.gwei<\/b> isn\u2019t loading right now, so here is its profile/);
+  assert.match(html, /builds things/);
+  assert.match(html, /Websites on IPFS load while some node keeps a copy online/);
+  assert.ok(html.includes(`<script>${SITE_CHECK_SCRIPT}</script>`), 'it checks for the site by itself');
+  assert.doesNotMatch(html, /This is the default page/);
+
+  res = await invoke('https://alice.gwei.domains/about.html', { cache, fetchMock });
+  assert.equal(res.status, 504, 'other paths keep the retrying error page');
+
+  up = true;
+  res = await invoke('https://alice.gwei.domains/', { cache, fetchMock });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<h1>the site</h1>');
 });
 
 test('when a fresh lookup fails, the last known site is served', async () => {

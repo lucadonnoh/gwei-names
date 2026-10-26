@@ -35,7 +35,7 @@ export function createGatewayPool({ fetchImpl = (...args) => fetch(...args), tim
               new Promise((_, reject) => {
                 const abort = () => reject(new Error('Gateway request cancelled.'));
                 controller.signal.addEventListener('abort', abort, { once: true });
-                timer = setTimeout(() => { unhealthyUntil.set(endpoint, Date.now() + cooldownMs); controller.abort(); }, timeoutMs);
+                timer = setTimeout(() => controller.abort(), timeoutMs);
               }),
             ]);
             if (finished) { void upstream.body?.cancel().catch(() => {}); return; }
@@ -44,11 +44,14 @@ export function createGatewayPool({ fetchImpl = (...args) => fetch(...args), tim
               done(upstream, controller);
             } else {
               if (upstream.status === 404 || upstream.status === 410) notFound = true;
-              if (upstream.status === 429 || upstream.status >= 500) unhealthyUntil.set(endpoint, Date.now() + cooldownMs);
+              // Only an outage or a rate limit benches a gateway for everyone. A 504 or a slow answer is
+              // about this content (Kubo answers 504 for a CID no node provides, or an IPNS name still
+              // resolving): benching the gateway for it would fail every other site for the cooldown.
+              if (upstream.status === 429 || upstream.status === 502 || upstream.status === 503) unhealthyUntil.set(endpoint, Date.now() + cooldownMs);
               void upstream.body?.cancel().catch(() => {});
             }
           } catch {
-            if (!finished) unhealthyUntil.set(endpoint, Date.now() + cooldownMs);
+            if (!finished && !controller.signal.aborted) unhealthyUntil.set(endpoint, Date.now() + cooldownMs); // unreachable, not slow
           } finally {
             clearTimeout(timer); controllers.delete(controller); active--;
             if (!finished) launch();
