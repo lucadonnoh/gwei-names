@@ -445,8 +445,9 @@ body.modal-open { overflow: hidden; }
 .post-row a { flex: 1; color: var(--fg); overflow-wrap: anywhere; }
 .post-row .post-state { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
 .manage-form .post-row button { width: auto; margin: 0; padding: 4px 10px; font-size: 10px; }
-.post-row label.post-replies { flex: none; display: flex; align-items: center; gap: 5px; margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg); cursor: pointer; }
-.manage-form .post-row label.post-replies input { width: auto; margin: 0; padding: 0; }
+/* An inline box, so its baseline is its text's and "Replies" lines up with "On Ethereum"; the checkbox sits centred on it. */
+.post-row label.post-replies { flex: none; display: inline-block; white-space: nowrap; margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg); cursor: pointer; }
+.manage-form .post-row label.post-replies input { width: auto; margin: 0 5px 0 0; padding: 0; vertical-align: -3px; }
 .post-replies-save { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 10px 0 4px; }
 .post-replies-save .profile-hint { margin: 0; }
 #replyPanel textarea {
@@ -6394,14 +6395,16 @@ function savePaidPosts(tokenId, list) {
 }
 const escrowKeyOf = (blob, publisher) => ethers.keccak256(ethers.concat([blob, ethers.zeroPadValue(publisher, 32)]));
 
-async function loadOwnPosts() {
+// `written` is the replies record a save just wrote: a public RPC can still be a block behind and
+// answer the old one, which would show the saved posts unticked.
+async function loadOwnPosts(written) {
   const el = $('ppList');
   if (!el || !currentTokenId) return;
   const tokenId = currentTokenId;
   try {
     const [res, record] = await Promise.all([
       fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`, { cache: 'no-store' }),
-      readContract.text(tokenId, REPLIES_RECORD).catch(() => null),
+      typeof written === 'string' ? written : readContract.text(tokenId, REPLIES_RECORD).catch(() => null),
     ]);
     const { posts } = await res.json();
     if (tokenId !== currentTokenId || !$('ppList')) return;
@@ -6654,7 +6657,7 @@ async function doSaveReplies() {
     await waitForTx(tx);
     if (tokenId === currentTokenId) for (const [hash, on] of changes) if (pendingReplies.get(hash) === on) pendingReplies.delete(hash);
     showStatus(changes.length === 1 ? 'Reply setting saved.' : `Reply settings saved for ${changes.length} posts.`, 'success', tx.hash);
-    loadOwnPosts();
+    if (tokenId === currentTokenId) loadOwnPosts(record);
   } catch (e) {
     handleError(e);
   } finally {

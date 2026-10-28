@@ -2688,6 +2688,8 @@ test('replies: #reply/<post> opens the reply box, sending 1 wei from the connect
   assert.match(html, /let record = await contract\.text\(tokenId, REPLIES_RECORD\);\n    for \(const \[hash, on\] of changes\) record = repliesRecordWith\(record, hash, on\);/,
     'and is read through the wallet’s node, then every change is applied to it, for one transaction');
   assert.doesNotMatch(html, /doToggleReplies/, 'no transaction per post: queued in a batch, each would overwrite the others');
+  assert.match(html, /if \(tokenId === currentTokenId\) loadOwnPosts\(record\);/, 'after a save the list shows what was written');
+  assert.match(html, /typeof written === 'string' \? written : readContract\.text\(tokenId, REPLIES_RECORD\)/, 'not a public RPC’s answer, which may be a block behind');
 });
 
 test('posts: mainnet points at the deployed GnsPosts and the gwei.domains publisher', () => {
