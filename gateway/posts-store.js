@@ -15,9 +15,11 @@
 import { MAX_POST_BYTES, BLOB_BYTES, blobCid, decodeBlob, encodeBlob, parsePost, postCid, postHash } from './posts-format.js';
 import { MULTICALL3, decodeAggregate3, encodeAggregate3 } from './profile-page.js';
 import { configuredGateways } from './content-gateways.js';
+import { replyRoom, replyText } from './replies-format.js';
 import { readRpcJson } from './rpc-pool.js';
 import { rpcEndpointConfig } from './rpc-config.js';
 import { hexToBytes } from './web3-auto.js';
+import { ens_normalize } from './ens-normalize.js';
 
 export const T_AUTHORIZED = '0x521590a9cca024d1ff93e37c9ee8f521cee9c2da79903939763c3c34bdb7eb28'; // PostAuthorized(uint256,bytes32,address,bytes32,address,uint256)
 export const T_BLOB_PUBLISHED = '0xb51cc50f0049ae8836824f5ee55fbae269ff6cf4ff8fc6390b721310d5ade99b'; // BlobPublished(bytes32,address,uint256)
@@ -26,6 +28,10 @@ const NAMENFT = '0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6';
 const SEL_GETFULLNAME = '465411c1'; // getFullName(uint256)
 const SEL_OWNEROF = '6352211e'; // ownerOf(uint256)
 const SEL_RESOLVE = '4f896d4f'; // resolve(uint256): zero unless active
+const SEL_REVERSE = '9af8b7aa'; // reverseResolve(address): the address's primary name, if active and it resolves back
+const WNS = '0x0000000000696760E15f265e828DB644A0c242EB'; // Wei Name Service, the contract GNS was forked from
+const ENS_UNIVERSAL_RESOLVER = '0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe';
+const SEL_ENS_REVERSE = '5d78a217'; // reverse(bytes,uint256): the primary ENS name; reverts unless it resolves back
 
 const CONFIRMATIONS = 2; // index up to head - 2, so a one-block reorg can't leave a phantom event
 const LOG_RANGE = 2000; // blocks per eth_getLogs (public RPCs cap ranges)
@@ -45,6 +51,20 @@ const RECENT_CACHE_SECONDS = 30;
 const RECENT_PER_NAME = 2;
 const NAME_RETRY_SECONDS = 86400;
 const MAX_LIST = 200;
+// Replies (replies-format.js) are found with trace_filter on the owner's node until EIP-7708 gives every
+// ETH transfer a log: a range of blocks, for every room at once, in batches of rooms.
+const REPLY_RANGE = 200;
+const REPLY_RANGES_PER_SYNC = 10;
+const ROOMS_PER_QUERY = 200;
+const ROOM_CATCHUPS_PER_SYNC = 5;
+const MAX_REPLIES = 500; // per post: the newest
+const REPLY_CALLS_PER_SYNC = 40; // RPC calls the reply scan may make per sync, splits and retries included
+const CATCHUP_RANGE = 2000; // blocks per trace_filter for one room catching up
+const REPLY_BLOCK_TRIES = 3; // syncs a block that can't be read at all is tried in before it is skipped
+const REPLY_TIMES_PER_SYNC = 20; // blocks whose time is looked up per sync, for replies found without one
+// A block read in full to find its replies: up to about 9 MB of JSON for a block of zero-byte calldata.
+const FULL_BLOCK_MAX_BYTES = 16 * 1024 * 1024;
+const PRIMARY_CACHE_SECONDS = 600;
 const BEACON_GENESIS = 1606824023; // mainnet beacon genesis time; slots are 12 s
 const RPC_TIMEOUT_MS = 10_000;
 const BLOB_TIMEOUT_MS = 15_000;
@@ -63,7 +83,7 @@ export const DEFAULT_IPFS_GATEWAYS = ['https://ipfs.filebase.io'];
 // Bumped whenever the tables change shape; a different version (or a different contract) starts the
 // index over from the contract's deployment block.
 const SCHEMA_VERSION = '3';
-const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'checked', 'names', 'blobcid'];
+const TABLES = ['content', 'auth', 'pub', 'blobpub', 'removal', 'blob', 'carried', 'checked', 'names', 'blobcid', 'room', 'reply'];
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS content (hash TEXT PRIMARY KEY, bytes BLOB NOT NULL, title TEXT NOT NULL, time INTEGER, received INTEGER NOT NULL)',
   // PostAuthorized: `blob` is the blob the author built for the post (its versioned hash).
@@ -95,6 +115,13 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS names (token TEXT PRIMARY KEY, name TEXT NOT NULL, checked INTEGER NOT NULL)',
   // A kept blob's IPFS CID (sha-256 of its bytes, as the publisher pins it).
   'CREATE TABLE IF NOT EXISTS blobcid (vh TEXT PRIMARY KEY, cid TEXT NOT NULL)',
+  // A post's reply room (replies-format.js), watched from its first authorization: `scanned` is the
+  // block its own catch-up reached; once it meets the replies cursor the room joins the shared scan.
+  'CREATE TABLE IF NOT EXISTS room (room TEXT PRIMARY KEY, hash TEXT NOT NULL, since INTEGER NOT NULL, scanned INTEGER NOT NULL)',
+  'CREATE INDEX IF NOT EXISTS room_hash ON room (hash)',
+  // A reply: a top-level 1-wei transaction to a room with 0x01 + UTF-8 text as input.
+  'CREATE TABLE IF NOT EXISTS reply (tx TEXT PRIMARY KEY, block INTEGER NOT NULL, pos INTEGER NOT NULL, ts INTEGER, room TEXT NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL)',
+  'CREATE INDEX IF NOT EXISTS reply_room ON reply (room, block, pos)',
 ];
 
 const HASH = /^0x[0-9a-f]{64}$/;
@@ -120,6 +147,8 @@ const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
 const POS = '4294967296';
 // The first blob that really carries a post, as one string column (a correlated subquery).
 // A post's date: the block of the first blob that carries it, else its first authorization.
+// A post whose bytes say "replies": false (posts-format.js parsePost), read without parsing every row in JS.
+const REPLIES_OFF = "(CASE WHEN json_valid(CAST(c.bytes AS TEXT)) AND json_type(CAST(c.bytes AS TEXT), '$.replies') = 'false' THEN 1 ELSE 0 END)";
 const ONCHAIN_TS = '(SELECT p.ts FROM pub p JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
 const ONCHAIN = "(SELECT p.blob || '|' || p.tx || '|' || p.block || '|' || p.ts || '|' || p.publisher FROM pub p " +
   'JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
@@ -137,6 +166,7 @@ export class PostStore {
     this.now = now;
     this.uploadsByIp = new Map();
     this.owners = new Map();
+    this.primaries = new Map();
     this.recentCache = null;
     this.syncing = null;
     sql.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
@@ -246,7 +276,7 @@ export class PostStore {
       'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
     ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, blob: a.blob, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
     const onchain = this.withCid(this.onchain(hash));
-    return { hash, cid: postCid(hash), title: post.title, body: post.body, time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
+    return { hash, cid: postCid(hash), title: post.title, body: post.body, ...(post.replies === false && { replies: false }), time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
   }
 
   // Every post a blob carries, in the order the index found them, for mirrors and other frontends.
@@ -288,7 +318,7 @@ export class PostStore {
     const rows = this.rows(
       `WITH latest AS (SELECT hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ` +
       'FROM auth WHERE token = ? AND author = ? GROUP BY hash) ' +
-      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
+      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${REPLIES_OFF} AS replies_off, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
       `WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ${POS} + r.idx > l.pos) ` +
       (prefix ? 'AND substr(l.hash, 3, ?) = ? ' : '') +
       ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(onchain_ts, first_ts) DESC LIMIT ?',
@@ -297,12 +327,81 @@ export class PostStore {
     );
     return rows.map((row) => ({
       hash: row.hash, title: row.title, time: row.onchain_ts ?? row.first_ts, authorized: row.first_ts, onchain: parseOnchain(row.onchain),
+      ...(row.replies_off && { replies: false }),
     }));
   }
 
   postForToken(token, owner, prefix) {
     const [match] = this.forToken(token, owner, 1, prefix);
-    return match ? { ...match, body: this.body(match.hash) } : null;
+    if (!match) return null;
+    const post = parsePost(this.raw(match.hash) || new Uint8Array());
+    return { ...match, body: post?.body ?? null, ...(post?.replies === false ? { replies: false } : {}), replyCount: this.replyCount(match.hash) };
+  }
+
+  // A post's newest replies, oldest first, each with its sender's name as senderNames finds it (or null),
+  // and `total`, the number there are.
+  async replies(hash) {
+    // The newest MAX_REPLIES, oldest first: replies sent early can't hold the thread.
+    const rows = this.rows(
+      'SELECT r.tx, r.block, r.ts, r.sender, r.text FROM reply r JOIN room m ON m.room = r.room WHERE m.hash = ? ORDER BY r.block DESC, r.pos DESC LIMIT ?',
+      hash, MAX_REPLIES,
+    ).reverse();
+    const names = rows.length ? await this.senderNames([...new Set(rows.map((r) => r.sender))]).catch(() => new Map()) : new Map();
+    const room = this.rows('SELECT room FROM room WHERE hash = ?', hash)[0]?.room ?? await replyRoom(hash);
+    return {
+      room,
+      total: rows.length < MAX_REPLIES ? rows.length : this.replyCount(hash),
+      replies: rows.map((r) => {
+        const found = names.get(r.sender);
+        return { tx: r.tx, block: r.block, time: r.ts, from: r.sender, name: found?.name ?? null, system: found?.system ?? null, text: r.text };
+      }),
+    };
+  }
+
+  replyCount(hash) {
+    return this.rows('SELECT COUNT(*) AS n FROM reply r JOIN room m ON m.room = r.room WHERE m.hash = ?', hash)[0].n;
+  }
+
+  // address -> { name, system } or nothing: the name ethchat shows for a sender. Its primary GNS name, else
+  // WNS, else ENS, each only if it resolves back to the address: GNS's and WNS's reverseResolve check
+  // that themselves, ENS's Universal Resolver reverts otherwise. Every name must also be exactly its
+  // ENSIP-15 normalization, so look-alikes don't show, and offchain (CCIP-Read) names aren't followed.
+  // Cached for ten minutes.
+  async senderNames(addresses) {
+    const now = this.now();
+    const result = new Map();
+    const missing = [];
+    for (const a of addresses) {
+      const hit = this.primaries.get(a);
+      if (hit && now - hit.at < PRIMARY_CACHE_SECONDS) { if (hit.found) result.set(a, hit.found); }
+      else missing.push(a);
+    }
+    for (let i = 0; i < missing.length; i += 21) {
+      const chunk = missing.slice(i, i + 21); // 3 calls each; decodeAggregate3 reads at most 64
+      const calls = chunk.flatMap((a) => {
+        const raw = a.slice(2).toLowerCase();
+        return [
+          { target: NAMENFT, data: '0x' + SEL_REVERSE + raw.padStart(64, '0') },
+          { target: WNS, data: '0x' + SEL_REVERSE + raw.padStart(64, '0') },
+          // (bytes lookupAddress, uint256 coinType = 60)
+          { target: ENS_UNIVERSAL_RESOLVER, data: '0x' + SEL_ENS_REVERSE + abiWord(64) + abiWord(60) + abiWord(20) + raw.padEnd(64, '0') },
+        ];
+      });
+      const decoded = decodeAggregate3(await this.rpc('eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest']));
+      if (!decoded) continue;
+      chunk.forEach((a, j) => {
+        // GNS and WNS take any Unicode in a label, so their names are held to ENSIP-15 too: no look-alikes,
+        // no bidi or zero-width tricks, no "/" or "#" to turn a link into another site's.
+        const gns = normalizedName(readAbiString(decoded[3 * j]));
+        const wns = normalizedName(readAbiString(decoded[3 * j + 1]));
+        const ens = normalizedName(readAbiString(decoded[3 * j + 2]));
+        const found = (/\.gwei$/.test(gns || '') && { name: gns, system: 'gns' }) || (/\.wei$/.test(wns || '') && { name: wns, system: 'wns' }) ||
+          (ens && { name: ens, system: 'ens' }) || null;
+        this.primaries.set(a, { found, at: now });
+        if (found) result.set(a, found);
+      });
+    }
+    return result;
   }
 
   // Newest posts across all names, for gwei.domains: one query, cached briefly. At most RECENT_PER_NAME
@@ -406,7 +505,159 @@ export class PostStore {
     await this.fillCids();
     this.prune();
     if (events || blobs) this.recentCache = null;
-    return { head, cursor, events, blobs };
+    let replies = 0;
+    try {
+      replies = await this.syncReplies(cursor);
+    } catch (error) {
+      console.error(JSON.stringify({ event: 'replies_sync_failed', message: String(error?.message || error).slice(0, 200) }));
+    }
+    return { head, cursor, events, blobs, replies };
+  }
+
+  // Rooms for the posts the index knows bytes for (from their first authorization, since a post shows
+  // while it waits for its blob); then a catch-up for new rooms; then every room, up to `until` (the
+  // events cursor, so a room exists before the blocks that could hold its replies are read).
+  async syncReplies(until) {
+    const { preferred } = rpcEndpointConfig(1, this.env);
+    if (!preferred) return 0; // trace_filter: only the owner's node offers it (public RPCs don't)
+    const start = Number(this.env.POSTS_FROM_BLOCK) > 0 ? Number(this.env.POSTS_FROM_BLOCK) - 1 : until;
+    let cursor = Number(this.meta('reply_cursor') ?? start);
+    const fresh = this.rows(
+      'SELECT c.hash, MIN(a.block) AS since FROM content c JOIN auth a ON a.hash = c.hash ' +
+      'WHERE NOT EXISTS (SELECT 1 FROM room m WHERE m.hash = c.hash) GROUP BY c.hash LIMIT 100',
+    );
+    for (const { hash, since } of fresh) {
+      this.sql.exec('INSERT OR IGNORE INTO room (room, hash, since, scanned) VALUES (?, ?, ?, ?)', await replyRoom(hash), hash, since, since - 1);
+    }
+    const budget = { calls: REPLY_CALLS_PER_SYNC };
+    let found = 0;
+    // New blocks first, for every room in step: whatever else is going on, new replies show.
+    for (let n = 0; n < REPLY_RANGES_PER_SYNC && cursor < until && budget.calls > 0; n++) {
+      const to = Math.min(until, cursor + REPLY_RANGE);
+      const rooms = this.rows('SELECT room FROM room WHERE scanned >= ?', cursor).map((r) => r.room);
+      let through = to;
+      for (let i = 0; i < rooms.length && through > cursor; i += ROOMS_PER_QUERY) {
+        const done = await this.scanRange(rooms.slice(i, i + ROOMS_PER_QUERY), cursor + 1, through, budget);
+        found += done.found;
+        through = done.through; // blocks a later batch would scan again are only seen again: replies are keyed by tx
+      }
+      if (through <= cursor) break;
+      this.sql.exec('UPDATE room SET scanned = ? WHERE scanned >= ?', through, cursor);
+      cursor = through;
+      this.setMeta('reply_cursor', cursor);
+      if (through < to) break;
+    }
+    // Then rooms behind the shared cursor (bytes that arrived late), nearest first, with what is left.
+    const behind = this.rows('SELECT room, scanned FROM room WHERE scanned < ? ORDER BY scanned DESC LIMIT ?', cursor, ROOM_CATCHUPS_PER_SYNC);
+    for (const { room, scanned } of behind) {
+      if (budget.calls <= 0) break;
+      let at = scanned;
+      while (at < cursor && budget.calls > 0) {
+        const to = Math.min(cursor, at + CATCHUP_RANGE);
+        const done = await this.scanRange([room], at + 1, to, budget);
+        found += done.found;
+        at = done.through;
+        if (at < to) break;
+      }
+      this.sql.exec('UPDATE room SET scanned = ? WHERE room = ?', at, room);
+    }
+    await this.fillReplyTimes().catch(() => {});
+    return found;
+  }
+
+  // Replies to `rooms` in blocks from..to, stored. Returns { found, through }: through is the last block
+  // it got to with every block before it done (from - 1 for none), so progress is kept block by block.
+  // trace_filter answers a whole range, but internal calls carry their input too, so a contract calling a
+  // room many times with big inputs can make that answer too big or too slow. When the node itself is
+  // fine (it answers eth_blockNumber), such a range is split in two, and a block that still fails is read
+  // from its transactions, which is all a reply can be. A block that can't even be read that way is
+  // skipped after REPLY_BLOCK_TRIES syncs, logged. Every call is paid from `budget`, so a sync always
+  // ends, and the next one picks up where it stopped.
+  async scanRange(rooms, from, to, budget) {
+    const set = new Set(rooms);
+    let calls;
+    try {
+      calls = await this.traceCalls(rooms, from, to, budget);
+    } catch (error) {
+      if (budget.calls <= 0 || !(await this.nodeAnswers(budget))) {
+        console.error(JSON.stringify({ event: 'reply_scan_paused', from, to, message: String(error?.message || error).slice(0, 200) }));
+        return { found: 0, through: from - 1 };
+      }
+      if (from < to) {
+        const mid = Math.floor((from + to) / 2);
+        const left = await this.scanRange(rooms, from, mid, budget);
+        if (left.through < mid) return left;
+        const right = await this.scanRange(rooms, mid + 1, to, budget);
+        return { found: left.found + right.found, through: right.through };
+      }
+      if (budget.calls <= 0) return { found: 0, through: from - 1 }; // out of calls: not the block's fault
+      try {
+        calls = await this.blockCalls(set, from, budget);
+        this.setMeta('reply_block_failures', '');
+      } catch (blockError) {
+        const [block, tries] = String(this.meta('reply_block_failures') || '').split(':').map(Number);
+        const now = block === from ? tries + 1 : 1;
+        const skip = now >= REPLY_BLOCK_TRIES && budget.calls > 0;
+        console.error(JSON.stringify({ event: skip ? 'reply_block_skipped' : 'reply_block_failed', block: from, tries: now, message: String(blockError?.message || blockError).slice(0, 200) }));
+        this.setMeta('reply_block_failures', skip ? '' : `${from}:${now}`);
+        return { found: 0, through: skip ? from : from - 1 };
+      }
+    }
+    let found = 0;
+    for (const c of calls) {
+      const room = String(c.to || '').toLowerCase();
+      if (!set.has(room)) continue;
+      const text = replyText(c, room);
+      if (text === null) continue;
+      this.sql.exec('INSERT OR IGNORE INTO reply (tx, block, pos, ts, room, sender, text) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        c.tx, c.block, c.pos, c.ts ?? null, room, String(c.from).toLowerCase(), text);
+      found++;
+    }
+    return { found, through: to };
+  }
+
+  // Whether the owner's node answers at all, asked once per sync: a failure it gives for every request
+  // is the node being down, not a range too big to answer.
+  async nodeAnswers(budget) {
+    if (budget.nodeAnswers === undefined) {
+      if (budget.calls-- <= 0) return false;
+      const { preferred } = rpcEndpointConfig(1, this.env);
+      budget.nodeAnswers = await this.rpcAt([preferred], 'eth_blockNumber', []).then(() => true, () => false);
+    }
+    return budget.nodeAnswers;
+  }
+
+  // Successful top-level calls to `rooms` in from..to, from trace_filter.
+  async traceCalls(rooms, from, to, budget) {
+    if (budget.calls-- <= 0) throw new Error('reply scan: out of calls for this sync');
+    const { preferred } = rpcEndpointConfig(1, this.env);
+    const traces = await this.rpcAt([preferred], 'trace_filter', [{ fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16), toAddress: rooms }]);
+    if (!Array.isArray(traces)) throw new Error('trace_filter: not a list');
+    return traces
+      .filter((t) => t?.type === 'call' && !t.error && !(t.traceAddress || []).length && (!t.action?.callType || t.action.callType === 'call'))
+      .map((t) => ({ ...t.action, tx: t.transactionHash, block: Number(t.blockNumber), pos: Number(t.transactionPosition) }));
+  }
+
+  // Transactions to `rooms` in one block, from the block itself. One call, however many there are: a
+  // transaction to a room can't fail once it is in a block, since a room has no code and nobody holds a
+  // key that could give it some (EIP-7702), so no receipts are needed.
+  async blockCalls(rooms, number, budget) {
+    if (budget.calls-- <= 0) throw new Error('reply scan: out of calls for this sync');
+    const { preferred } = rpcEndpointConfig(1, this.env);
+    const block = await this.rpcAt([preferred], 'eth_getBlockByNumber', ['0x' + number.toString(16), true], FULL_BLOCK_MAX_BYTES);
+    const ts = Number(BigInt(block.timestamp));
+    return (block.transactions || [])
+      .filter((tx) => rooms.has(String(tx.to || '').toLowerCase()))
+      .map((tx) => ({ from: tx.from, to: tx.to, value: tx.value, input: tx.input, tx: tx.hash, block: number, pos: Number(BigInt(tx.transactionIndex)), ts }));
+  }
+
+  // Replies found by trace_filter come without their block's time: look it up, a few blocks per sync.
+  async fillReplyTimes() {
+    const blocks = this.rows('SELECT DISTINCT block FROM reply WHERE ts IS NULL ORDER BY block DESC LIMIT ?', REPLY_TIMES_PER_SYNC);
+    for (const { block } of blocks) {
+      const header = await this.rpc('eth_getBlockByNumber', ['0x' + block.toString(16), false]);
+      this.sql.exec('UPDATE reply SET ts = ? WHERE block = ? AND ts IS NULL', Number(BigInt(header.timestamp)), block);
+    }
   }
 
   async ingest(logs) {
@@ -696,7 +947,7 @@ export class PostStore {
     return this.rpcAt(rpcEndpointConfig(1, this.env).endpoints, method, params);
   }
 
-  async rpcAt(urls, method, params) {
+  async rpcAt(urls, method, params, maxBytes) {
     const { preferred, preferredAuth } = rpcEndpointConfig(1, this.env);
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
     const failures = [];
@@ -710,7 +961,7 @@ export class PostStore {
           failures.push(`${new URL(url).host}: HTTP ${response.status}`);
           continue;
         }
-        const json = await readRpcJson(response);
+        const json = await readRpcJson(response, maxBytes);
         if (json && 'result' in json && json.result !== null) return json.result;
         failures.push(`${new URL(url).host}: ${String(json?.error?.message || 'no result').slice(0, 100)}`);
       } catch (error) {
@@ -722,6 +973,29 @@ export class PostStore {
 }
 
 export const isPostHash = (value) => HASH.test(value || '');
+
+// An aggregate3 result holding one ABI string -> the string ('' for anything else).
+// The string a call returned first (a lone string, or the first member of a tuple), or ''.
+function readAbiString(result) {
+  if (!result?.success || !result.data || result.data.length < 128) return '';
+  try {
+    const at = Number(BigInt('0x' + result.data.slice(0, 64))) * 2;
+    const length = Number(BigInt('0x' + result.data.slice(at, at + 64)));
+    if (!length || length > 1024 || result.data.length < at + 64 + length * 2) return '';
+    return new TextDecoder('utf-8', { fatal: true }).decode(hexToBytes(result.data.slice(at + 64, at + 64 + length * 2)));
+  } catch (_) {
+    return '';
+  }
+}
+const abiWord = (n) => BigInt(n).toString(16).padStart(64, '0');
+// A name exactly as ENSIP-15 normalizes it, or null.
+function normalizedName(name) {
+  try {
+    return name && name.length <= 255 && ens_normalize(name) === name ? name : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 // A response body, or null once it passes `max` bytes.
 async function readCapped(response, max) {

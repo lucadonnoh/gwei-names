@@ -10,10 +10,10 @@ import {
 // bounding the JSON string and decoder copies well below the Worker's per-isolate memory limit.
 export const MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-export async function readRpcJson(response) {
+export async function readRpcJson(response, maxBytes = MAX_RPC_RESPONSE_BYTES) {
   const declaredLength = response.headers.get('content-length');
   const declaredBytes = declaredLength && /^\d+$/.test(declaredLength) ? Number(declaredLength) : null;
-  if (declaredBytes !== null && declaredBytes > MAX_RPC_RESPONSE_BYTES) {
+  if (declaredBytes !== null && declaredBytes > maxBytes) {
     try { await response.body?.cancel('RPC response exceeds size limit'); } catch (_) {}
     throw new Error('RPC response exceeds size limit');
   }
@@ -29,13 +29,13 @@ export async function readRpcJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       const nextTotal = total + value.byteLength;
-      if (nextTotal > MAX_RPC_RESPONSE_BYTES) {
+      if (nextTotal > maxBytes) {
         try { await reader.cancel('RPC response exceeds size limit'); } catch (_) {}
         throw new Error('RPC response exceeds size limit');
       }
       if (nextTotal > bytes.byteLength) {
         const capacity = Math.min(
-          MAX_RPC_RESPONSE_BYTES,
+          maxBytes,
           Math.max(nextTotal, Math.max(16 * 1024, bytes.byteLength * 2)),
         );
         const grown = new Uint8Array(capacity);

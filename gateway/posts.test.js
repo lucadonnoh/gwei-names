@@ -11,6 +11,7 @@ import {
 import { excerpt, linkUrl, renderMarkdown } from './markdown.js';
 import { texToMathml } from './math.js';
 import { PostStore, T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED, clientKey } from './posts-store.js';
+import { decodeReply, encodeReply, namedRoom, replyRoom, replyRoomName, replyText, repliesOn, setRepliesRecord } from './replies-format.js';
 import { keccak256 } from './web3-auto.js';
 import { blobVersionedHash } from '../dapp/vendor/kzg.bundle.mjs';
 
@@ -234,13 +235,29 @@ function fakeWorld() {
       const { method, params } = JSON.parse(init.body);
       const ok = (result) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }));
       if (method === 'eth_blockNumber') return ok('0x' + (world.head + (world.extraHead[host] || 0)).toString(16));
-      if (method === 'eth_getBlockByNumber') return ok({ timestamp: '0x' + world.timestamp(Number(params[0])).toString(16) });
+      if (method === 'eth_getBlockByNumber') {
+        const number = Number(params[0]);
+        if (params[1] && world.unreadable?.has(number)) return new Response('[' + ' '.repeat(17 * 1024 * 1024) + ']');
+        world.blockReads = (world.blockReads || 0) + (params[1] ? 1 : 0);
+        const transactions = params[1] ? (world.traces || []).filter((t) => t.blockNumber === number && !t.traceAddress.length).map((t) => ({
+          hash: t.transactionHash, from: t.action.from, to: t.action.to, value: t.action.value, input: t.action.input, transactionIndex: '0x' + t.transactionPosition.toString(16),
+        })) : undefined;
+        return ok({ timestamp: '0x' + world.timestamp(number).toString(16), ...(transactions && { transactions }) });
+      }
       if (method === 'eth_getLogs') {
         const [{ fromBlock, toBlock }] = params;
         const all = [...world.logs, ...(world.extraLogs[host] || [])];
         return ok(all.filter((l) => Number(l.blockNumber) >= Number(fromBlock) && Number(l.blockNumber) <= Number(toBlock)));
       }
       if (method === 'eth_call') return ok(answerMulticall(params[0].data, world));
+      if (method === 'trace_filter') {
+        if (host !== 'rpc.test') return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { message: 'method not found' } }));
+        const [{ fromBlock, toBlock, toAddress }] = params;
+        world.traceCalls = (world.traceCalls || 0) + 1;
+        // A block where a contract called a room many times with big inputs: the answer is too big.
+        if ([...(world.poison || [])].some((b) => b >= Number(fromBlock) && b <= Number(toBlock))) return new Response('[' + ' '.repeat(4.3 * 1024 * 1024) + ']');
+        return ok((world.traces || []).filter((t) => t.blockNumber >= Number(fromBlock) && t.blockNumber <= Number(toBlock) && toAddress.includes(t.action.to)));
+      }
       throw new Error('unexpected RPC ' + method);
     }
     const blobscan = /^https:\/\/blobscan\.test\/blobs\/(0x[0-9a-f]+)\/data$/.exec(url);
@@ -274,6 +291,7 @@ function answerMulticall(data, world) {
   const results = [];
   for (let i = 0; i < count; i++) {
     const element = 64 + at(64 + i * 32);
+    const target = '0x' + hex.slice(element * 2 + 24, element * 2 + 64);
     const callLength = at(element + 96);
     const call = hex.slice((element + 128) * 2, (element + 128 + callLength) * 2);
     const sel = call.slice(0, 8);
@@ -288,12 +306,24 @@ function answerMulticall(data, world) {
       results.push(pad32(owner ? owner.slice(2) : '0'));
     } else if (sel === '6352211e') {
       results.push(pad32((owner || '0x0').slice(2)));
+    } else if (sel === '9af8b7aa') { // reverseResolve(address), on GNS or WNS
+      const names = target === '0x0000000000696760e15f265e828db644a0c242eb' ? world.wns : world.primary;
+      const name = utf8((names || {})['0x' + call.slice(-40)] || '');
+      let padded = toHex(name);
+      while (padded.length % 64) padded += '0';
+      results.push(word(32) + word(name.length) + padded);
+    } else if (sel === '5d78a217') { // ENS reverse(bytes,uint256): reverts without a verified name
+      const name = (world.ens || {})['0x' + call.slice(8 + 192, 8 + 192 + 40)];
+      if (!name) { results.push(null); continue; }
+      let padded = toHex(utf8(name));
+      while (padded.length % 64) padded += '0';
+      results.push(word(96) + word(0) + word(0) + word(utf8(name).length) + padded);
     } else {
       throw new Error('unexpected call ' + sel);
     }
   }
   // (bool, bytes)[]: offsets then [success, 0x40, length, data] per element.
-  const elements = results.map((r) => word(1) + word(64) + word(r.length / 2) + r);
+  const elements = results.map((r) => r === null ? word(0) + word(64) + word(0) : word(1) + word(64) + word(r.length / 2) + r);
   let cursor = elements.length * 32;
   const offsets = elements.map((e) => { const o = word(cursor); cursor += e.length / 2; return o; });
   return '0x' + word(32) + word(elements.length) + offsets.join('') + elements.join('');
@@ -1030,4 +1060,271 @@ test('pointing the index at a new contract starts it over', async () => {
   assert.equal(fresh.raw(a.hash), null);
   assert.equal(fresh.meta('cursor'), null);
   assert.equal(fresh.rows('SELECT COUNT(*) AS n FROM auth')[0].n, 0);
+});
+
+
+// --- replies ------------------------------------------------------------------------------------
+test('reply rooms and messages are calldata-chat’s', async () => {
+  assert.equal(await namedRoom('general'), '0x9decc268bdc7b012334f0691e8e90ecf0e36967c', 'calldata-chat’s own general room');
+  const hash = '0x634cd7f83ccd7f1ee41766f919a1e43db9f099686aef408df0f460ac580d9830';
+  assert.equal(replyRoomName(hash), 'gwei-634cd7f83ccd7f1ee41766f919a1e43db9f099686ae');
+  assert.equal(replyRoomName(hash).length, 48, 'the longest room name calldata-chat takes');
+  assert.match(replyRoomName(hash), /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  assert.equal(await replyRoom(hash), await namedRoom(replyRoomName(hash)));
+  assert.equal(encodeReply('gm'), '0x01676d', 'as in calldata-chat’s PROTOCOL.md');
+  assert.equal(decodeReply(encodeReply('héllo 🌍\nworld')), 'héllo 🌍\nworld');
+  assert.throws(() => encodeReply(''));
+  assert.throws(() => encodeReply('x'.repeat(1025)));
+  for (const bad of ['0x02676d', '0x01', '0x01ff', '0x676d', 'nope']) assert.equal(decodeReply(bad), null, bad);
+  const room = '0x' + 'ab'.repeat(20), from = '0x' + 'a1'.repeat(20);
+  assert.equal(replyText({ from, to: room, value: '0x1', input: '0x01676d' }, room), 'gm');
+  assert.equal(replyText({ from, to: room, value: '0x2', input: '0x01676d' }, room), null, 'exactly 1 wei');
+  assert.equal(replyText({ from: room, to: room, value: '0x1', input: '0x01676d' }, room), null, 'not to itself');
+  assert.equal(replyText({ from, to: '0x' + 'cd'.repeat(20), value: '0x1', input: '0x01676d' }, room), null);
+});
+
+test('the post’s author decides whether it takes replies: the name’s record first, then the post', () => {
+  const hash = '0x634cd7f83ccd' + '00'.repeat(26);
+  assert.equal(repliesOn(hash, undefined, ''), true, 'on by default');
+  assert.equal(repliesOn(hash, false, ''), false, 'the post turned them off');
+  assert.equal(repliesOn(hash, false, '634cd7f83ccd:on'), true, 'the record wins');
+  assert.equal(repliesOn(hash, undefined, 'aaaaaaaaaaaa:off 634CD7F83CCD:off'), false, 'case and other posts don’t matter');
+  assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:off 634cd7f83ccd:on'), true, 'the last entry wins');
+  assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:maybe'), true, 'junk is ignored');
+  assert.equal(setRepliesRecord('aaaaaaaaaaaa:off 634cd7f83ccd:on', hash, false), 'aaaaaaaaaaaa:off 634cd7f83ccd:off');
+  assert.equal(setRepliesRecord('', hash, true), '634cd7f83ccd:on');
+});
+
+test('a post that turned replies off says so in its name’s list and its detail', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const off = encodePost({ title: 'Quiet', body: 'No replies', replies: false });
+  const on = postBytes('Chatty');
+  for (const bytes of [off, on.bytes]) store.upload(bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, postHash(off), ALICE), authorized(501, 0, TOKEN, on.hash, ALICE));
+  await store.sync();
+  const list = Object.fromEntries(store.forToken(TOKEN, ALICE).map((p) => [p.title, p.replies]));
+  assert.deepEqual(list, { Quiet: false, Chatty: undefined });
+  assert.equal(store.detail(postHash(off)).replies, false);
+  assert.equal('replies' in store.detail(on.hash), false);
+});
+
+test('replies are indexed from the owner’s node: top-level 1-wei calls with a reply’s input, nothing else', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Has replies');
+  const vh = serve(world, encodeBlob([a.bytes]));
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE), published(501, 0, a.hash, vh));
+  const room = await replyRoom(a.hash);
+  const call = (block, pos, from, input, extra = {}) => ({
+    type: 'call', blockNumber: block, transactionPosition: pos, transactionHash: '0x' + pad32(`${block}${pos}`), traceAddress: [],
+    action: { callType: 'call', from, to: room, value: '0x1', input }, ...extra,
+  });
+  world.traces = [
+    call(600, 1, BOB, encodeReply('first!')),
+    call(700, 2, ALICE, encodeReply('thanks')),
+    call(701, 0, BOB, encodeReply('internal'), { traceAddress: [0] }), // a contract's inner call
+    call(702, 0, BOB, encodeReply('reverted'), { error: 'Reverted' }),
+    call(703, 0, BOB, '0x02676d'), // another format version
+    { ...call(704, 0, BOB, encodeReply('delegated')), action: { callType: 'delegatecall', from: BOB, to: room, value: '0x1', input: encodeReply('x') } },
+  ];
+  world.primary = { [BOB]: 'bob.gwei' };
+  const result = await store.sync();
+  assert.equal(result.replies, 2);
+  const { room: listed, replies } = await store.replies(a.hash);
+  assert.equal(listed, room);
+  assert.deepEqual(replies.map((r) => [r.text, r.from, r.name, r.time]), [
+    ['first!', BOB, 'bob.gwei', world.timestamp(600)],
+    ['thanks', ALICE, null, world.timestamp(700)],
+  ]);
+  assert.equal(store.replyCount(a.hash), 2);
+  const calls = world.traceCalls;
+  world.head = 1100;
+  store.advance(60);
+  await store.sync();
+  assert.equal(store.replyCount(a.hash), 2, 'nothing twice');
+  assert.ok(world.traceCalls > calls, 'and it keeps watching new blocks');
+});
+
+test('a reply’s sender shows by the name ethchat shows: GNS, else WNS, else a normalized ENS name, else none', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world);
+  const a = postBytes('Names');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  const senders = ['0x' + 'a1'.repeat(20), '0x' + 'a2'.repeat(20), '0x' + 'a3'.repeat(20), '0x' + 'a4'.repeat(20), '0x' + 'a5'.repeat(20), '0x' + 'a6'.repeat(20)];
+  world.traces = senders.map((from, i) => ({ type: 'call', blockNumber: 600 + i, transactionPosition: 0, transactionHash: '0x' + pad32(`${600 + i}`), traceAddress: [],
+    action: { callType: 'call', from, to: room, value: '0x1', input: encodeReply(`reply ${i}`) } }));
+  world.primary = { [senders[0]]: 'one.gwei' };
+  world.wns = { [senders[0]]: 'one.wei', [senders[1]]: 'two.wei' };
+  world.ens = { [senders[0]]: 'one.eth', [senders[1]]: 'two.eth', [senders[2]]: 'three.eth', [senders[3]]: 'Four.eth', [senders[4]]: 'vitаlik.eth' };
+  // GNS takes any Unicode in a label: a look-alike, a fullwidth dot that a URL reads as ".", a "#".
+  world.primary[senders[3]] = 'vіtalik.gwei';
+  world.primary[senders[4]] = 'evil．com/.gwei';
+  world.wns = { ...world.wns, [senders[5]]: '16843009#.wei' };
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => [r.text, r.name, r.system]), [
+    ['reply 0', 'one.gwei', 'gns'],
+    ['reply 1', 'two.wei', 'wns'],
+    ['reply 2', 'three.eth', 'ens'],
+    ['reply 3', null, null], // not normalized (ENSIP-15 lowercases it)
+    ['reply 4', null, null], // a Cyrillic а among Latin letters: a look-alike ENSIP-15 rejects
+    ['reply 5', null, null],
+  ]);
+});
+
+test('a post whose bytes arrive late still gets the replies sent since its authorization', async () => {
+  const world = fakeWorld();
+  world.head = 5000;
+  const store = makeStore(world);
+  const a = postBytes('Uploaded late');
+  world.logs.push(authorized(1000, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  world.traces = [{ type: 'call', blockNumber: 1200, transactionPosition: 0, transactionHash: '0x' + pad32('1200'), traceAddress: [],
+    action: { callType: 'call', from: BOB, to: room, value: '0x1', input: encodeReply('early bird') } }];
+  await store.sync(); // the authorization is read, but with no bytes there's no post to show yet, nor a room
+  assert.equal(store.rows('SELECT COUNT(*) AS n FROM room')[0].n, 0);
+  store.upload(a.bytes, 'ip');
+  store.advance(60);
+  await store.sync(); // now its room is scanned back to block 1000, behind the shared cursor
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['early bird']);
+});
+
+const replyCall = (room, block, pos, from, text) => ({ type: 'call', blockNumber: block, transactionPosition: pos, transactionHash: '0x' + pad32(`${block}${pos}`),
+  traceAddress: [], action: { callType: 'call', from, to: room, value: '0x1', input: encodeReply(text) } });
+
+test('a contract making trace_filter answers too big slows reply indexing but can’t stop it', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  const a = postBytes('Poisoned');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  world.traces = [replyCall(room, 600, 0, BOB, 'before'), replyCall(room, 650, 3, BOB, 'same block'), replyCall(room, 700, 0, ALICE, 'after')];
+  world.poison = new Set([650]);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['before', 'same block', 'after'], 'the poisoned block is read from its transactions');
+  assert.equal(world.blockReads, 1, 'only that one block');
+  assert.ok(Number(store.meta('reply_cursor')) >= 700);
+
+  // Poison in every range: each sync still gets further, and stays within its budget.
+  world.traces.push(...Array.from({ length: 12 }, (_, i) => replyCall(room, 2000 + i * 130 + 7, 0, BOB, `late ${i}`)));
+  world.poison = new Set(Array.from({ length: 30 }, (_, i) => 900 + i * 100 + 3));
+  world.head = 3700;
+  let syncs = 0;
+  while (Number(store.meta('reply_cursor')) < world.head - 2 && syncs < 20) {
+    const [calls, cursor] = [world.traceCalls, Number(store.meta('reply_cursor'))];
+    store.advance(60);
+    await store.sync();
+    syncs++;
+    assert.ok(world.traceCalls - calls <= 40, 'at most the budget per sync');
+    assert.ok(Number(store.meta('reply_cursor')) - cursor >= Math.min(150, world.head - 2 - cursor), 'and far more blocks per sync than the chain makes per minute');
+  }
+  assert.ok(Number(store.meta('reply_cursor')) >= world.head - 2, `it reaches the head (${syncs} syncs)`);
+  assert.equal((await store.replies(a.hash)).replies.length, 15);
+});
+
+test('posts catching up on old blocks can’t hold back new replies', async () => {
+  const world = fakeWorld();
+  world.head = 1000;
+  const store = makeStore(world);
+  const old = Array.from({ length: 30 }, (_, i) => postBytes(`Authorized long ago ${i}`));
+  world.logs.push(...old.map((p, i) => authorized(200 + i, 0, TOKEN, p.hash, ALICE)));
+  const fresh = postBytes('Fresh');
+  store.upload(fresh.bytes, 'ip');
+  world.logs.push(authorized(900, 0, TOKEN, fresh.hash, ALICE));
+  world.traces = [];
+  await store.sync();
+  for (let i = 0; i < 12; i++) { world.head += 2000; store.advance(60); await store.sync(); }
+  assert.ok(Number(store.meta('reply_cursor')) >= world.head - 2, 'in step with the head');
+  for (const p of old) store.upload(p.bytes, 'ip'); // 30 rooms, each ~25k blocks behind: far more than one sync's calls
+  world.head += 5;
+  world.traces = [replyCall(await replyRoom(fresh.hash), world.head - 3, 0, BOB, 'new reply')];
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.replies(fresh.hash)).replies.map((r) => r.text), ['new reply'], 'new blocks are scanned first');
+  assert.ok(store.rows('SELECT COUNT(*) AS n FROM room WHERE scanned < ?', Number(store.meta('reply_cursor')))[0].n > 0, 'while old rooms are still catching up');
+});
+
+test('a block nobody can read is skipped after a few tries, so the scan goes on', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  const a = postBytes('Unreadable block');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  world.traces = [replyCall(room, 600, 0, BOB, 'before'), replyCall(room, 700, 0, BOB, 'after')];
+  world.poison = new Set([650]);
+  world.unreadable = new Set([650]); // and its full block is too big as well
+  for (let i = 0; i < 3; i++) { store.advance(60); await store.sync(); }
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['before', 'after']);
+  assert.ok(Number(store.meta('reply_cursor')) >= 1998);
+});
+
+test('a down node pauses the reply scan without retrying it piece by piece', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  const a = postBytes('Node down');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  world.traces = [];
+  await store.sync();
+  const cursor = Number(store.meta('reply_cursor'));
+  world.head = 3000;
+  world.rpcDown.add('rpc.test');
+  const before = world.traceCalls || 0;
+  store.advance(60);
+  await store.sync().catch(() => {});
+  assert.ok((world.traceCalls || 0) - before <= 1, 'no splitting when the node itself fails');
+  assert.equal(Number(store.meta('reply_cursor')), cursor);
+});
+
+test('replies show their senders’ names however many there are, and the newest when there are too many', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  const a = postBytes('Busy');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  const senders = Array.from({ length: 25 }, (_, i) => '0x' + (i + 1).toString(16).padStart(2, '0').repeat(20));
+  world.primary = Object.fromEntries(senders.map((s, i) => [s, `user${i}.gwei`]));
+  world.traces = [
+    ...senders.map((from, i) => replyCall(room, 600, i, from, `hi ${i}`)),
+    ...Array.from({ length: 510 }, (_, i) => replyCall(room, 700 + Math.floor(i / 50), i % 50, senders[0], `spam ${i}`)),
+  ];
+  await store.sync();
+  const { replies, total } = await store.replies(a.hash);
+  assert.equal(total, 535);
+  assert.equal(replies.length, 500, 'the newest 500');
+  assert.equal(replies.at(-1).text, 'spam 509');
+  assert.equal(replies[0].text, 'spam 10', 'oldest first within them: the 35 oldest drop out');
+  const b = postBytes('Many senders');
+  store.upload(b.bytes, 'ip');
+  world.logs.push(authorized(2100, 0, TOKEN, b.hash, ALICE));
+  const roomB = await replyRoom(b.hash);
+  world.traces = senders.map((from, i) => replyCall(roomB, 2200, i, from, `again ${i}`));
+  world.head = 2600;
+  store.advance(60);
+  await store.sync();
+  const named = (await store.replies(b.hash)).replies;
+  assert.equal(named.length, 25);
+  assert.ok(named.every((r, i) => r.name === `user${i}.gwei`), 'every sender named, past one multicall’s 64 calls');
+});
+
+test('without the owner’s node, replies wait (public RPCs don’t offer trace_filter)', async () => {
+  const world = fakeWorld();
+  const store = makeStore(world, { RPC_URL: '' });
+  const a = postBytes('No node');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  world.traces = [];
+  const result = await store.sync();
+  assert.equal(result.replies, 0);
+  assert.equal(world.traceCalls || 0, 0);
 });

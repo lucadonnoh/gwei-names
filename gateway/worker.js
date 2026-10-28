@@ -21,7 +21,8 @@ import {
   decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
   renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
-import { renderFeed, renderPostPage } from './post-page.js';
+import { POST_CSP, renderFeed, renderPostPage } from './post-page.js';
+import { REPLIES_RECORD, repliesOn } from './replies-format.js';
 import { renderCard } from './share-card.js';
 import { MAX_POST_BYTES, POST_PATH, parsePost, postPath } from './posts-format.js';
 import { renderMarkdown } from './markdown.js';
@@ -634,6 +635,10 @@ async function answerApi(request, url, env) {
       const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get('limit'), 10) || 20, 1), 50);
       return apiJson({ posts: await index.recent(limit) }, 200, 'public, max-age=30');
     }
+    if ((m = hashIn(/^\/api\/posts\/(0x[0-9a-fA-F]{64})\/replies$/))) {
+      // Every reply to the post, whatever its author's setting: whether they show is the reader's call.
+      return apiJson(await index.replies(m), 200, 'public, max-age=30');
+    }
     if ((m = hashIn(/^\/api\/posts\/(0x[0-9a-fA-F]{64})\/raw$/))) {
       const bytes = await index.raw(m);
       return bytes ? apiBytes(bytes, 'application/json; charset=utf-8') : apiJson({ error: 'Unknown post.' }, 404, 'public, max-age=10');
@@ -1170,7 +1175,11 @@ export default {
         const post = await fromIndex(() => index.postForToken(token, r.profile.owner, postMatch[1]), null);
         if (post && url.pathname.endsWith('.png')) return cardResponse(postCard(name, r.profile, post, pageUrl), url, cache, ctx);
         if (post) {
-          return htmlResponse(renderPostPage({ name, pageUrl, profile: r.profile, post }), 200, 'public, max-age=60', PROFILE_CSP);
+          // Replies show unless the post's author turned them off (replies-format.js repliesOn).
+          const on = repliesOn(post.hash, post.replies, r.profile.text?.[REPLIES_RECORD]);
+          const replies = on ? await fromIndex(() => index.replies(post.hash), null) : null;
+          const page = renderPostPage({ name, pageUrl, profile: r.profile, post, replies, repliesOff: !on });
+          return htmlResponse(page, 200, 'public, max-age=60', POST_CSP);
         }
       }
       if (index && token && url.pathname === '/feed.xml') {

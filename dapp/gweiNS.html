@@ -445,6 +445,19 @@ body.modal-open { overflow: hidden; }
 .post-row a { flex: 1; color: var(--fg); overflow-wrap: anywhere; }
 .post-row .post-state { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
 .manage-form .post-row button { width: auto; margin: 0; padding: 4px 10px; font-size: 10px; }
+#replyPanel textarea {
+  width: 100%; padding: 10px 0; margin-bottom: 12px; font-size: 16px; font-family: inherit; line-height: 1.4;
+  border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); outline: none; resize: vertical;
+}
+#replyPanel textarea:focus { border-bottom-width: 2px; }
+#replyPanel .profile-hint { margin-top: 0; }
+#replyPanel .reply-to { font-size: 15px; line-height: 1.4; margin-bottom: 4px; overflow-wrap: anywhere; }
+#replyPanel a { color: var(--fg); }
+/* #reply/…: only the reply, the wallet button and the wallet pickers. A post page opens this in a small window. */
+body.reply-mode .scroll-names, body.reply-mode .subtitle, body.reply-mode > .section:not(#replyPanel), body.reply-mode #pending,
+body.reply-mode #sendSection, body.reply-mode #verifySection, body.reply-mode #manage, body.reply-mode #statsPosts,
+body.reply-mode #integrations, body.reply-mode #voteDock, body.reply-mode #statsSection, body.reply-mode .site-footer { display: none !important; }
+body.reply-mode h1 { margin-bottom: 40px; }
 .profile-avatar-preview { display: none; width: 56px; height: 56px; object-fit: cover; margin: -4px 0 14px; background: var(--manage-bg); }
 .profile-color { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; }
 .profile-color label { margin: 0; text-transform: none; letter-spacing: normal; font-size: 13px; color: var(--fg); }
@@ -1015,6 +1028,15 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <h1>gwei name service</h1>
 <div class="subtitle">The ownerless and unruggable ENS alternative on Ethereum</div>
+
+<div class="section" id="replyPanel" hidden>
+  <label for="replyText">Reply</label>
+  <div class="reply-to" id="replyTitle"></div>
+  <textarea id="replyText" rows="5" oninput="updateReplyMeta()" placeholder="Write a reply"></textarea>
+  <div class="profile-hint" id="replyMeta" aria-live="polite"></div>
+  <button id="replySend" onclick="doReply()">Send reply</button>
+  <button class="secondary" onclick="closeReply()">Cancel</button>
+</div>
 
 <div class="section">
   <label for="nameInput">Name</label>
@@ -2207,9 +2229,10 @@ async function loadRecentPosts() {
     if (!posts || !posts.length) return;
     list.innerHTML = '';
     for (const p of posts) {
-      if (!/\.gwei$/.test(p.name || '')) continue;
+      const origin = nameSiteOrigin(p.name);
+      if (!origin) continue;
       const a = document.createElement('a');
-      a.href = new URL(postPathFor(p.hash, p.title), 'https://' + p.name.slice(0, -5) + '.' + GWEI_GATEWAY).href;
+      a.href = new URL(postPathFor(p.hash, p.title), origin).href;
       a.target = '_blank'; a.rel = 'noopener';
       a.textContent = p.title + ' · ' + p.name;
       list.appendChild(a);
@@ -4491,6 +4514,8 @@ async function connectWithWallet(walletKey) {
 
     await initPending();
     doCheckName();
+    // Send pressed before a wallet was connected: carry on now.
+    if (replyPost?.sendAfterConnect) { replyPost.sendAfterConnect = false; doReply(); }
     updateZkClaimEnabled();
     if (NET.chainId === 1) loadSlowTransfers();
     await initializeVotingWallet();
@@ -5538,12 +5563,12 @@ document.addEventListener('pointerdown', trackStatusRegion, true);
 document.addEventListener('keydown', trackStatusRegion, true);
 
 function placeStatus(el) {
-  let region = statusRegion;
+  let region = replyPost ? $('replyPanel') : statusRegion;
   if (region && region.offsetParent === null) region = null; // hidden now (e.g. Manage closed)
   if (!region || region.id === 'commitSection') {
     const commitBtn = $('commitBtn');
     if (el.previousElementSibling !== commitBtn) commitBtn.after(el);
-  } else if (region.id === 'sendSection') {
+  } else if (region.id === 'sendSection' || region.id === 'replyPanel') {
     if (el.parentNode !== region) region.append(el);
   } else if (el.previousElementSibling !== region) {
     region.after(el);
@@ -6273,10 +6298,11 @@ function postBlobFrom(bytes) {
   for (let i = 0; i < 4096; i++) blob.set(payload.subarray(i * 31, i * 31 + 31), i * 32 + 1);
   return blob;
 }
-// The bytes the gateway and publisher expect: v, title, body, in that order, no whitespace. A post
-// has no date of its own: it is dated by the block of the blob that carries it.
-function postBytesFrom(title, body) {
-  return new TextEncoder().encode(JSON.stringify({ v: 1, title, body }));
+// The bytes the gateway and publisher expect: v, title, body, in that order, no whitespace, and
+// "replies": false only when replies are off. A post has no date of its own: it is dated by the block
+// of the blob that carries it.
+function postBytesFrom(title, body, replies = true) {
+  return new TextEncoder().encode(JSON.stringify(replies ? { v: 1, title, body } : { v: 1, title, body, replies: false }));
 }
 // Same slug as the gateway (gateway/posts-format.js postPath).
 function postPathFor(hash, title) {
@@ -6314,7 +6340,8 @@ async function refreshPostQuote() {
 function readPostForm() {
   const title = ($('ppTitle')?.value || '').trim();
   const body = $('ppBody')?.value || '';
-  return { title, body, bytes: postBytesFrom(title, body) };
+  const replies = $('ppReplies') ? $('ppReplies').checked : true;
+  return { title, body, replies, bytes: postBytesFrom(title, body, replies) };
 }
 function updatePostCost() {
   // An error about the form ("give the post a title") is stale as soon as the form changes.
@@ -6341,6 +6368,7 @@ function postsFormHtml() {
     '<label for="ppTitle">Title</label><input type="text" id="ppTitle" maxlength="200">' +
     '<label for="ppBody">Text</label><textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
     '<div class="profile-hint">Markdown: # heading, **bold**, *italic*, [link](https://…), ![image](https://… or ipfs://…), - list, &gt; quote, `code`, $math$.</div>' +
+    '<div class="profile-color"><input type="checkbox" id="ppReplies" checked onchange="updatePostCost()"><label for="ppReplies">Allow replies</label></div>' +
     '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +
     '<button onclick="doPublishPost()">Publish</button>' +
     '<button class="secondary" onclick="previewPost()">Preview</button>' +
@@ -6364,13 +6392,18 @@ async function loadOwnPosts() {
   if (!el || !currentTokenId) return;
   const tokenId = currentTokenId;
   try {
-    const res = await fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`, { cache: 'no-store' });
+    const [res, record] = await Promise.all([
+      fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`, { cache: 'no-store' }),
+      readContract.text(tokenId, REPLIES_RECORD).catch(() => null),
+    ]);
     const { posts } = await res.json();
     if (tokenId !== currentTokenId || !$('ppList')) return;
     const base = `https://${currentTokenName}.${GWEI_GATEWAY}`;
     let html = (posts || []).map((p) => `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
       `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
       `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
+      // No toggle when the record couldn't be read: writing one from a guess would reset the others.
+      (record === null ? '' : `<button class="secondary" onclick="doToggleReplies('${p.hash}', ${!repliesOnFor(p.hash, p.replies, record)})">${repliesOnFor(p.hash, p.replies, record) ? 'Turn replies off' : 'Turn replies on'}</button>`) +
       `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`).join('');
     html += await refundRows(tokenId);
     if (tokenId !== currentTokenId || !$('ppList')) return;
@@ -6533,6 +6566,187 @@ async function doRefundPost(blob, publisher) {
     savePaidPosts(tokenId, paidPosts(tokenId).filter((x) => `${x.blob}|${x.publisher}`.toLowerCase() !== id));
     showStatus('Refunded. The fee is back in your wallet.', 'success', tx.hash);
     loadOwnPosts();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+  }
+}
+
+// ── Replies (gateway/replies-format.js, posts/SPEC.md "Replies"): a reply is a calldata-chat message, a
+// 1-wei transaction from the replier's own wallet to the post's room with 0x01 + the text as its input.
+// The post's author turns them on or off with the name's gwei-replies record, which wins over the
+// post's own "replies" field. ──
+const REPLIES_RECORD = 'gwei-replies';
+const REPLY_MAX_BYTES = 1024;
+async function replyRoomFor(hash) {
+  const name = 'gwei-' + hash.slice(2, 45).toLowerCase();
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`calldata-chat/${name}/v1`)));
+  return '0x' + Array.from(digest.slice(0, 20), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+function replyInputFrom(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (!bytes.length || bytes.length > REPLY_MAX_BYTES) throw new Error(`A reply is 1 to ${REPLY_MAX_BYTES.toLocaleString()} bytes of text.`);
+  return '0x01' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+function repliesOnFor(hash, postReplies, record) {
+  const id = hash.slice(2, 14).toLowerCase();
+  let setting = null;
+  for (const entry of String(record || '').toLowerCase().split(/\s+/)) {
+    const [key, value] = entry.split(':');
+    if (key === id && (value === 'on' || value === 'off')) setting = value === 'on';
+  }
+  return setting ?? postReplies !== false;
+}
+function repliesRecordWith(record, hash, on) {
+  const id = hash.slice(2, 14).toLowerCase();
+  const kept = String(record || '').split(/\s+/).filter((e) => e && e.toLowerCase().split(':')[0] !== id);
+  return [...kept, `${id}:${on ? 'on' : 'off'}`].join(' ');
+}
+
+async function doToggleReplies(hash, on) {
+  if (isProcessing || !signer || !currentTokenId) return;
+  const tokenId = currentTokenId;
+  isProcessing = true;
+  try {
+    // The record as it is now, or nothing: it holds every post's setting, so it is never rebuilt from a guess.
+    // Read through the wallet's own node, which the write goes to, not a public RPC that may lag behind it.
+    const record = repliesRecordWith(await contract.text(tokenId, REPLIES_RECORD), hash, on);
+    const tx = await wcTransaction(contract.setText(tokenId, REPLIES_RECORD, record), on ? 'Approve turning replies on' : 'Approve turning replies off');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus(on ? 'Replies are on for this post.' : 'Replies are off for this post.', 'success', tx.hash);
+    loadOwnPosts();
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+  }
+}
+
+// The site origin of a .gwei name (or subname) on a gateway domain, or null unless a URL reads it as
+// exactly the same labels: the name must be written as ENSIP-15 normalizes it (a URL would map
+// fullwidth letters and the like onto another name) and hold nothing that ends a host ("#", "/", "@"…).
+function nameSiteOrigin(name, gateway = GWEI_GATEWAY) {
+  if (!gateway || !/\.gwei$/.test(name || '')) return null;
+  const labels = name.slice(0, -5).split('.');
+  try {
+    if (labels.some((label) => !label) || ethers.ensNormalize(name) !== name) return null;
+    const url = new URL(`https://${labels.join('.')}.${gateway}/`);
+    const same = url.hostname.endsWith('.' + gateway) && url.hostname.split('.').length === labels.length + gateway.split('.').length;
+    return same && url.pathname === '/' && !url.search && !url.hash && !url.username && !url.port ? url.origin : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// gwei.domains/#reply/<post hash>[/<name>[/<text>]]: a post page's Reply opens this, in a small window.
+// Any site can make that link, so nothing from it is trusted: the text is only filled in, the name only
+// picks which of the post's authorizations to show (it must be one), and nothing is sent until Send is
+// pressed here and the wallet confirms.
+let replyPost = null;
+async function openReply(hash, name = '', text = '') {
+  const post = { hash, ready: false, off: false, url: null, origins: [] };
+  replyPost = post;
+  document.body.classList.add('reply-mode');
+  $('replyPanel').hidden = false;
+  $('replyText').value = text;
+  $('replyTitle').textContent = 'to a post';
+  $('replySend').disabled = true;
+  window.scrollTo(0, 0);
+  updateReplyMeta();
+  try {
+    const res = await fetch(`${POSTS_API}/posts/${hash}`);
+    if (!res.ok) throw new Error('unknown post');
+    const detail = await res.json();
+    if (replyPost !== post) return;
+    const auth = detail.authorizations?.find((a) => a.name && a.name === name) || detail.authorizations?.[0];
+    const origin = nameSiteOrigin(auth?.name);
+    const link = document.createElement('a');
+    link.textContent = `“${detail.title}”`;
+    if (origin) {
+      link.href = post.url = new URL(postPathFor(hash, detail.title), origin).href;
+      link.target = '_blank'; link.rel = 'noopener';
+      post.origins = [origin, nameSiteOrigin(auth.name, 'gwei.domains')].filter(Boolean);
+    }
+    $('replyTitle').replaceChildren('to ', link, auth?.name ? ` by ${auth.name}` : '');
+    // Don't let anyone pay for a reply the post page won't show.
+    if (!readContract) await getRpc();
+    const record = auth ? await readContract.text(auth.token, REPLIES_RECORD) : '';
+    if (replyPost !== post) return;
+    if (!repliesOnFor(hash, detail.replies, record)) {
+      post.off = true;
+      $('replyMeta').textContent = 'Replies are off for this post.';
+      return;
+    }
+    post.ready = true;
+    // Send works a moment later, so a page that swaps what this window shows can't time it under a click.
+    setTimeout(() => { if (replyPost === post) $('replySend').disabled = false; }, 600);
+  } catch (e) {
+    if (replyPost === post) $('replyMeta').textContent = 'This post couldn’t be loaded, so you can’t reply right now. Try again in a moment.';
+  }
+}
+function closeReply() {
+  if (window.opener) { window.close(); return; } // the post page's reply window
+  replyPost = null;
+  document.body.classList.remove('reply-mode');
+  $('replyPanel').hidden = true;
+  history.replaceState(null, '', window.location.pathname);
+}
+let replyGasPrice = null, replyGasPriceAt = 0;
+function updateReplyMeta() {
+  const el = $('replyMeta');
+  if (!el || replyPost?.off) return;
+  const bytes = new TextEncoder().encode($('replyText').value).length;
+  // Calldata costs at least 40 gas a byte (EIP-7623), and a reply is all calldata.
+  const gas = 21000n + 40n * BigInt(bytes + 1) + 1000n;
+  const cost = replyGasPrice ? ` Sending it is one transaction of 1 wei, about ${Number(ethers.formatEther(gas * replyGasPrice)).toPrecision(2)} ETH in gas right now.` : '';
+  el.textContent = `${bytes.toLocaleString()} of ${REPLY_MAX_BYTES.toLocaleString()} bytes.${cost} Replies are public and permanent, and show your .gwei, .wei or ENS name.`;
+  if (Date.now() - replyGasPriceAt > 30000) {
+    replyGasPriceAt = Date.now();
+    getRpc().then((rpc) => rpc.getFeeData()).then((fee) => { if (fee.gasPrice) { replyGasPrice = fee.gasPrice; updateReplyMeta(); } }).catch(() => {});
+  }
+}
+async function doReply() {
+  const post = replyPost;
+  if (isProcessing || !post?.ready || post.off) return;
+  const text = $('replyText').value;
+  let data;
+  try { data = replyInputFrom(text); } catch (e) { showStatus(e.message, 'error'); return; }
+  if (!signer) { post.sendAfterConnect = true; showStatus('Connect a wallet to send your reply.'); toggleWallet(); return; }
+  isProcessing = true;
+  try {
+    const rpc = await getRpc();
+    const room = await replyRoomFor(post.hash);
+    // A room is a plain address nobody holds a key for: refuse one that somehow has code.
+    if ((await rpc.getCode(room)) !== '0x') throw new Error('This post’s reply address has code, so replies can’t be sent to it.');
+    // A contract wallet (a Safe, a 4337 account) sends from inside a contract, which isn't a reply, so it
+    // would pay for nothing. An EOA with a 7702 delegation (code 0xef0100…) sends its own transactions.
+    const own = await rpc.getCode(connectedAddress);
+    if (own !== '0x' && !own.startsWith('0xef0100')) throw new Error('Replies have to be sent from a regular account. Contract wallets like Safe can’t reply yet.');
+    // Pointed at another post, or the text changed, while this waited: send nothing.
+    if (replyPost !== post || $('replyText').value !== text) throw new Error('The reply changed before it was sent. Check it and press Send again.');
+    const tx = await wcTransaction(signer.sendTransaction({ to: room, value: 1n, data }), 'Approve your reply');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    $('replyText').value = '';
+    showStatus('Reply sent. It shows on the post within a few minutes.', 'success', tx.hash);
+    // Opened from the post's page: tell it, so it shows the reply, and close. Only the post's own name's
+    // origins hear it, so another site that opened this window can't tie the reply to this browser.
+    if (window.opener && !window.opener.closed && post.origins.length) {
+      for (const origin of post.origins) {
+        try { window.opener.postMessage({ type: 'gwei-reply', hash: post.hash, tx: tx.hash, text }, origin); } catch (e) {}
+      }
+      $('replyMeta').textContent = 'Reply sent. This window closes by itself.';
+      setTimeout(() => window.close(), 1500);
+      return;
+    }
+    if (post.url) {
+      const back = document.createElement('a');
+      back.href = post.url;
+      back.textContent = 'Back to the post';
+      $('replyMeta').replaceChildren('Reply sent. ', back);
+    }
   } catch (e) {
     handleError(e);
   } finally {
@@ -8251,6 +8465,14 @@ try {
 // Supports both top-level (gwei.domains/#name) and subdomains (gwei.domains/#sub.name)
 function initFromHash() {
   const hash = window.location.hash.slice(1); // Remove #
+  // #reply/<post hash>[/<name>[/<text>]]: a post page's Reply, with its name and what was typed there.
+  const reply = hash.match(/^reply\/(0x[0-9a-fA-F]{64})(?:\/([^/]*)(?:\/([\s\S]*))?)?$/);
+  if (reply) {
+    const decode = (part) => { try { return decodeURIComponent(part || ''); } catch (e) { return ''; } };
+    openReply(reply[1].toLowerCase(), decode(reply[2]), decode(reply[3]));
+    return;
+  }
+  if (replyPost) { replyPost = null; document.body.classList.remove('reply-mode'); $('replyPanel').hidden = true; }
   if (hash) {
     let name = '';
     try { name = stripGweiSuffix(decodeURIComponent(hash)); } catch (e) { name = ''; } // malformed escape: no name

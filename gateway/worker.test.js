@@ -9,6 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { checkEndpoints, nameTokenId } from './worker.js';
 import { PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT } from './profile-page.js';
+import { POST_CSP, REPLY_SCRIPT, REPLY_SCRIPT_HASH } from './post-page.js';
+import { createHash } from 'node:crypto';
 import {
   RPCS,
   RPC_PAGE_TIMEOUT_MS,
@@ -1583,7 +1585,15 @@ const POST_A = { hash: '0x' + 'a1'.repeat(32), title: 'Exploring the blobspace',
   onchain: { blob: '0x01' + 'b1'.repeat(31), tx: '0x' + 'c1'.repeat(32), block: 26263300, time: 1792850000, publisher: '0x' + '9b'.repeat(20) } };
 const POST_B = { hash: '0x' + 'a2'.repeat(32), title: 'Pending <one>', time: 1700000000, onchain: null };
 const BODIES = { [POST_A.hash]: '## Hello\n\nSome **math**: $y_0$.', [POST_B.hash]: 'pending body' };
-function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
+const REPLIES_A = { room: '0x' + 'ee'.repeat(20), replies: [
+  { tx: '0x' + 'd1'.repeat(32), block: 26290000, time: 1792890000, from: '0x' + 'b0'.repeat(20), name: 'bob.gwei', system: 'gns', text: 'Great <post>\nsecond line' },
+  { tx: '0x' + 'd2'.repeat(32), block: 26290001, time: 1792890012, from: '0x' + 'c0'.repeat(20), name: null, system: null, text: 'anon here' },
+  { tx: '0x' + 'd3'.repeat(32), block: 26290002, time: 1792890024, from: '0x' + 'c1'.repeat(20), name: 'sub.team.gwei', system: 'gns', text: 'from a subname' },
+  { tx: '0x' + 'd4'.repeat(32), block: 26290003, time: 1792890036, from: '0x' + 'c2'.repeat(20), name: 'carol.wei', system: 'wns', text: 'from wns' },
+  { tx: '0x' + 'd5'.repeat(32), block: 26290004, time: 1792890048, from: '0x' + 'c3'.repeat(20), name: 'dave.eth', system: 'ens', text: 'from ens' },
+  { tx: '0x' + 'd6'.repeat(32), block: 26290005, time: null, from: '0x' + 'c4'.repeat(20), name: '🦄.gwei', system: 'gns', text: 'time not looked up yet' },
+] };
+function fakePostIndex({ posts = [POST_A, POST_B], fail = false, postReplies } = {}) {
   const calls = [];
   const answer = (name, value) => async (...args) => {
     calls.push([name, ...args]);
@@ -1594,7 +1604,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
     forToken: answer('forToken', posts),
     postForToken: answer('postForToken', (token, owner, prefix) => {
       const p = posts.find((x) => x.hash.slice(2, 14) === prefix);
-      return p ? { ...p, body: BODIES[p.hash] } : null;
+      return p ? { ...p, body: BODIES[p.hash], ...(postReplies === false ? { replies: false } : {}) } : null;
     }),
     bodies: answer('bodies', (hashes) => hashes.map((h) => BODIES[h] ?? null)),
     upload: answer('upload', (bytes) => (bytes.length ? { hash: '0x' + 'd1'.repeat(32) } : { status: 400, error: 'Not a v1 post.' })),
@@ -1602,6 +1612,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false } = {}) {
     raw: answer('raw', (hash) => (hash === POST_A.hash ? utf8('{"v":1}') : null)),
     blobBytes: answer('blobBytes', (vh) => (vh === POST_A.onchain.blob ? new Uint8Array([1, 2, 3]) : null)),
     recent: answer('recent', [{ name: 'alice.gwei', ...POST_A }]),
+    replies: answer('replies', (hash) => (hash === POST_A.hash ? REPLIES_A : { room: '0x' + 'ef'.repeat(20), replies: [] })),
     archive: answer('archive', (after) => ({ posts: after ? [] : [{ seq: 1, ...POST_A }], next: after || 1 })),
     forCurrentOwner: answer('forCurrentOwner', posts),
     paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
@@ -1637,7 +1648,7 @@ test('/api/stats serves the network stats from the index, cached for a minute', 
   assert.ok(POST_INDEX.calls.some(([name]) => name === 'networkStats'));
 });
 
-const aliceProfile = () => makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) }) });
+const aliceProfile = (text = {}) => makeFetch({ rpc: rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16), text }) });
 const TOKEN_HEX = '0x9e0f6f68e7256d6a947a0578c7e746a0ff47e3b83c72fca64c940351d60da810'; // computeId('alice.gwei') on mainnet
 
 test('a profile lists the owner’s posts, newest first, with a feed link', async () => {
@@ -1913,4 +1924,46 @@ test('cards: a post’s card names the post; unknown posts and named websites ar
   const site = makeFetch({ rpc: rpcReturning(CH_IPFS), ipfs: () => new Response('site file', { status: 200 }) });
   const own = await invoke('https://donnoh.gwei.limo/.well-known/gwei-card.png', { cache: makeCache(), fetchMock: site });
   assert.equal(await own.text(), 'site file');
+});
+
+
+test('a post page shows every reply under its sender’s name, takes replies, and says when they are off', async () => {
+  const page = async (path, opts = {}) => {
+    const res = await invoke('https://alice.gwei.domains' + path, { cache: makeCache(), fetchMock: aliceProfile(opts.text), env: { POST_INDEX: fakePostIndex(opts) } });
+    assert.equal(res.status, 200);
+    return { html: await res.text(), csp: res.headers.get('content-security-policy') };
+  };
+  let { html, csp } = await page('/posts/a1a1a1a1a1a1-exploring-the-blobspace');
+  assert.match(html, /<div class="section">Replies \(6\)<\/div>/, 'every reply, as in ethchat');
+  assert.match(html, /<a href="https:\/\/gwei\.domains\/#%F0%9F%A6%84" rel="nofollow noopener">🦄\.gwei<\/a><a class="reply-date"[^>]*>just now<\/a>/, 'a label that isn’t plain ASCII links to gwei.domains, not a host built from it');
+  assert.match(html, /<a href="https:\/\/bob\.gwei\.domains\/" rel="nofollow noopener">bob\.gwei<\/a>/);
+  assert.match(html, /<div class="reply-text">Great &lt;post&gt;\nsecond line<\/div>/, 'text, never markup');
+  assert.match(html, /<a href="https:\/\/gwei\.domains\/#sub\.team" rel="nofollow noopener">sub\.team\.gwei<\/a>/, 'a subname has no gateway host');
+  assert.match(html, /<a href="https:\/\/etherscan\.io\/address\/0x(c0){20}" rel="nofollow noopener">0xc0c0…c0c0<\/a>[\s\S]*anon here/, 'no name: the address');
+  assert.match(html, /<a href="https:\/\/wei\.domains\/#carol" rel="nofollow noopener">carol\.wei<\/a>/);
+  assert.match(html, /<a href="https:\/\/app\.ens\.domains\/dave\.eth" rel="nofollow noopener">dave\.eth<\/a>/);
+  assert.match(html, /<div class="reply-form" data-hash="0x(a1){32}" data-name="alice\.gwei"><textarea[^>]*><\/textarea>[\s\S]*?<\/div><script>/, 'the reply box, then its script');
+  assert.match(html, /<div class="actions reply-link"><a class="btn secondary" href="https:\/\/gwei\.domains\/#reply\/0x(a1){32}\/alice\.gwei">Reply<\/a><\/div>/, 'and a link without scripts');
+  assert.equal(csp, POST_CSP);
+  assert.equal(`'sha256-${createHash('sha256').update(REPLY_SCRIPT).digest('base64')}'`, REPLY_SCRIPT_HASH, 'the policy allows exactly the reply script');
+  assert.doesNotMatch(REPLY_SCRIPT, /ethereum|eip6963|request\(|innerHTML/, 'the page script never touches a wallet, nor writes markup');
+  assert.match(POST_CSP, /^default-src 'none'; script-src 'sha256-[^']+' 'sha256-[^']+'; img-src https: data:;/, 'no connect-src: the page makes no requests');
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: false }));
+  assert.match(html, /Replies are off for this post\./);
+  assert.doesNotMatch(html, /Great &lt;post&gt;|#reply\/|class="reply-form"|<script>\(\(\)=>\{const f=/);
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: false, text: { 'gwei-replies': 'a1a1a1a1a1a1:on' } }));
+  assert.match(html, /Replies \(6\)/, 'the name’s record overrides the post');
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { text: { 'gwei-replies': 'a1a1a1a1a1a1:off' } }));
+  assert.match(html, /Replies are off for this post\./);
+  const many = Array.from({ length: 40 }, (_, i) => `${i.toString(16).padStart(12, '0')}:off`).join(' ');
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { text: { 'gwei-replies': many + ' a1a1a1a1a1a1:off' } }));
+  assert.match(html, /Replies are off for this post\./, 'however many posts the record lists (it isn’t clipped like text)');
+});
+
+test('/api/posts/<hash>/replies lists every reply, whatever the author’s setting', async () => {
+  const POST_INDEX = fakePostIndex();
+  const res = await invoke('https://gwei.domains/api/posts/' + POST_A.hash + '/replies', { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.equal((await res.json()).replies.length, 6);
 });

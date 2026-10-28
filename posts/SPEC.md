@@ -50,6 +50,8 @@ A post is a UTF-8 JSON object, at most 126,968 bytes:
 - `v`: `1`.
 - `title`: a non-empty string of at most 200 characters.
 - `body`: Markdown (below).
+- `replies` (optional): `false` asks clients not to show replies (below). Writers put it after `body`
+  and only when it is `false`.
 - Other fields are ignored, so later versions can add some.
 
 A post has no date of its own. It is dated by the block of the first blob that carries it, or,
@@ -117,6 +119,50 @@ post's own blob and checking its versioned hash with KZG, or fetching the blob a
 pins the post and the blob under the CIDs above. [`gwei-mirror`](../mirror/) does exactly this
 against any IPFS node. An index that loses its copies gets them back the same way, from IPFS.
 
+## Replies
+
+A reply is a [calldata-chat](https://ethchat.gwei.limo) message, the protocol ethchat runs on. No
+contract and no publisher are involved: the transaction is the reply, and its sender is its author.
+
+- **Room.** A post's room is the calldata-chat named room `gwei-` + the first 43 hex digits of its
+  `postHash` (lowercase, after `0x`): the first 20 bytes of SHA-256(`calldata-chat/<that name>/v1`).
+  Nobody holds a key for it. Any calldata-chat client can open a post's thread under that name.
+- **Reply.** A successful top-level transaction from the replier to the room, of exactly 1 wei, whose
+  input is `0x01` followed by 1 to 1,024 bytes of UTF-8. Anything else sent to the room is not a reply:
+  another value, another first byte, invalid UTF-8, a call made from inside a contract, a reverted
+  transaction. Smart wallets can reply only by sending such a transaction themselves.
+- **Who shows.** Every reply, with the name ethchat shows for its sender: the primary GNS name, else
+  WNS, else ENS, each only if it resolves back to the sender (GNS's and WNS's `reverseResolve` check
+  that themselves; ENS's Universal Resolver reverts otherwise). An ENS name must also be exactly its
+  ENSIP-15 normalization, so look-alikes don't show, and offchain (CCIP-Read) names aren't followed.
+  A sender with none shows as their address.
+- **Turning them off.** A post takes replies unless its author says otherwise: first the name's
+  `gwei-replies` text record, space-separated `<post id>:on` or `<post id>:off` entries (the post id is
+  the 12 hex digits after `0x`, as in its URL; the last entry for a post wins), then the post's own
+  `replies` field. The record lets an owner change their mind without a new post. It is a display
+  choice: replies sent to the room stay on Ethereum, and the gateway's API lists them all.
+
+**Sending.** A post page has a reply box, but a post page lives on its name's own host, where the
+owner's website takes over whenever they set one, so a wallet is never connected there. The box's
+Reply opens `https://gwei.domains/#reply/<hash>/<name>/<text>` in a small window. Any site can open
+that link with any text, so the window only fills the text in, uses the name only to pick which of the
+post's authorizations to credit (it must be one), checks the post takes replies, and sends only when
+Send is pressed there and the wallet confirms. Once the transaction is in a block, the window posts
+`{ "type": "gwei-reply", "hash", "tx", "text" }` to the page that opened it, addressed only to that
+name's origins on gwei.limo and gwei.domains, and closes; the post page shows the reply at once, as
+text, if the message came from that window on `https://gwei.domains` and is for its post. That
+addressing only narrows who learns which browser sent a reply: anyone can authorize any post hash on
+their own name, open the window with that name (it then credits them), and hear back.
+
+Replies are found from the room addresses. Until Glamsterdam's EIP-7708 gives ETH transfers a log,
+that takes a tracing node: the gateway runs `trace_filter` (`toAddress`: the rooms) on the owner's
+Erigon, and without it shows no new replies. Internal calls to a room are traced too, with their input,
+so a range whose answer is too big or too slow is split, and a single block that still fails is read
+from its transactions, which is all a reply can be. Each sync has a budget of calls, scans new blocks
+for every room before rooms catch up on old ones, and keeps its progress block by block; a block that
+can't be read at all is skipped after three tries. So no transaction can stop the index. The gateway shows a post's newest 500
+replies.
+
 ## Publishing
 
 - **Yourself:** send a blob transaction from the name's owner, with the post's blob attached, calling
@@ -137,6 +183,7 @@ against any IPFS node. An index that loses its copies gets them back the same wa
 | `GET /api/posts?after=<seq>&limit=<n>` | every post a blob carries, in the order the index found them, with their CIDs: `{ "posts", "next" }`. Pass `next` back as `after` to read on; a post found later always comes after it, so polling sees each once. Nothing is filtered by the validity rules |
 | `GET /api/posts/<hash>` | the post, its CID, its authorizations, and where it is on Ethereum (with the blob's CID) |
 | `GET /api/posts/<hash>/raw` | the exact post bytes |
+| `GET /api/posts/<hash>/replies` | `{ "room", "replies" }`: every reply sent to the post's room, oldest first, each with its sender's `name` and its `system` (`gns`, `wns`, `ens`, or both `null`), whether or not the post shows them |
 | `GET /api/names/<tokenId>/posts` | posts shown for a name, newest first |
 | `GET /api/authors/<address>/paid` | fees an address put in escrow, latest per blob and publisher (to find refunds; the contract says what is left) |
 | `GET /api/posts/recent` | newest posts across all names |
@@ -152,7 +199,8 @@ A claim that arrives after its blob was checked gets the blob checked again, so 
 can't hide a later real one. A blob no source has any more is rebuilt from a post it should carry
 (the index's copy, or IPFS through the gateways in `IPFS_GATEWAYS`) and checked against its versioned
 hash. Posts carried by a blob, and their blobs, are kept for good. Posts show on a name's page when it has
-no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`.
+no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`. A post's page
+shows its replies and a reply box (Replies, above). Post pages themselves never ask for a wallet.
 
 **Publisher.** The gwei.domains publisher (`posts/poster/`) delivers blobs authors paid it for. It
 rebuilds each blob from the post's bytes (`GET /api/posts/<hash>/raw`) and checks its versioned hash

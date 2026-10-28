@@ -9,7 +9,7 @@ const SEL_AGGREGATE3 = '82ad56cb'; // aggregate3((address,bool,bytes)[])
 // ENS text-record keys shown on the page, in display order after the name.
 // `header` is the ENS banner-image key; `gwei-page` is this page's own record: a small JSON object
 // with an accent `color` and a `links` list (set from the dapp's profile editor).
-export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'org.signal', 'email', 'header', 'gwei-page'];
+export const PROFILE_TEXT_KEYS = ['display', 'description', 'avatar', 'url', 'com.twitter', 'com.github', 'org.telegram', 'org.signal', 'email', 'header', 'gwei-page', 'gwei-replies'];
 
 const pad32 = (h) => h.padStart(64, '0');
 export const escapeHtml = (s) =>
@@ -111,7 +111,8 @@ export function profileFromResults(results) {
   const text = {};
   PROFILE_TEXT_KEYS.forEach((key, i) => {
     const value = decodeString(results[3 + i]);
-    if (value) text[key] = clip(value, key === 'description' ? 500 : 300);
+    // gwei-replies is a list of settings, not text to show: clipped, it would lose the newest ones.
+    if (value) text[key] = key === 'gwei-replies' ? (value.length <= 65536 ? value : '') : clip(value, key === 'description' ? 500 : 300);
   });
   const expires = decodeUint(results[2]);
   const page = parseGweiPage(text['gwei-page']);
@@ -376,6 +377,15 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.btn{display:inline-block;padding:12px 24px;font-size:12px;text-transform:uppercase;letter-spacing:.1em;background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--btn-bg);text-decoration:none;margin:8px 8px 0 0}' +
   '.btn:hover{background:var(--btn-hover);opacity:1}.btn.secondary{background:var(--bg);color:var(--fg)}' +
   '.note{font-size:12px;color:var(--muted);margin-top:40px;line-height:1.6}.note a{color:var(--muted)}' +
+  '.replies{margin-top:4px}.reply{padding:12px 0;border-bottom:1px solid var(--panel)}.reply-head{font-size:12px;margin-bottom:4px}' +
+  '.reply-head a{color:var(--fg)}.reply-date{margin-left:10px;color:var(--muted)!important;text-decoration:none}' +
+  '.reply-text{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}.replies-note{margin-top:8px}' +
+  '.reply-form{display:none;margin-top:16px}:root.js .reply-form{display:block}:root.js .reply-link{display:none}' +
+  '.reply-form textarea{display:block;width:100%;min-height:84px;padding:10px 0;font:inherit;font-size:15px;line-height:1.5;color:var(--fg);' +
+  'background:transparent;border:0;border-bottom:1px solid var(--muted);border-radius:0;outline:none;resize:vertical}.reply-form textarea:focus{border-bottom:2px solid var(--fg)}' +
+  '.reply-bar{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}.reply-bar .btn{margin:12px 0 0}' +
+  'button.btn{font-family:inherit;cursor:pointer}button.btn:disabled{opacity:.4;cursor:default}' +
+  '.reply-status{font-size:12px;color:var(--muted)}.reply-hint{font-size:12px;color:var(--muted);margin-top:10px}' +
   '.notice{font-size:13px;line-height:1.55;padding:10px 14px;margin-bottom:24px;background:var(--panel);overflow-wrap:anywhere}' +
   '.section{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:32px 0 4px}' +
   '.post-link{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--panel);color:var(--fg);text-decoration:none;font-size:14px}' +

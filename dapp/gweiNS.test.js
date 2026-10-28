@@ -2373,14 +2373,25 @@ test('a malformed URL hash is treated as no name', () => {
   let checks = 0;
   const input = { value: '' };
   const location = { hash: '#%E0%A4%A' };
-  const context = vm.createContext({ window: { location }, decodeURIComponent, $: () => input, checkName: () => { checks++; } });
-  vm.runInContext(strip + html.slice(start, end) + '\nglobalThis.initFromHash = initFromHash;', context);
+  const replies = [];
+  const context = vm.createContext({ window: { location }, decodeURIComponent, $: () => input, checkName: () => { checks++; }, openReply: (...args) => replies.push(args) });
+  vm.runInContext('let replyPost = null;\n' + strip + html.slice(start, end) + '\nglobalThis.initFromHash = initFromHash;', context);
   assert.doesNotThrow(() => context.initFromHash());
   assert.equal(checks, 0);
   location.hash = '#Donnoh.GWEI';
   context.initFromHash();
   assert.equal(input.value, 'Donnoh');
   assert.equal(checks, 1);
+  location.hash = '#reply/0x' + 'AB'.repeat(32);
+  context.initFromHash();
+  location.hash = '#reply/0x' + 'ab'.repeat(32) + '/alice.gwei/' + encodeURIComponent('Great post!\nCafé / 🦄');
+  context.initFromHash();
+  location.hash = '#reply/0x' + 'ab'.repeat(32) + '/alice.gwei/%E0%A4%A';
+  context.initFromHash();
+  const h = '0x' + 'ab'.repeat(32);
+  assert.deepEqual(replies, [[h, '', ''], [h, 'alice.gwei', 'Great post!\nCafé / 🦄'], [h, 'alice.gwei', '']],
+    'a post page’s Reply opens the reply box with its name and what was typed there (a malformed escape fills nothing)');
+  assert.equal(checks, 1, 'and isn’t looked up as a name');
 });
 
 // --- page shell -------------------------------------------------------------------
@@ -2570,6 +2581,78 @@ test('posts: the form has no date: a post is dated by its blob', () => {
   assert.doesNotMatch(html, /id="ppDate"/);
   const api = postsHarness();
   assert.equal(new TextDecoder().decode(api.postBytesFrom('T', 'B')), '{"v":1,"title":"T","body":"B"}');
+});
+
+function repliesHarness() {
+  const start = html.indexOf('const REPLIES_RECORD = ');
+  const end = html.indexOf('async function doToggleReplies(', start);
+  assert.notEqual(start, -1, 'reply helpers must exist');
+  const context = vm.createContext({ TextEncoder, crypto });
+  vm.runInContext(html.slice(start, end) + `
+    globalThis.api = { REPLIES_RECORD, REPLY_MAX_BYTES, replyRoomFor, replyInputFrom, repliesOnFor, repliesRecordWith };`, context);
+  return context.api;
+}
+
+test('replies: the dapp sends to the room, with the input, the gateway indexes', async () => {
+  const api = repliesHarness();
+  const gateway = await import('../gateway/replies-format.js');
+  assert.equal(api.REPLIES_RECORD, gateway.REPLIES_RECORD);
+  assert.equal(api.REPLY_MAX_BYTES, gateway.MAX_REPLY_BYTES);
+  for (const hash of ['0x' + 'ab12'.repeat(16), '0x634CD7F83CCD' + '0'.repeat(52)]) {
+    assert.equal(await api.replyRoomFor(hash), await gateway.replyRoom(hash));
+  }
+  for (const text of ['first!', 'Café 🦄\nline two', 'x'.repeat(1024)]) {
+    assert.equal(api.replyInputFrom(text), gateway.encodeReply(text));
+    assert.equal(gateway.decodeReply(api.replyInputFrom(text)), text);
+  }
+  assert.throws(() => api.replyInputFrom(''), /1 to 1,024 bytes/);
+  assert.throws(() => api.replyInputFrom('é'.repeat(513)), /1 to 1,024 bytes/);
+  const hash = '0x634cd7f83ccd' + '00'.repeat(26);
+  for (const [postReplies, record] of [[undefined, ''], [false, ''], [false, '634cd7f83ccd:on'], [undefined, 'x 634CD7F83CCD:off'], [undefined, '634cd7f83ccd:off 634cd7f83ccd:on']]) {
+    assert.equal(api.repliesOnFor(hash, postReplies, record), gateway.repliesOn(hash, postReplies, record), `${postReplies} ${record}`);
+  }
+  for (const [record, on] of [['', true], ['aaaaaaaaaaaa:off 634cd7f83ccd:on', false], ['634CD7F83CCD:off bbbbbbbbbbbb:on', true]]) {
+    assert.equal(api.repliesRecordWith(record, hash, on), gateway.setRepliesRecord(record, hash, on));
+  }
+});
+
+test('replies: a name’s site is linked only when a URL reads it as exactly its labels', async () => {
+  const start = html.indexOf('function nameSiteOrigin(');
+  const end = html.indexOf('// gwei.domains/#reply/<post hash>', start);
+  const { ens_normalize } = await import('../gateway/ens-normalize.js');
+  const context = vm.createContext({ URL, GWEI_GATEWAY: 'gwei.limo', ethers: { ensNormalize: ens_normalize } });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.nameSiteOrigin = nameSiteOrigin;', context);
+  const o = context.nameSiteOrigin;
+  assert.equal(o('alice.gwei'), 'https://alice.gwei.limo');
+  assert.equal(o('alice.gwei', 'gwei.domains'), 'https://alice.gwei.domains');
+  assert.equal(o('🦄.gwei'), 'https://xn--3s9h.gwei.limo');
+  assert.equal(o('blog.alice.gwei'), 'https://blog.alice.gwei.limo', 'subnames have hosts too');
+  for (const bad of ['evil．com/.gwei', '16843009#.gwei', 'a@evil.com.gwei', 'x/y.gwei', 'ａ.gwei', 'Alice.gwei', 'a..b.gwei', 'a:1.gwei', '.gwei', 'alice.eth', null]) {
+    assert.equal(o(bad), null, String(bad));
+  }
+});
+
+test('replies: the composer can turn them off, and that is in the post’s bytes', async () => {
+  const api = postsHarness();
+  const gateway = await import('../gateway/posts-format.js');
+  assert.match(html, /<input type="checkbox" id="ppReplies" checked/);
+  const off = api.postBytesFrom('T', 'B', false);
+  assert.equal(new TextDecoder().decode(off), '{"v":1,"title":"T","body":"B","replies":false}');
+  assert.deepEqual([...off], [...gateway.encodePost({ title: 'T', body: 'B', replies: false })]);
+  assert.deepEqual([...api.postBytesFrom('T', 'B', true)], [...gateway.encodePost({ title: 'T', body: 'B' })]);
+});
+
+test('replies: #reply/<post> opens the reply box, sending 1 wei from the connected wallet after checking the room has no code', () => {
+  assert.match(html, /window\.opener\.postMessage\(\{ type: 'gwei-reply', hash: post\.hash, tx: tx\.hash, text \}, origin\)/, 'the post’s page hears about the sent reply');
+  assert.doesNotMatch(html, /postMessage\([^)]*'\*'\)/, 'and no other page does');
+  assert.match(html, /if \(replyPost !== post \|\| \$\('replyText'\)\.value !== text\) throw/, 'a window pointed elsewhere mid-send sends nothing');
+  assert.doesNotMatch(html, /addEventListener\('message'/, 'and nothing a page sends this window is ever acted on');
+  assert.match(html, /getCode\(room\)\) !== '0x'\) throw/);
+  assert.match(html, /if \(own !== '0x' && !own\.startsWith\('0xef0100'\)\) throw/, 'contract wallets would pay for a reply nobody indexes');
+  assert.match(html, /signer\.sendTransaction\(\{ to: room, value: 1n, data \}\)/);
+  assert.match(html, /if \(isProcessing \|\| !post\?\.ready \|\| post\.off\) return;/, 'no sending before the post is checked, nor to one with replies off');
+  assert.doesNotMatch(html, /REPLIES_RECORD\)\.catch\(\(\) => currentRepliesRecord\)|currentRepliesRecord/, 'the record is never rebuilt from a guess');
+  assert.match(html, /repliesRecordWith\(await contract\.text\(tokenId, REPLIES_RECORD\), hash, on\)/, 'and is read through the wallet’s node before it is rewritten');
 });
 
 test('posts: mainnet points at the deployed GnsPosts and the gwei.domains publisher', () => {
