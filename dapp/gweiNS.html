@@ -2229,10 +2229,12 @@ async function loadRecentPosts() {
     if (!posts || !posts.length) return;
     list.innerHTML = '';
     for (const p of posts) {
+      // A subname has no site host (the certificate covers one level), so it links to its page here.
       const origin = nameSiteOrigin(p.name);
-      if (!origin) continue;
+      const sub = !origin && nameSiteOrigin(p.name.split('.').slice(-2).join('.')) && ethers.ensNormalize(p.name) === p.name;
+      if (!origin && !sub) continue;
       const a = document.createElement('a');
-      a.href = new URL(postPathFor(p.hash, p.title), origin).href;
+      a.href = origin ? new URL(postPathFor(p.hash, p.title), origin).href : '#' + encodeURIComponent(p.name.slice(0, -5));
       a.target = '_blank'; a.rel = 'noopener';
       a.textContent = p.title + ' · ' + p.name;
       list.appendChild(a);
@@ -6625,14 +6627,15 @@ async function doToggleReplies(hash, on) {
   }
 }
 
-// The site origin of a .gwei name (or subname) on a gateway domain, or null unless a URL reads it as
-// exactly the same labels: the name must be written as ENSIP-15 normalizes it (a URL would map
+// The site origin of a top-level .gwei name on a gateway domain, or null unless a URL reads it as
+// exactly that one label: the name must be written as ENSIP-15 normalizes it (a URL would map
 // fullwidth letters and the like onto another name) and hold nothing that ends a host ("#", "/", "@"…).
+// Subnames have no site host: the gateways' certificates cover one level, so a.b.gwei.limo can't load.
 function nameSiteOrigin(name, gateway = GWEI_GATEWAY) {
   if (!gateway || !/\.gwei$/.test(name || '')) return null;
   const labels = name.slice(0, -5).split('.');
   try {
-    if (labels.some((label) => !label) || ethers.ensNormalize(name) !== name) return null;
+    if (labels.length !== 1 || !labels[0] || ethers.ensNormalize(name) !== name) return null;
     const url = new URL(`https://${labels.join('.')}.${gateway}/`);
     const same = url.hostname.endsWith('.' + gateway) && url.hostname.split('.').length === labels.length + gateway.split('.').length;
     return same && url.pathname === '/' && !url.search && !url.hash && !url.username && !url.port ? url.origin : null;

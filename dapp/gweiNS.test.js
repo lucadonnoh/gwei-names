@@ -2626,7 +2626,9 @@ test('replies: a name’s site is linked only when a URL reads it as exactly its
   assert.equal(o('alice.gwei'), 'https://alice.gwei.limo');
   assert.equal(o('alice.gwei', 'gwei.domains'), 'https://alice.gwei.domains');
   assert.equal(o('🦄.gwei'), 'https://xn--3s9h.gwei.limo');
-  assert.equal(o('blog.alice.gwei'), 'https://blog.alice.gwei.limo', 'subnames have hosts too');
+  assert.equal(o('blog.alice.gwei'), null, 'subnames have no host the certificates cover');
+  assert.match(html, /a\.href = origin \? new URL\(postPathFor\(p\.hash, p\.title\), origin\)\.href : '#' \+ encodeURIComponent\(p\.name\.slice\(0, -5\)\);/,
+    'so a subname’s post in the recent list links to its page on gwei.domains');
   for (const bad of ['evil．com/.gwei', '16843009#.gwei', 'a@evil.com.gwei', 'x/y.gwei', 'ａ.gwei', 'Alice.gwei', 'a..b.gwei', 'a:1.gwei', '.gwei', 'alice.eth', null]) {
     assert.equal(o(bad), null, String(bad));
   }
