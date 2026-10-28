@@ -448,8 +448,7 @@ body.modal-open { overflow: hidden; }
 /* An inline box, so its baseline is its text's and "Replies" lines up with "On Ethereum"; the checkbox sits centred on it. */
 .post-row label.post-replies { flex: none; display: inline-block; white-space: nowrap; margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg); cursor: pointer; }
 .manage-form .post-row label.post-replies input { width: auto; margin: 0 5px 0 0; padding: 0; vertical-align: -3px; }
-.post-replies-save { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 10px 0 4px; }
-.post-replies-save .profile-hint { margin: 0; }
+.post-replies-save { margin: 10px 0 4px; }
 #replyPanel textarea {
   width: 100%; padding: 10px 0; margin-bottom: 12px; font-size: 16px; font-family: inherit; line-height: 1.4;
   border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); outline: none; resize: vertical;
@@ -6422,8 +6421,7 @@ async function loadOwnPosts(written) {
         `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`;
     }).join('');
     if (record !== null && posts?.length) {
-      html += '<div class="post-replies-save"><button id="ppRepliesSave" onclick="doSaveReplies()" disabled>Save reply settings</button>' +
-        '<span class="profile-hint">Tick the posts that take replies. Saving them is one transaction, however many you change.</span></div>';
+      html += '<div class="post-replies-save"><button id="ppRepliesSave" onclick="doSaveReplies()" disabled>Save reply settings</button></div>';
     }
     html += await refundRows(tokenId);
     if (tokenId !== currentTokenId || !$('ppList')) return;
@@ -6744,7 +6742,7 @@ function updateReplyMeta() {
   // Calldata costs at least 40 gas a byte (EIP-7623), and a reply is all calldata.
   const gas = 21000n + 40n * BigInt(bytes + 1) + 1000n;
   const cost = replyGasPrice ? ` Sending it is one transaction of 1 wei, about ${Number(ethers.formatEther(gas * replyGasPrice)).toPrecision(2)} ETH in gas right now.` : '';
-  el.textContent = `${bytes.toLocaleString()} of ${REPLY_MAX_BYTES.toLocaleString()} bytes.${cost} Replies are public and permanent, and show your .gwei, .wei or ENS name. Send it on its own, not in a wallet batch.`;
+  el.textContent = `${bytes.toLocaleString()} of ${REPLY_MAX_BYTES.toLocaleString()} bytes.${cost} Replies are public and permanent, and show your .gwei, .wei or ENS name.`;
   if (Date.now() - replyGasPriceAt > 30000) {
     replyGasPriceAt = Date.now();
     getRpc().then((rpc) => rpc.getFeeData()).then((fee) => { if (fee.gasPrice) { replyGasPrice = fee.gasPrice; updateReplyMeta(); } }).catch(() => {});
