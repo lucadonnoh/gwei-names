@@ -63,9 +63,7 @@ export const POST_CSP = `default-src 'none'; script-src ${THEME_SCRIPT_HASH} ${R
 function replyForm(post, name) {
   return `<div class="reply-form" data-hash="${escapeHtml(post.hash)}" data-name="${escapeHtml(name)}">` +
     '<textarea rows="3" placeholder="Write a reply" aria-label="Your reply"></textarea>' +
-    '<div class="reply-bar"><button class="btn" type="button">Reply</button><span class="reply-status" aria-live="polite"></span></div>' +
-    '<p class="reply-hint">Sent from your wallet as an Ethereum transaction (1 wei plus gas). Replies are public and permanent, ' +
-    'and show your .gwei, .wei or ENS name.</p></div>' +
+    '<div class="reply-bar"><button class="btn" type="button">Reply</button><span class="reply-status" aria-live="polite"></span></div></div>' +
     `<script>${REPLY_SCRIPT}</script>`;
 }
 

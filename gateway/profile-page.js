@@ -385,7 +385,7 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   'background:transparent;border:0;border-bottom:1px solid var(--muted);border-radius:0;outline:none;resize:vertical}.reply-form textarea:focus{border-bottom:2px solid var(--fg)}' +
   '.reply-bar{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px}.reply-bar .btn{margin:12px 0 0}' +
   'button.btn{font-family:inherit;cursor:pointer}button.btn:disabled{opacity:.4;cursor:default}' +
-  '.reply-status{font-size:12px;color:var(--muted)}.reply-hint{font-size:12px;color:var(--muted);margin-top:10px}' +
+  '.reply-status{font-size:12px;color:var(--muted)}' +
   '.notice{font-size:13px;line-height:1.55;padding:10px 14px;margin-bottom:24px;background:var(--panel);overflow-wrap:anywhere}' +
   '.section{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:32px 0 4px}' +
   '.post-link{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--panel);color:var(--fg);text-decoration:none;font-size:14px}' +
