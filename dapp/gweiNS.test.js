@@ -2964,3 +2964,62 @@ test('the stats come from the gateway, and a stats index still catching up is no
   await run({ ready: false, names: 3 });
   assert.equal(els.statsSection.style.display, 'none', 'partial counts while the index catches up are hidden');
 });
+
+function websiteCheckHarness(fetchImpl) {
+  const start = html.indexOf('const IPFS_ROUTING =');
+  const end = html.indexOf('const WARN_STYLE =', start);
+  const b32 = html.indexOf('function base32Encode(bytes)');
+  assert.notEqual(start, -1, 'website check helpers must exist');
+  assert.notEqual(end, -1, 'website check helpers must be bounded');
+  const context = vm.createContext({
+    ethers: { getBytes: (v) => (typeof v === 'string' ? Uint8Array.from(Buffer.from(v.replace(/^0x/, ''), 'hex')) : v) },
+    fetch: fetchImpl, AbortSignal,
+  });
+  const alphabet = html.match(/const BASE32_ALPHABET = [^;]+;/)[0];
+  vm.runInContext(
+    alphabet + '\n' + html.slice(b32, html.indexOf('\n}\n', b32) + 3) + html.slice(start, end) +
+      '\nglobalThis.api = { contenthashRef, websiteOnline };',
+    context
+  );
+  return context.api;
+}
+
+test('a website record names what the IPFS network is asked about', () => {
+  const { contenthashRef } = websiteCheckHarness();
+  // ben.gwei (Ed25519 IPNS key), xav.gwei (RSA key), and an IPFS CID.
+  assert.deepEqual({ ...contenthashRef('0xe501017200240801122044ab7266fc5b094a08febc30d6fd1b57ab67a0250a886576b2373416fd27cb89') },
+    { kind: 'ipns', ref: 'k51qzi5uqu5dhw7cei5g9dcdgpjg57b0dpanijycw30m54igdc78uprjjmdu2x' });
+  assert.deepEqual({ ...contenthashRef('0xe50101721220a1dc5d90d7272c0fd9150414f14c80c71de5d243c2f23165e2ddb495cbbcd05f') },
+    { kind: 'ipns', ref: 'k2k4r8ng8uzrtqb5ham8kao889m8qezu96z4w3lpinyqghum43veb6n3' });
+  const ipfs = contenthashRef('0xe30101551220' + '58'.repeat(32));
+  assert.equal(ipfs.kind, 'ipfs');
+  assert.match(ipfs.ref, /^bafkrei[a-z2-7]+$/);
+  assert.equal(contenthashRef('0xe40101fa011b20' + 'ab'.repeat(32)), null, 'Swarm is not asked');
+  assert.equal(contenthashRef('0x'), null);
+});
+
+test('whether a website is online comes from the routing service, and an error is no answer', async () => {
+  const answers = [];
+  const api = websiteCheckHarness(async (url, init) => {
+    answers.push([url, init.headers.accept]);
+    if (url.endsWith('/providers/bafnobody')) return new Response(JSON.stringify({ Providers: [] }));
+    if (url.endsWith('/providers/bafserved')) return new Response(JSON.stringify({ Providers: [{ ID: 'a' }, { ID: 'b' }] }));
+    if (url.endsWith('/ipns/kexpired')) return new Response('not found', { status: 404 });
+    if (url.endsWith('/ipns/klive')) return new Response(new Uint8Array([1]));
+    throw new TypeError('network down');
+  });
+  assert.deepEqual({ ...await api.websiteOnline({ kind: 'ipfs', ref: 'bafnobody' }) }, { online: false, providers: 0 });
+  assert.deepEqual({ ...await api.websiteOnline({ kind: 'ipfs', ref: 'bafserved' }) }, { online: true, providers: 2 });
+  assert.deepEqual({ ...await api.websiteOnline({ kind: 'ipns', ref: 'kexpired' }) }, { online: false, providers: 0 });
+  assert.equal((await api.websiteOnline({ kind: 'ipns', ref: 'klive' })).online, true);
+  assert.equal(await api.websiteOnline({ kind: 'ipfs', ref: 'bafunreachable' }), null);
+  assert.equal(answers[0][0], 'https://delegated-ipfs.dev/routing/v1/providers/bafnobody');
+  assert.equal(answers[2][1], 'application/vnd.ipfs.ipns-record', 'IPNS asks for the record itself');
+});
+
+test('the Set Website form checks the content as it is typed, and the panel warns when the site is offline', () => {
+  assert.match(html, /id="contentHash"[^>]*oninput="scheduleContentCheck\(\)"/);
+  assert.match(html, /<div id="contentCheck"><\/div>/);
+  assert.match(html, /if \(hasContenthash\) void warnIfWebsiteOffline\(contentHash, isOwner, thisManageVersion\);/);
+  assert.doesNotMatch(html.slice(html.indexOf('const IPFS_ROUTING'), html.indexOf('function decodeContenthash(hex)')), /—/, 'no em dashes in the copy');
+});

@@ -6033,6 +6033,7 @@ async function showManage(tokenId, name) {
       }
     }
     $('manageInfo').innerHTML = infoHtml;
+    if (hasContenthash) void warnIfWebsiteOffline(contentHash, isOwner, thisManageVersion);
 
     // Build actions if owner
     if (isOwner) {
@@ -6807,7 +6808,8 @@ function showManageForm(action) {
       html = `${websiteSwitchNote()}
         <label>Website content</label>
         <div style="font-size:11px;color:var(--fg-muted);margin-bottom:8px;">Host a website at ${escapeHtml(currentTokenName)}.gwei — paste an IPFS CID, an IPNS name, a Swarm bzz:// reference, or a web3:// contract URL.</div>
-        <input type="text" id="contentHash" placeholder="bafy… (IPFS), ipns://k51… (IPNS), bzz://…, or web3://0x…:1/">
+        <input type="text" id="contentHash" placeholder="bafy… (IPFS), ipns://k51… (IPNS), bzz://…, or web3://0x…:1/" oninput="scheduleContentCheck()">
+        <div id="contentCheck"></div>
         ${GWEI_GATEWAY ? `<div style="font-size:11px;color:var(--fg-muted);margin-top:4px;">Visit via: <a href="https://${escapeHtml(currentTokenName)}.${GWEI_GATEWAY}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(currentTokenName)}.${GWEI_GATEWAY}</a></div>` : ''}
         <button onclick="doSetContent()">Set Website</button>
         <button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>
@@ -7264,6 +7266,93 @@ function base32Encode(bytes) {
 }
 
 // Decode ENSIP-7 contenthash to human-readable CID
+// Whether a website's content is online, asked from the browser of the IPFS network's public routing
+// service: which nodes announce a CID, or whether an IPNS name has a current record. A site nobody serves
+// doesn't load, whatever the name's record says (lockeyprivacy.gwei, 2026-10-26).
+const IPFS_ROUTING = 'https://delegated-ipfs.dev/routing/v1';
+// A contenthash (hex or bytes) → { kind: 'ipfs' | 'ipns', ref } that the network can be asked about, or null.
+function contenthashRef(contenthash) {
+  try {
+    const bytes = ethers.getBytes(contenthash);
+    if (bytes[0] === 0xe3 && bytes[1] === 0x01 && bytes[2] === 0x01) return { kind: 'ipfs', ref: 'b' + base32Encode(bytes.slice(2)) };
+    if (bytes[0] === 0xe5 && bytes[1] === 0x01 && bytes[2] === 0x01) {
+      let n = 0n;
+      for (const b of bytes.slice(2)) n = (n << 8n) | BigInt(b);
+      let ref = '';
+      for (; n > 0n; n /= 36n) ref = '0123456789abcdefghijklmnopqrstuvwxyz'[Number(n % 36n)] + ref;
+      return { kind: 'ipns', ref: 'k' + ref };
+    }
+  } catch {}
+  return null;
+}
+// { online, providers } for a ref, or null when the network couldn't be asked.
+async function websiteOnline({ kind, ref }) {
+  try {
+    const res = await fetch(`${IPFS_ROUTING}/${kind === 'ipns' ? 'ipns' : 'providers'}/${ref}`, {
+      headers: { accept: kind === 'ipns' ? 'application/vnd.ipfs.ipns-record' : 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status === 404) return { online: false, providers: 0 };
+    if (!res.ok) return null;
+    if (kind === 'ipns') return { online: true, providers: 0 };
+    const providers = ((await res.json()).Providers || []).length;
+    return { online: providers > 0, providers };
+  } catch { return null; }
+}
+const WARN_STYLE = 'color:var(--error-fg);font-size:12px;line-height:1.5;';
+
+// The Set Website form says whether the content is online before it's saved.
+let contentCheckTimer = null, contentCheckSeq = 0;
+function scheduleContentCheck() {
+  clearTimeout(contentCheckTimer);
+  const box = $('contentCheck');
+  if (!box) return;
+  box.innerHTML = '';
+  const seq = ++contentCheckSeq;
+  contentCheckTimer = setTimeout(async () => {
+    let ref = null;
+    try {
+      const input = $('contentHash').value.trim();
+      if (input && !parseWeb3Url(input)) ref = contenthashRef(encodeContenthash(input));
+    } catch {}
+    if (!ref) return;
+    box.style.cssText = 'color:var(--fg-muted);font-size:12px;line-height:1.5;margin-top:6px;';
+    box.textContent = ref.kind === 'ipns' ? 'Checking for a current record of this IPNS name…' : 'Checking whether IPFS nodes have this content…';
+    const status = await websiteOnline(ref);
+    if (seq !== contentCheckSeq || !$('contentCheck')) return;
+    if (!status) { box.textContent = ''; return; }
+    if (ref.kind === 'ipfs' && status.online) {
+      box.textContent = `✓ Online: ${status.providers} IPFS node${status.providers === 1 ? ' has' : 's have'} this content. Once it\u2019s set, gwei.domains keeps its own copy too.`;
+    } else if (ref.kind === 'ipfs') {
+      box.style.cssText = WARN_STYLE + 'margin-top:6px;';
+      box.textContent = '⚠ No IPFS node has this content right now, so the website wouldn\u2019t load. Keep the IPFS node that has it running, ' +
+        'or pin it on a pinning service: once it\u2019s reachable, gwei.domains keeps its own copy (usually within 15 minutes). You can still set it.';
+    } else if (status.online) {
+      box.textContent = '✓ This IPNS name has a current record. It keeps working only while the node that owns it republishes it ' +
+        '(records expire after about 2 days); an IPFS CID doesn\u2019t need that.';
+    } else {
+      box.style.cssText = WARN_STYLE + 'margin-top:6px;';
+      box.textContent = '⚠ This IPNS name has no current record, so the website wouldn\u2019t load. The node that owns the name has to be online to publish it.';
+    }
+  }, 600);
+}
+
+// Under a name's current website: a warning when nobody serves it (nothing when it's fine).
+async function warnIfWebsiteOffline(contentHash, isOwner, version) {
+  const ref = contenthashRef(contentHash);
+  if (!ref) return;
+  const status = await websiteOnline(ref);
+  if (!status || status.online || version !== manageVersion || !$('manageInfo')) return;
+  const why = ref.kind === 'ipfs' ? 'no IPFS node has its content right now.' : 'its IPNS name has no current record.';
+  const fix = !isOwner ? '' : ref.kind === 'ipfs'
+    ? ' Bring the node that has it back online, or pin it on a pinning service: once it\u2019s reachable, gwei.domains keeps its own copy.'
+    : ' The node that owns the IPNS name has to come back online to republish it.';
+  const div = document.createElement('div');
+  div.style.cssText = WARN_STYLE;
+  div.textContent = `⚠ This website isn\u2019t loading: ${why}${fix}`;
+  $('manageInfo').appendChild(div);
+}
+
 function decodeContenthash(hex) {
   try {
     const bytes = ethers.getBytes(hex);
