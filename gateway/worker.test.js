@@ -1614,6 +1614,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false, postReplies } =
     recent: answer('recent', [{ name: 'alice.gwei', ...POST_A }]),
     replies: answer('replies', (hash) => (hash === POST_A.hash ? REPLIES_A : { room: '0x' + 'ef'.repeat(20), replies: [] })),
     archive: answer('archive', (after) => ({ posts: after ? [] : [{ seq: 1, ...POST_A }], next: after || 1 })),
+    replyArchive: answer('replyArchive', (after) => ({ replies: [], next: after })),
     forCurrentOwner: answer('forCurrentOwner', posts),
     paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
     poke: answer('poke', { throttled: true }),
@@ -1622,6 +1623,17 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false, postReplies } =
   };
   return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
 }
+test('/api/replies lists replies for notifiers and mirrors, from a cursor, with a bounded page', async () => {
+  const POST_INDEX = fakePostIndex();
+  const api = (path) => invoke('https://gwei.domains' + path, { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });
+  const res = await api('/api/replies?after=7');
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.deepEqual(await res.json(), { replies: [], next: 7 });
+  await api('/api/replies?after=-1&limit=5000');
+  assert.deepEqual(POST_INDEX.calls.filter((c) => c[0] === 'replyArchive'), [['replyArchive', 7, 50], ['replyArchive', 0, 100]]);
+});
+
 test('/api/posts lists the archive for mirrors, from a cursor, with a bounded page', async () => {
   const POST_INDEX = fakePostIndex();
   const api = (path) => invoke('https://gwei.domains' + path, { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });

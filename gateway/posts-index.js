@@ -21,6 +21,7 @@ export class PostIndex extends DurableObject {
   bodies(hashes) { return hashes.map((hash) => this.store.body(hash)); }
   recent(limit) { return this.store.recent(limit); }
   replies(hash) { return this.store.replies(hash); }
+  replyArchive(after, limit) { return this.store.replyArchive(after, limit); }
   archive(after, limit) { return this.store.archive(after, limit); }
   paidBy(author, limit) { return this.store.paidBy(author, limit); }
   async forCurrentOwner(token, limit) {

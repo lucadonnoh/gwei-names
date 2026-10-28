@@ -312,6 +312,11 @@ function answerMulticall(data, world) {
       let padded = toHex(name);
       while (padded.length % 64) padded += '0';
       results.push(word(32) + word(name.length) + padded);
+    } else if (sel === '308e3386') { // text(uint256,string)
+      const value = utf8((world.records || {})[token] || '');
+      let padded = toHex(value);
+      while (padded.length % 64) padded += '0';
+      results.push(word(32) + word(value.length) + padded);
     } else if (sel === '5d78a217') { // ENS reverse(bytes,uint256): reverts without a verified name
       const name = (world.ens || {})['0x' + call.slice(8 + 192, 8 + 192 + 40)];
       if (!name) { results.push(null); continue; }
@@ -1197,6 +1202,37 @@ test('a post whose bytes arrive late still gets the replies sent since its autho
 
 const replyCall = (room, block, pos, from, text) => ({ type: 'call', blockNumber: block, transactionPosition: pos, transactionHash: '0x' + pad32(`${block}${pos}`),
   traceAddress: [], action: { callType: 'call', from, to: room, value: '0x1', input: encodeReply(text) } });
+
+test('/api/replies lists every reply in the order the index found them, each saying whether its post shows it', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  const takes = encodePost({ title: 'Takes replies', body: 'x', replies: true });
+  const old = postBytes('From before replies');
+  for (const bytes of [takes, old.bytes]) store.upload(bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, postHash(takes), ALICE), authorized(501, 0, TOKEN, old.hash, ALICE));
+  world.names = { ...world.names, [TOKEN]: 'alice.gwei' };
+  const [roomA, roomB] = [await replyRoom(postHash(takes)), await replyRoom(old.hash)];
+  world.traces = [replyCall(roomA, 600, 0, BOB, 'first'), replyCall(roomB, 610, 0, BOB, 'to an old post')];
+  world.primary = { [BOB]: 'bob.gwei' };
+  await store.sync();
+  let page = await store.replyArchive(0, 50);
+  assert.deepEqual(page.replies.map((r) => [r.seq, r.text, r.name, r.post.title, r.shown]), [
+    [1, 'first', 'bob.gwei', 'Takes replies', true],
+    [2, 'to an old post', 'bob.gwei', 'From before replies', false],
+  ]);
+  assert.equal(page.replies[0].post.url, `https://alice.gwei.limo/posts/${postHash(takes).slice(2, 14)}-takes-replies`);
+  assert.equal(page.next, 2);
+  world.records = { [TOKEN]: `${old.hash.slice(2, 14)}:on` }; // the author turns the old post on
+  world.traces.push(replyCall(roomA, 2300, 0, ALICE, 'later'));
+  world.head = 2600;
+  store.advance(60);
+  await store.sync();
+  page = await store.replyArchive(page.next, 50);
+  assert.deepEqual(page.replies.map((r) => [r.seq, r.text, r.shown]), [[3, 'later', true]], 'read on from next: only what is new');
+  assert.equal((await store.replyArchive(0, 50)).replies[1].shown, true, 'shown follows the record as it is now');
+  assert.deepEqual((await store.replyArchive(page.next, 50)).replies, []);
+});
 
 test('a contract making trace_filter answers too big slows reply indexing but can’t stop it', async () => {
   const world = fakeWorld();

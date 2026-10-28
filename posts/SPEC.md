@@ -185,6 +185,7 @@ replies.
 | `GET /api/posts?after=<seq>&limit=<n>` | every post a blob carries, in the order the index found them, with their CIDs: `{ "posts", "next" }`. Pass `next` back as `after` to read on; a post found later always comes after it, so polling sees each once. Nothing is filtered by the validity rules |
 | `GET /api/posts/<hash>` | the post, its CID, its authorizations, and where it is on Ethereum (with the blob's CID) |
 | `GET /api/posts/<hash>/raw` | the exact post bytes |
+| `GET /api/replies?after=<seq>&limit=<n>` | every reply, in the order the index found them: `{ "replies", "next" }`, each with its sender's name, its post (`hash`, `title`, `name`, `url`) and `shown`, whether that post takes replies now (`null` when unknown). Pass `next` back as `after`; a reply found later always comes after it |
 | `GET /api/posts/<hash>/replies` | `{ "room", "replies" }`: every reply sent to the post's room, oldest first, each with its sender's `name` and its `system` (`gns`, `wns`, `ens`, or both `null`), whether or not the post shows them |
 | `GET /api/names/<tokenId>/posts` | posts shown for a name, newest first |
 | `GET /api/authors/<address>/paid` | fees an address put in escrow, latest per blob and publisher (to find refunds; the contract says what is left) |

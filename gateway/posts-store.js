@@ -12,10 +12,10 @@
 // The logic lives here, over a SQLite handle shaped like Durable Object storage (`sql.exec`), so it
 // runs under Node in tests; posts-index.js wraps it in the Durable Object.
 
-import { MAX_POST_BYTES, BLOB_BYTES, blobCid, decodeBlob, encodeBlob, parsePost, postCid, postHash } from './posts-format.js';
+import { MAX_POST_BYTES, BLOB_BYTES, blobCid, decodeBlob, encodeBlob, parsePost, postCid, postHash, postPath } from './posts-format.js';
 import { MULTICALL3, decodeAggregate3, encodeAggregate3 } from './profile-page.js';
 import { configuredGateways } from './content-gateways.js';
-import { replyRoom, replyText } from './replies-format.js';
+import { REPLIES_RECORD, repliesOn, replyRoom, replyText } from './replies-format.js';
 import { readRpcJson } from './rpc-pool.js';
 import { rpcEndpointConfig } from './rpc-config.js';
 import { hexToBytes } from './web3-auto.js';
@@ -32,6 +32,7 @@ const SEL_REVERSE = '9af8b7aa'; // reverseResolve(address): the address's primar
 const WNS = '0x0000000000696760E15f265e828DB644A0c242EB'; // Wei Name Service, the contract GNS was forked from
 const ENS_UNIVERSAL_RESOLVER = '0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe';
 const SEL_ENS_REVERSE = '5d78a217'; // reverse(bytes,uint256): the primary ENS name; reverts unless it resolves back
+const SEL_TEXT = '308e3386'; // text(uint256,string)
 
 const CONFIRMATIONS = 2; // index up to head - 2, so a one-block reorg can't leave a phantom event
 const LOG_RANGE = 2000; // blocks per eth_getLogs (public RPCs cap ranges)
@@ -356,6 +357,57 @@ export class PostStore {
         return { tx: r.tx, block: r.block, time: r.ts, from: r.sender, name: found?.name ?? null, system: found?.system ?? null, text: r.text };
       }),
     };
+  }
+
+  // Every reply in the order the index found them, for notifiers, mirrors and other frontends. Like the
+  // post archive, a reply found later (a room catching up) always comes after every `seq` handed out
+  // before, so reading on from the last `seq` sees each once. Each carries its post (title, first
+  // authorizing name, page) and `shown`: whether that post takes replies now (its own field, then that
+  // name's gwei-replies record; null when the record couldn't be read). Nothing is filtered.
+  async replyArchive(after = 0, limit = 50) {
+    const rows = this.rows(
+      `SELECT r.rowid AS seq, r.tx, r.block, r.ts, r.sender, r.text, m.hash, c.title, ${REPLIES_ON} AS replies_on ` +
+      'FROM reply r JOIN room m ON m.room = r.room JOIN content c ON c.hash = m.hash WHERE r.rowid > ? ORDER BY r.rowid LIMIT ?',
+      Math.max(Number(after) || 0, 0), Math.min(Math.max(limit, 1), 100),
+    );
+    const posts = new Map();
+    for (const { hash } of rows) {
+      if (posts.has(hash)) continue;
+      const a = this.rows('SELECT a.token, n.name FROM auth a LEFT JOIN names n ON n.token = a.token WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 1', hash)[0];
+      posts.set(hash, { token: a?.token ?? null, name: a?.name || null });
+    }
+    const records = await this.textRecords([...new Set([...posts.values()].map((p) => p.token).filter(Boolean))], REPLIES_RECORD).catch(() => new Map());
+    const names = rows.length ? await this.senderNames([...new Set(rows.map((r) => r.sender))]).catch(() => new Map()) : new Map();
+    const replies = rows.map((r) => {
+      const post = posts.get(r.hash);
+      const record = post.token ? records.get(post.token) : undefined;
+      const label = post.name?.endsWith('.gwei') ? post.name.slice(0, -5) : null;
+      return {
+        seq: r.seq, tx: r.tx, block: r.block, time: r.ts, from: r.sender, name: names.get(r.sender)?.name ?? null, system: names.get(r.sender)?.system ?? null,
+        text: r.text,
+        post: {
+          hash: r.hash, title: r.title, name: post.name,
+          url: label && /^[a-z0-9-]+$/.test(label) ? `https://${label}.gwei.limo${postPath(r.hash, r.title)}` : null,
+        },
+        shown: record === undefined ? null : repliesOn(r.hash, r.replies_on ? true : undefined, record),
+      };
+    });
+    return { replies, next: replies.length ? replies[replies.length - 1].seq : Math.max(Number(after) || 0, 0) };
+  }
+
+  // tokenId -> the name's text record `key` ('' when unset), in one multicall per 60 names.
+  async textRecords(tokens, key) {
+    const out = new Map();
+    const k = new TextEncoder().encode(key);
+    const keyWords = Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('').padEnd(Math.ceil(k.length / 32) * 64, '0');
+    for (let i = 0; i < tokens.length; i += 60) {
+      const chunk = tokens.slice(i, i + 60);
+      const calls = chunk.map((token) => ({ target: NAMENFT, data: '0x' + SEL_TEXT + token.slice(2).padStart(64, '0') + abiWord(64) + abiWord(k.length) + keyWords }));
+      const decoded = decodeAggregate3(await this.rpc('eth_call', [{ to: MULTICALL3, data: encodeAggregate3(calls) }, 'latest']));
+      if (!decoded) throw new Error('text records: bad multicall answer');
+      chunk.forEach((token, j) => { if (decoded[j]?.success) out.set(token, readAbiString(decoded[j])); });
+    }
+    return out;
   }
 
   replyCount(hash) {
