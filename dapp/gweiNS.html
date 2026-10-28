@@ -445,6 +445,10 @@ body.modal-open { overflow: hidden; }
 .post-row a { flex: 1; color: var(--fg); overflow-wrap: anywhere; }
 .post-row .post-state { flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
 .manage-form .post-row button { width: auto; margin: 0; padding: 4px 10px; font-size: 10px; }
+.post-row label.post-replies { flex: none; display: flex; align-items: center; gap: 5px; margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg); cursor: pointer; }
+.manage-form .post-row label.post-replies input { width: auto; margin: 0; padding: 0; }
+.post-replies-save { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 10px 0 4px; }
+.post-replies-save .profile-hint { margin: 0; }
 #replyPanel textarea {
   width: 100%; padding: 10px 0; margin-bottom: 12px; font-size: 16px; font-family: inherit; line-height: 1.4;
   border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--fg); outline: none; resize: vertical;
@@ -6401,16 +6405,27 @@ async function loadOwnPosts() {
     ]);
     const { posts } = await res.json();
     if (tokenId !== currentTokenId || !$('ppList')) return;
+    if (pendingRepliesToken !== tokenId) { pendingReplies.clear(); pendingRepliesToken = tokenId; }
     const base = `https://${currentTokenName}.${GWEI_GATEWAY}`;
-    let html = (posts || []).map((p) => `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
-      `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
-      `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
-      // No toggle when the record couldn't be read: writing one from a guess would reset the others.
-      (record === null ? '' : `<button class="secondary" onclick="doToggleReplies('${p.hash}', ${!repliesOnFor(p.hash, p.replies, record)})">${repliesOnFor(p.hash, p.replies, record) ? 'Turn replies off' : 'Turn replies on'}</button>`) +
-      `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`).join('');
+    let html = (posts || []).map((p) => {
+      const saved = record === null ? null : repliesOnFor(p.hash, p.replies, record);
+      if (pendingReplies.get(p.hash) === saved) pendingReplies.delete(p.hash); // saved meanwhile
+      const shown = pendingReplies.has(p.hash) ? pendingReplies.get(p.hash) : saved;
+      return `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
+        `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
+        `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
+        // No checkbox when the record couldn't be read: saving one from a guess would reset the others.
+        (saved === null ? '' : `<label class="post-replies"><input type="checkbox"${shown ? ' checked' : ''} onchange="markReplies('${p.hash}', this.checked, ${saved})">Replies</label>`) +
+        `<button class="secondary" onclick="doRemovePost('${p.hash}')">Remove</button></div>`;
+    }).join('');
+    if (record !== null && posts?.length) {
+      html += '<div class="post-replies-save"><button id="ppRepliesSave" onclick="doSaveReplies()" disabled>Save reply settings</button>' +
+        '<span class="profile-hint">Tick the posts that take replies. Saving them is one transaction, however many you change.</span></div>';
+    }
     html += await refundRows(tokenId);
     if (tokenId !== currentTokenId || !$('ppList')) return;
     el.innerHTML = html || '<div class="profile-hint" style="margin:0;">No posts yet.</div>';
+    updateRepliesSave();
   } catch (e) {
     el.innerHTML = '<div class="profile-hint" style="margin:0;">Couldn’t load your posts right now.</div>';
   }
@@ -6607,23 +6622,44 @@ function repliesRecordWith(record, hash, on) {
   return [...kept, `${id}:${on ? 'on' : 'off'}`].join(' ');
 }
 
-async function doToggleReplies(hash, on) {
-  if (isProcessing || !signer || !currentTokenId) return;
+// Reply settings changed in the post list but not saved yet: post hash -> on. They all go out in one
+// setText, because the record holds every post's setting: one transaction per post, or several queued
+// in a wallet's batch, would each be built from the same old record, and only the last would stick.
+const pendingReplies = new Map();
+let pendingRepliesToken = null;
+function markReplies(hash, on, saved) {
+  if (on === saved) pendingReplies.delete(hash); else pendingReplies.set(hash, on);
+  updateRepliesSave();
+}
+function updateRepliesSave() {
+  const btn = $('ppRepliesSave');
+  if (!btn) return;
+  btn.disabled = isProcessing || !pendingReplies.size;
+  btn.textContent = pendingReplies.size ? `Save reply settings (${pendingReplies.size})` : 'Save reply settings';
+}
+async function doSaveReplies() {
+  if (isProcessing || !signer || !currentTokenId || !pendingReplies.size) return;
   const tokenId = currentTokenId;
+  const changes = [...pendingReplies];
   isProcessing = true;
+  updateRepliesSave();
   try {
     // The record as it is now, or nothing: it holds every post's setting, so it is never rebuilt from a guess.
     // Read through the wallet's own node, which the write goes to, not a public RPC that may lag behind it.
-    const record = repliesRecordWith(await contract.text(tokenId, REPLIES_RECORD), hash, on);
-    const tx = await wcTransaction(contract.setText(tokenId, REPLIES_RECORD, record), on ? 'Approve turning replies on' : 'Approve turning replies off');
+    let record = await contract.text(tokenId, REPLIES_RECORD);
+    for (const [hash, on] of changes) record = repliesRecordWith(record, hash, on);
+    showStatus('Confirm in your wallet...');
+    const tx = await wcTransaction(contract.setText(tokenId, REPLIES_RECORD, record), 'Approve your reply settings');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
-    showStatus(on ? 'Replies are on for this post.' : 'Replies are off for this post.', 'success', tx.hash);
+    if (tokenId === currentTokenId) for (const [hash, on] of changes) if (pendingReplies.get(hash) === on) pendingReplies.delete(hash);
+    showStatus(changes.length === 1 ? 'Reply setting saved.' : `Reply settings saved for ${changes.length} posts.`, 'success', tx.hash);
     loadOwnPosts();
   } catch (e) {
     handleError(e);
   } finally {
     isProcessing = false;
+    updateRepliesSave();
   }
 }
 
@@ -6705,7 +6741,7 @@ function updateReplyMeta() {
   // Calldata costs at least 40 gas a byte (EIP-7623), and a reply is all calldata.
   const gas = 21000n + 40n * BigInt(bytes + 1) + 1000n;
   const cost = replyGasPrice ? ` Sending it is one transaction of 1 wei, about ${Number(ethers.formatEther(gas * replyGasPrice)).toPrecision(2)} ETH in gas right now.` : '';
-  el.textContent = `${bytes.toLocaleString()} of ${REPLY_MAX_BYTES.toLocaleString()} bytes.${cost} Replies are public and permanent, and show your .gwei, .wei or ENS name.`;
+  el.textContent = `${bytes.toLocaleString()} of ${REPLY_MAX_BYTES.toLocaleString()} bytes.${cost} Replies are public and permanent, and show your .gwei, .wei or ENS name. Send it on its own, not in a wallet batch.`;
   if (Date.now() - replyGasPriceAt > 30000) {
     replyGasPriceAt = Date.now();
     getRpc().then((rpc) => rpc.getFeeData()).then((fee) => { if (fee.gasPrice) { replyGasPrice = fee.gasPrice; updateReplyMeta(); } }).catch(() => {});
@@ -6733,6 +6769,14 @@ async function doReply() {
     const tx = await wcTransaction(signer.sendTransaction({ to: room, value: 1n, data }), 'Approve your reply');
     showStatus('Waiting for confirmation...', '', tx.hash);
     await waitForTx(tx);
+    // A reply is the transaction itself. A smart account that sent it from inside (in a batch, or to
+    // pay gas in a token, as Ambire and other 7702 wallets can) made the 1 wei an internal call, which
+    // calldata-chat doesn't read: say so, and keep the text to send again on its own.
+    const sent = await rpc.getTransaction(tx.hash).catch(() => null);
+    if (sent && String(sent.to || '').toLowerCase() !== room) {
+      showStatus('Your wallet sent this from inside its smart account (in a batch, or to pay gas in a token), so it isn’t a reply and won’t show. Send the reply again on its own.', 'error', tx.hash);
+      return;
+    }
     $('replyText').value = '';
     showStatus('Reply sent. It shows on the post within a few minutes.', 'success', tx.hash);
     // Opened from the post's page: tell it, so it shows the reply, and close. Only the post's own name's

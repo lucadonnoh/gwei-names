@@ -2585,7 +2585,7 @@ test('posts: the form has no date: a post is dated by its blob', () => {
 
 function repliesHarness() {
   const start = html.indexOf('const REPLIES_RECORD = ');
-  const end = html.indexOf('async function doToggleReplies(', start);
+  const end = html.indexOf('// Reply settings changed in the post list but not saved yet', start);
   assert.notEqual(start, -1, 'reply helpers must exist');
   const context = vm.createContext({ TextEncoder, crypto });
   vm.runInContext(html.slice(start, end) + `
@@ -2634,6 +2634,30 @@ test('replies: a name’s site is linked only when a URL reads it as exactly its
   }
 });
 
+test('replies: several posts changed in the list all land in one record, in one transaction', async () => {
+  const start = html.indexOf('const REPLIES_RECORD = ');
+  const end = html.indexOf('async function doSaveReplies(', start);
+  const button = { disabled: true, textContent: '' };
+  const context = vm.createContext({ TextEncoder, crypto, $: (id) => (id === 'ppRepliesSave' ? button : null), isProcessing: false });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.api = { markReplies, pendingReplies, repliesRecordWith, repliesOnFor };', context);
+  const { markReplies, pendingReplies, repliesRecordWith, repliesOnFor } = context.api;
+  const posts = ['0x111111111111', '0x222222222222', '0x333333333333'].map((p) => p + '00'.repeat(26));
+  for (const hash of posts) markReplies(hash, true, false);
+  markReplies(posts[1], false, false); // ticked, then unticked: back to as saved
+  markReplies(posts[1], true, false);
+  assert.equal(button.textContent, 'Save reply settings (3)');
+  assert.equal(button.disabled, false);
+  let record = 'aaaaaaaaaaaa:off';
+  for (const [hash, on] of pendingReplies) record = repliesRecordWith(record, hash, on);
+  assert.deepEqual(record.split(' ').sort(), ['111111111111:on', '222222222222:on', '333333333333:on', 'aaaaaaaaaaaa:off'], 'every change, and the other posts’ settings kept');
+  assert.ok(posts.every((hash) => repliesOnFor(hash, undefined, record)));
+  markReplies(posts[0], false, false);
+  markReplies(posts[1], false, false);
+  markReplies(posts[2], false, false);
+  assert.equal(button.textContent, 'Save reply settings');
+  assert.equal(button.disabled, true, 'nothing to save once every box is back as saved');
+});
+
 test('replies: they are opt-in, and the composer opts a post in unless the box is unchecked', async () => {
   const api = postsHarness();
   const gateway = await import('../gateway/posts-format.js');
@@ -2653,13 +2677,17 @@ test('replies: #reply/<post> opens the reply box, sending 1 wei from the connect
   assert.match(html, /window\.opener\.postMessage\(\{ type: 'gwei-reply', hash: post\.hash, tx: tx\.hash, text \}, origin\)/, 'the post’s page hears about the sent reply');
   assert.doesNotMatch(html, /postMessage\([^)]*'\*'\)/, 'and no other page does');
   assert.match(html, /if \(replyPost !== post \|\| \$\('replyText'\)\.value !== text\) throw/, 'a window pointed elsewhere mid-send sends nothing');
+  assert.match(html, /const sent = await rpc\.getTransaction\(tx\.hash\)\.catch\(\(\) => null\);\n    if \(sent && String\(sent\.to \|\| ''\)\.toLowerCase\(\) !== room\) \{[\s\S]{0,260}return;\n    \}\n    \$\('replyText'\)\.value = '';/,
+    'a reply a smart account sent from inside isn’t reported as sent, nor cleared, nor told to the post');
   assert.doesNotMatch(html, /addEventListener\('message'/, 'and nothing a page sends this window is ever acted on');
   assert.match(html, /getCode\(room\)\) !== '0x'\) throw/);
   assert.match(html, /if \(own !== '0x' && !own\.startsWith\('0xef0100'\)\) throw/, 'contract wallets would pay for a reply nobody indexes');
   assert.match(html, /signer\.sendTransaction\(\{ to: room, value: 1n, data \}\)/);
   assert.match(html, /if \(isProcessing \|\| !post\?\.ready \|\| post\.off\) return;/, 'no sending before the post is checked, nor to one with replies off');
   assert.doesNotMatch(html, /REPLIES_RECORD\)\.catch\(\(\) => currentRepliesRecord\)|currentRepliesRecord/, 'the record is never rebuilt from a guess');
-  assert.match(html, /repliesRecordWith\(await contract\.text\(tokenId, REPLIES_RECORD\), hash, on\)/, 'and is read through the wallet’s node before it is rewritten');
+  assert.match(html, /let record = await contract\.text\(tokenId, REPLIES_RECORD\);\n    for \(const \[hash, on\] of changes\) record = repliesRecordWith\(record, hash, on\);/,
+    'and is read through the wallet’s node, then every change is applied to it, for one transaction');
+  assert.doesNotMatch(html, /doToggleReplies/, 'no transaction per post: queued in a batch, each would overwrite the others');
 });
 
 test('posts: mainnet points at the deployed GnsPosts and the gwei.domains publisher', () => {
