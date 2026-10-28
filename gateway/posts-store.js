@@ -147,8 +147,8 @@ const topicAddress = (t) => '0x' + t.slice(-40).toLowerCase();
 const POS = '4294967296';
 // The first blob that really carries a post, as one string column (a correlated subquery).
 // A post's date: the block of the first blob that carries it, else its first authorization.
-// A post whose bytes say "replies": false (posts-format.js parsePost), read without parsing every row in JS.
-const REPLIES_OFF = "(CASE WHEN json_valid(CAST(c.bytes AS TEXT)) AND json_type(CAST(c.bytes AS TEXT), '$.replies') = 'false' THEN 1 ELSE 0 END)";
+// A post whose bytes say "replies": true (posts-format.js parsePost), read without parsing every row in JS.
+const REPLIES_ON = "(CASE WHEN json_valid(CAST(c.bytes AS TEXT)) AND json_type(CAST(c.bytes AS TEXT), '$.replies') = 'true' THEN 1 ELSE 0 END)";
 const ONCHAIN_TS = '(SELECT p.ts FROM pub p JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
 const ONCHAIN = "(SELECT p.blob || '|' || p.tx || '|' || p.block || '|' || p.ts || '|' || p.publisher FROM pub p " +
   'JOIN carried k ON k.vh = p.blob AND k.hash = p.hash WHERE p.hash = l.hash ORDER BY p.block, p.idx LIMIT 1)';
@@ -276,7 +276,7 @@ export class PostStore {
       'WHERE a.hash = ? ORDER BY a.block, a.idx LIMIT 50', hash,
     ).map((a) => ({ token: a.token, name: a.name || null, author: a.author, blob: a.blob, publisher: a.publisher, fee: a.fee, tx: a.tx, block: a.block, time: a.ts }));
     const onchain = this.withCid(this.onchain(hash));
-    return { hash, cid: postCid(hash), title: post.title, body: post.body, ...(post.replies === false && { replies: false }), time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
+    return { hash, cid: postCid(hash), title: post.title, body: post.body, ...(post.replies === true && { replies: true }), time: onchain?.time ?? authorizations[0]?.time ?? null, authorizations, onchain };
   }
 
   // Every post a blob carries, in the order the index found them, for mirrors and other frontends.
@@ -318,7 +318,7 @@ export class PostStore {
     const rows = this.rows(
       `WITH latest AS (SELECT hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts ` +
       'FROM auth WHERE token = ? AND author = ? GROUP BY hash) ' +
-      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${REPLIES_OFF} AS replies_off, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
+      `SELECT * FROM (SELECT l.hash, l.first_ts, l.last_ts, c.title, ${REPLIES_ON} AS replies_on, ${ONCHAIN_TS} AS onchain_ts, ${ONCHAIN} AS onchain FROM latest l JOIN content c ON c.hash = l.hash ` +
       `WHERE NOT EXISTS (SELECT 1 FROM removal r WHERE r.token = ? AND r.hash = l.hash AND r.author = ? AND r.block * ${POS} + r.idx > l.pos) ` +
       (prefix ? 'AND substr(l.hash, 3, ?) = ? ' : '') +
       ') WHERE onchain IS NOT NULL OR last_ts > ? ORDER BY COALESCE(onchain_ts, first_ts) DESC LIMIT ?',
@@ -327,7 +327,7 @@ export class PostStore {
     );
     return rows.map((row) => ({
       hash: row.hash, title: row.title, time: row.onchain_ts ?? row.first_ts, authorized: row.first_ts, onchain: parseOnchain(row.onchain),
-      ...(row.replies_off && { replies: false }),
+      ...(row.replies_on && { replies: true }),
     }));
   }
 
@@ -335,7 +335,7 @@ export class PostStore {
     const [match] = this.forToken(token, owner, 1, prefix);
     if (!match) return null;
     const post = parsePost(this.raw(match.hash) || new Uint8Array());
-    return { ...match, body: post?.body ?? null, ...(post?.replies === false ? { replies: false } : {}), replyCount: this.replyCount(match.hash) };
+    return { ...match, body: post?.body ?? null, ...(post?.replies === true ? { replies: true } : {}), replyCount: this.replyCount(match.hash) };
   }
 
   // A post's newest replies, oldest first, each with its sender's name as senderNames finds it (or null),

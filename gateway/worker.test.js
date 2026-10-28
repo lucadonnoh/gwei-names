@@ -1604,7 +1604,7 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false, postReplies } =
     forToken: answer('forToken', posts),
     postForToken: answer('postForToken', (token, owner, prefix) => {
       const p = posts.find((x) => x.hash.slice(2, 14) === prefix);
-      return p ? { ...p, body: BODIES[p.hash], ...(postReplies === false ? { replies: false } : {}) } : null;
+      return p ? { ...p, body: BODIES[p.hash], ...(postReplies === true ? { replies: true } : {}) } : null;
     }),
     bodies: answer('bodies', (hashes) => hashes.map((h) => BODIES[h] ?? null)),
     upload: answer('upload', (bytes) => (bytes.length ? { hash: '0x' + 'd1'.repeat(32) } : { status: 400, error: 'Not a v1 post.' })),
@@ -1927,8 +1927,9 @@ test('cards: a post’s card names the post; unknown posts and named websites ar
 });
 
 
-test('a post page shows every reply under its sender’s name, takes replies, and says when they are off', async () => {
+test('a post page that takes replies shows every reply under its sender’s name and a reply box; one that doesn’t, neither', async () => {
   const page = async (path, opts = {}) => {
+    opts = { postReplies: true, ...opts };
     const res = await invoke('https://alice.gwei.domains' + path, { cache: makeCache(), fetchMock: aliceProfile(opts.text), env: { POST_INDEX: fakePostIndex(opts) } });
     assert.equal(res.status, 200);
     return { html: await res.text(), csp: res.headers.get('content-security-policy') };
@@ -1948,16 +1949,16 @@ test('a post page shows every reply under its sender’s name, takes replies, an
   assert.equal(`'sha256-${createHash('sha256').update(REPLY_SCRIPT).digest('base64')}'`, REPLY_SCRIPT_HASH, 'the policy allows exactly the reply script');
   assert.doesNotMatch(REPLY_SCRIPT, /ethereum|eip6963|request\(|innerHTML/, 'the page script never touches a wallet, nor writes markup');
   assert.match(POST_CSP, /^default-src 'none'; script-src 'sha256-[^']+' 'sha256-[^']+'; img-src https: data:;/, 'no connect-src: the page makes no requests');
-  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: false }));
-  assert.match(html, /Replies are off for this post\./);
-  assert.doesNotMatch(html, /Great &lt;post&gt;|#reply\/|class="reply-form"|<script>\(\(\)=>\{const f=/);
-  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: false, text: { 'gwei-replies': 'a1a1a1a1a1a1:on' } }));
-  assert.match(html, /Replies \(6\)/, 'the name’s record overrides the post');
+  const noReplies = /<div class="section">Replies|Great &lt;post&gt;|#reply\/|class="reply-form"|<script>\(\(\)=>\{const f=/;
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: undefined }));
+  assert.doesNotMatch(html, noReplies, 'a post that never chose replies (every post from before them) has no reply section');
+  ({ html } = await page('/posts/a1a1a1a1a1a1', { postReplies: undefined, text: { 'gwei-replies': 'a1a1a1a1a1a1:on' } }));
+  assert.match(html, /Replies \(6\)/, 'until its author turns them on');
   ({ html } = await page('/posts/a1a1a1a1a1a1', { text: { 'gwei-replies': 'a1a1a1a1a1a1:off' } }));
-  assert.match(html, /Replies are off for this post\./);
-  const many = Array.from({ length: 40 }, (_, i) => `${i.toString(16).padStart(12, '0')}:off`).join(' ');
+  assert.doesNotMatch(html, noReplies, 'and the record turns them off too');
+  const many = Array.from({ length: 40 }, (_, i) => `${i.toString(16).padStart(12, '0')}:on`).join(' ');
   ({ html } = await page('/posts/a1a1a1a1a1a1', { text: { 'gwei-replies': many + ' a1a1a1a1a1a1:off' } }));
-  assert.match(html, /Replies are off for this post\./, 'however many posts the record lists (it isn’t clipped like text)');
+  assert.doesNotMatch(html, noReplies, 'however many posts the record lists (it isn’t clipped like text)');
 });
 
 test('/api/posts/<hash>/replies lists every reply, whatever the author’s setting', async () => {

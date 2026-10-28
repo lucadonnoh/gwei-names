@@ -32,8 +32,9 @@ function rawCid(hashCode, digest) {
 export const postCid = (hash) => rawCid(0x1b, hexToBytes(hash.slice(2)));
 export const blobCid = async (blob) => rawCid(0x12, new Uint8Array(await crypto.subtle.digest('SHA-256', blob)));
 
-// A v1 post: { "v": 1, "title": string, "body": string }, and optionally "replies": false to turn
-// replies off (replies-format.js). Unknown fields are ignored, so later versions can add some. A post
+// A v1 post: { "v": 1, "title": string, "body": string }, and optionally "replies": true to take
+// replies (replies-format.js): a post that doesn't say so, like every post written before replies
+// existed, doesn't. Unknown fields are ignored, so later versions can add some. A post
 // has no date of its own: it is dated by the block of the blob that carries it. Returns null for
 // anything else.
 export function parsePost(bytes) {
@@ -48,12 +49,12 @@ export function parsePost(bytes) {
   if (typeof doc.title !== 'string' || typeof doc.body !== 'string') return null;
   const title = doc.title.trim();
   if (!title || [...title].length > MAX_TITLE_CHARS) return null;
-  return doc.replies === false ? { title, body: doc.body, replies: false } : { title, body: doc.body };
+  return doc.replies === true ? { title, body: doc.body, replies: true } : { title, body: doc.body };
 }
 
-// Serialize a post the way the dapp does: fixed key order, no whitespace, "replies" only when off.
+// Serialize a post the way the dapp does: fixed key order, no whitespace, "replies" only when on.
 export function encodePost({ title, body, replies }) {
-  return new TextEncoder().encode(JSON.stringify(replies === false ? { v: 1, title, body, replies: false } : { v: 1, title, body }));
+  return new TextEncoder().encode(JSON.stringify(replies === true ? { v: 1, title, body, replies: true } : { v: 1, title, body }));
 }
 
 // Blob → payload bytes, or null if any field element has a nonzero top byte (not this encoding).

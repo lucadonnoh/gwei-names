@@ -2632,14 +2632,19 @@ test('replies: a name’s site is linked only when a URL reads it as exactly its
   }
 });
 
-test('replies: the composer can turn them off, and that is in the post’s bytes', async () => {
+test('replies: they are opt-in, and the composer opts a post in unless the box is unchecked', async () => {
   const api = postsHarness();
   const gateway = await import('../gateway/posts-format.js');
-  assert.match(html, /<input type="checkbox" id="ppReplies" checked/);
-  const off = api.postBytesFrom('T', 'B', false);
-  assert.equal(new TextDecoder().decode(off), '{"v":1,"title":"T","body":"B","replies":false}');
-  assert.deepEqual([...off], [...gateway.encodePost({ title: 'T', body: 'B', replies: false })]);
-  assert.deepEqual([...api.postBytesFrom('T', 'B', true)], [...gateway.encodePost({ title: 'T', body: 'B' })]);
+  assert.match(html, /<input type="checkbox" id="ppReplies" checked/, 'new posts take replies unless the author unchecks it');
+  assert.match(html, /const replies = \$\('ppReplies'\) \? \$\('ppReplies'\)\.checked : false;/);
+  const on = api.postBytesFrom('T', 'B', true);
+  assert.equal(new TextDecoder().decode(on), '{"v":1,"title":"T","body":"B","replies":true}');
+  assert.deepEqual([...on], [...gateway.encodePost({ title: 'T', body: 'B', replies: true })]);
+  assert.deepEqual([...api.postBytesFrom('T', 'B', false)], [...gateway.encodePost({ title: 'T', body: 'B' })], 'off: the field is left out, as in old posts');
+  const hash = '0x634cd7f83ccd' + '00'.repeat(26);
+  const replies = repliesHarness();
+  assert.equal(replies.repliesOnFor(hash, undefined, ''), false, 'a post that never chose replies has none');
+  assert.equal(replies.repliesOnFor(hash, undefined, '634cd7f83ccd:on'), true, 'until its author turns them on');
 });
 
 test('replies: #reply/<post> opens the reply box, sending 1 wei from the connected wallet after checking the room has no code', () => {

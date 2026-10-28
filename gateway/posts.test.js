@@ -1085,28 +1085,31 @@ test('reply rooms and messages are calldata-chat’s', async () => {
 
 test('the post’s author decides whether it takes replies: the name’s record first, then the post', () => {
   const hash = '0x634cd7f83ccd' + '00'.repeat(26);
-  assert.equal(repliesOn(hash, undefined, ''), true, 'on by default');
-  assert.equal(repliesOn(hash, false, ''), false, 'the post turned them off');
-  assert.equal(repliesOn(hash, false, '634cd7f83ccd:on'), true, 'the record wins');
-  assert.equal(repliesOn(hash, undefined, 'aaaaaaaaaaaa:off 634CD7F83CCD:off'), false, 'case and other posts don’t matter');
+  assert.equal(repliesOn(hash, undefined, ''), false, 'off by default: a post written before replies never chose them');
+  assert.equal(repliesOn(hash, false, ''), false);
+  assert.equal(repliesOn(hash, true, ''), true, 'a post that says so takes them');
+  assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:on'), true, 'the author can turn an old post on');
+  assert.equal(repliesOn(hash, true, '634cd7f83ccd:off'), false, 'the record wins');
+  assert.equal(repliesOn(hash, true, 'aaaaaaaaaaaa:on 634CD7F83CCD:off'), false, 'case and other posts don’t matter');
   assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:off 634cd7f83ccd:on'), true, 'the last entry wins');
-  assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:maybe'), true, 'junk is ignored');
+  assert.equal(repliesOn(hash, true, '634cd7f83ccd:maybe'), true, 'junk is ignored');
+  assert.equal(repliesOn(hash, undefined, '634cd7f83ccd:maybe'), false);
   assert.equal(setRepliesRecord('aaaaaaaaaaaa:off 634cd7f83ccd:on', hash, false), 'aaaaaaaaaaaa:off 634cd7f83ccd:off');
   assert.equal(setRepliesRecord('', hash, true), '634cd7f83ccd:on');
 });
 
-test('a post that turned replies off says so in its name’s list and its detail', async () => {
+test('a post that takes replies says so in its name’s list and its detail', async () => {
   const world = fakeWorld();
   const store = makeStore(world);
-  const off = encodePost({ title: 'Quiet', body: 'No replies', replies: false });
-  const on = postBytes('Chatty');
-  for (const bytes of [off, on.bytes]) store.upload(bytes, 'ip');
-  world.logs.push(authorized(500, 0, TOKEN, postHash(off), ALICE), authorized(501, 0, TOKEN, on.hash, ALICE));
+  const on = encodePost({ title: 'Chatty', body: 'Replies welcome', replies: true });
+  const quiet = postBytes('Quiet'); // like every post written before replies existed
+  for (const bytes of [on, quiet.bytes]) store.upload(bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, postHash(on), ALICE), authorized(501, 0, TOKEN, quiet.hash, ALICE));
   await store.sync();
   const list = Object.fromEntries(store.forToken(TOKEN, ALICE).map((p) => [p.title, p.replies]));
-  assert.deepEqual(list, { Quiet: false, Chatty: undefined });
-  assert.equal(store.detail(postHash(off)).replies, false);
-  assert.equal('replies' in store.detail(on.hash), false);
+  assert.deepEqual(list, { Chatty: true, Quiet: undefined });
+  assert.equal(store.detail(postHash(on)).replies, true);
+  assert.equal('replies' in store.detail(quiet.hash), false);
 });
 
 test('replies are indexed from the owner’s node: top-level 1-wei calls with a reply’s input, nothing else', async () => {

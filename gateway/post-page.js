@@ -70,7 +70,7 @@ function replyForm(post, name) {
 }
 
 function repliesHtml({ name, post, pageUrl, replies, repliesOff }) {
-  if (repliesOff) return '<div class="section">Replies</div><p class="note replies-note">Replies are off for this post.</p>';
+  if (repliesOff) return ''; // no replies section at all, as on a blog without comments
   const shown = replies?.replies || [];
   const site = new URL(pageUrl).hostname.split('.').slice(-2).join('.');
   const items = shown.map((r) => '<div class="reply"><div class="reply-head">' + senderLink(r, site) +

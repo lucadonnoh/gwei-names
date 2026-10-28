@@ -49,8 +49,9 @@ export function replyText(call, room) {
 
 // Whether a post takes replies. The name's `gwei-replies` text record decides first: space-separated
 // `<post id>:on` or `:off` entries, where the post id is the 12 hex digits after 0x (as in its URL),
-// set by the name's current owner, the last entry for a post winning. Then the post's own `replies`
-// field (false turns them off). Otherwise, yes.
+// set by the name's current owner, the last entry for a post winning. Then the post itself: only
+// `"replies": true` takes them. Replies are opt-in, so posts written before they existed, or by a
+// publisher that doesn't know them, don't.
 export const REPLIES_RECORD = 'gwei-replies';
 export function repliesOn(postHash, postReplies, record) {
   const id = postHash.slice(2, 14).toLowerCase();
@@ -59,7 +60,7 @@ export function repliesOn(postHash, postReplies, record) {
     const [key, value] = entry.split(':');
     if (key === id && (value === 'on' || value === 'off')) setting = value === 'on';
   }
-  return setting ?? postReplies !== false;
+  return setting ?? postReplies === true;
 }
 
 // The record with one post's setting changed (its other entries kept, in order).

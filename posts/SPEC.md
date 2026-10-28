@@ -50,8 +50,8 @@ A post is a UTF-8 JSON object, at most 126,968 bytes:
 - `v`: `1`.
 - `title`: a non-empty string of at most 200 characters.
 - `body`: Markdown (below).
-- `replies` (optional): `false` asks clients not to show replies (below). Writers put it after `body`
-  and only when it is `false`.
+- `replies` (optional): `true` takes replies (below); without it a post takes none. Writers put it
+  after `body` and only when it is `true`.
 - Other fields are ignored, so later versions can add some.
 
 A post has no date of its own. It is dated by the block of the first blob that carries it, or,
@@ -136,11 +136,13 @@ contract and no publisher are involved: the transaction is the reply, and its se
   that themselves; ENS's Universal Resolver reverts otherwise). An ENS name must also be exactly its
   ENSIP-15 normalization, so look-alikes don't show, and offchain (CCIP-Read) names aren't followed.
   A sender with none shows as their address.
-- **Turning them off.** A post takes replies unless its author says otherwise: first the name's
-  `gwei-replies` text record, space-separated `<post id>:on` or `<post id>:off` entries (the post id is
-  the 12 hex digits after `0x`, as in its URL; the last entry for a post wins), then the post's own
-  `replies` field. The record lets an owner change their mind without a new post. It is a display
-  choice: replies sent to the room stay on Ethereum, and the gateway's API lists them all.
+- **On or off.** Replies are opt-in: a post takes them only if its bytes say `"replies": true`, so posts
+  written before replies existed, or by a publisher that doesn't know them, take none. The name's
+  `gwei-replies` text record decides first: space-separated `<post id>:on` or `<post id>:off` entries
+  (the post id is the 12 hex digits after `0x`, as in its URL; the last entry for a post wins), so an
+  owner can turn an old post on, or change their mind, without a new post. It is a display choice:
+  replies sent to the room stay on Ethereum, and the gateway's API lists them all. A post that takes
+  no replies has no reply section at all.
 
 **Sending.** A post page has a reply box, but a post page lives on its name's own host, where the
 owner's website takes over whenever they set one, so a wallet is never connected there. The box's

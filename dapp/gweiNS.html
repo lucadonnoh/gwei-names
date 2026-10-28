@@ -6300,10 +6300,10 @@ function postBlobFrom(bytes) {
   return blob;
 }
 // The bytes the gateway and publisher expect: v, title, body, in that order, no whitespace, and
-// "replies": false only when replies are off. A post has no date of its own: it is dated by the block
-// of the blob that carries it.
-function postBytesFrom(title, body, replies = true) {
-  return new TextEncoder().encode(JSON.stringify(replies ? { v: 1, title, body } : { v: 1, title, body, replies: false }));
+// "replies": true only when the post takes replies (they're opt-in). A post has no date of its own: it
+// is dated by the block of the blob that carries it.
+function postBytesFrom(title, body, replies = false) {
+  return new TextEncoder().encode(JSON.stringify(replies ? { v: 1, title, body, replies: true } : { v: 1, title, body }));
 }
 // Same slug as the gateway (gateway/posts-format.js postPath).
 function postPathFor(hash, title) {
@@ -6341,7 +6341,7 @@ async function refreshPostQuote() {
 function readPostForm() {
   const title = ($('ppTitle')?.value || '').trim();
   const body = $('ppBody')?.value || '';
-  const replies = $('ppReplies') ? $('ppReplies').checked : true;
+  const replies = $('ppReplies') ? $('ppReplies').checked : false;
   return { title, body, replies, bytes: postBytesFrom(title, body, replies) };
 }
 function updatePostCost() {
@@ -6576,8 +6576,8 @@ async function doRefundPost(blob, publisher) {
 
 // ── Replies (gateway/replies-format.js, posts/SPEC.md "Replies"): a reply is a calldata-chat message, a
 // 1-wei transaction from the replier's own wallet to the post's room with 0x01 + the text as its input.
-// The post's author turns them on or off with the name's gwei-replies record, which wins over the
-// post's own "replies" field. ──
+// Replies are opt-in: a post takes them if it says "replies": true, or if its author turns them on with
+// the name's gwei-replies record, which wins over the post. ──
 const REPLIES_RECORD = 'gwei-replies';
 const REPLY_MAX_BYTES = 1024;
 async function replyRoomFor(hash) {
@@ -6597,7 +6597,7 @@ function repliesOnFor(hash, postReplies, record) {
     const [key, value] = entry.split(':');
     if (key === id && (value === 'on' || value === 'off')) setting = value === 'on';
   }
-  return setting ?? postReplies !== false;
+  return setting ?? postReplies === true;
 }
 function repliesRecordWith(record, hash, on) {
   const id = hash.slice(2, 14).toLowerCase();
