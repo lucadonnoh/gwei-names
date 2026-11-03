@@ -42,6 +42,11 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **`diff.gwei.domains`** is a real service, not a gwei name, so the worker proxies it straight
   through to the Railway diff site (`RESERVED` in `worker.js`). Add more reserved subdomains there
   if you stand up other services under `gwei.domains`.
+- **`posts.gwei.limo`** (and `posts.gwei.domains`) is the posts host, not the name `posts.gwei`:
+  every name's profile and posts by path, `/<name>.gwei/…`, subnames included, and recent posts at `/`
+  (`servePostsHost` in `worker.js`; posts/SPEC.md). A top-level name without a website is redirected to
+  its own host. Every name shares the origin, so it never serves a website, and every response that
+  isn't one of the gateway's pages is sandboxed.
 - **Name profiles.** A registered name with no `contenthash` and no usable `contentcontract` record
   gets a profile page at its root (`profile-page.js`, styled like gwei.domains): address, owner,
   expiry and its `display`, `description`, `avatar`, `url`, `com.twitter`, `com.github`,

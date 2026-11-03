@@ -1,10 +1,44 @@
-// A name's posts (posts/SPEC.md) as pages under <name>.gwei.domains: one page per post and an Atom
-// feed. Bodies are rendered by markdown.js, which escapes everything; the page CSP allows no scripts
-// but the theme's and REPLY_SCRIPT, by hash.
+// A name's posts (posts/SPEC.md) as pages under <name>.gwei.domains, or under /<name>/ on the posts
+// host (worker.js): one page per post and an Atom feed, and the posts host's list of recent posts.
+// Bodies are rendered by markdown.js, which escapes everything; the page CSP allows no scripts but the
+// theme's and REPLY_SCRIPT, by hash.
 
 import { excerpt, renderMarkdown } from './markdown.js';
 import { postPath } from './posts-format.js';
-import { THEME_SCRIPT_HASH, avatarHtml, cardImage, escapeHtml, faviconLinks, humanDate, metaTags, postCard, postCardPath, renderLayout, textOn } from './profile-page.js';
+import { CARD_PATH, THEME_SCRIPT_HASH, avatarHtml, avatarUrl, basePath, cardImage, escapeHtml, faviconLinks, humanDate, metaTags, postCard, postCardPath, renderLayout, textOn } from './profile-page.js';
+
+// A post's cover (posts/SPEC.md, "Cover image"; ported from wei-names, MIT): an image alone on the
+// body's first line, followed by a blank line or nothing. It needs no field of its own, so a reader
+// that doesn't know covers still shows it, as the post's first image. Returns { cover: { url, alt } |
+// null, body: the rest }.
+const COVER_LINE = /^[ \t]*!\[([^\]\n]{0,300})\]\([ \t]*([^\s()<>]{1,200000})[ \t]*\)[ \t]*(?:\n[ \t]*\n|\n?$)/;
+export function splitCover(body) {
+  const text = String(body || '').replace(/^\s*\n/, '');
+  const m = COVER_LINE.exec(text);
+  const url = m && avatarUrl(m[2]);
+  if (!url) return { cover: null, body };
+  return { cover: { url, alt: m[1].trim() }, body: text.slice(m[0].length) };
+}
+// A cover stored inside the post, decoded for /posts/<id>/cover (link previews need a real URL). Never
+// SVG: served on the name's own host and opened directly, it could run scripts there.
+const COVER_DATA = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
+export function coverBytes(url) {
+  const m = COVER_DATA.exec(url || '');
+  if (!m) return null;
+  try {
+    return { type: m[1], bytes: Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0)) };
+  } catch (_) {
+    return null;
+  }
+}
+// The cover as a link preview's image: an https (or ipfs://, through the path gateway) cover is its own
+// URL, one inside the post is served from /posts/<id>/cover.
+function coverImage(post, pageUrl) {
+  const { cover } = splitCover(post.body);
+  if (!cover) return null;
+  if (cover.url.startsWith('data:')) return coverBytes(cover.url) ? new URL(`posts/${post.hash.slice(2, 14)}/cover`, pageUrl).href : null;
+  return cover.url;
+}
 
 const short = (hex) => `${hex.slice(0, 10)}…${hex.slice(-6)}`;
 
@@ -28,8 +62,13 @@ const DAPP_REPLY = 'https://gwei.domains/#reply/';
 function senderLink(r, site) {
   const label = (suffix) => r.name.slice(0, -suffix.length);
   let href;
-  // A name's own host only for a plain label: anything a URL could read differently stays on gwei.domains.
-  if (r.system === 'gns') href = /^[a-z0-9-]+$/.test(label('.gwei')) ? `https://${label('.gwei')}.${site}/` : `https://gwei.domains/#${encodeURIComponent(label('.gwei'))}`;
+  // A name's own host only for a plain label: anything a URL could read differently stays on gwei.domains,
+  // but a subname (labels of the same kind) has its page on the posts host.
+  if (r.system === 'gns') {
+    href = /^[a-z0-9-]+$/.test(label('.gwei')) && !['posts', 'diff'].includes(label('.gwei')) ? `https://${label('.gwei')}.${site}/`
+      : /^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(label('.gwei')) ? `https://posts.${site}/${r.name}/`
+      : `https://gwei.domains/#${encodeURIComponent(label('.gwei'))}`;
+  }
   else if (r.system === 'wns') href = `https://wei.domains/#${encodeURIComponent(label('.wei'))}`;
   else if (r.system === 'ens') href = `https://app.ens.domains/${encodeURIComponent(r.name)}`;
   if (r.name && href) return `<a href="${escapeHtml(href)}" rel="nofollow noopener">${escapeHtml(r.name)}</a>`;
@@ -85,16 +124,20 @@ function repliesHtml({ name, post, pageUrl, replies, repliesOff }) {
 
 export function renderPostPage({ name, pageUrl, profile, post, replies = null, repliesOff = false }) {
   const accent = profile.page?.color || null;
-  const url = new URL(postPath(post.hash, post.title), pageUrl).href;
+  const root = escapeHtml(basePath(pageUrl));
+  const url = new URL(postPath(post.hash, post.title).slice(1), pageUrl).href;
   const description = excerpt(post.body) || `A post by ${name}.`;
   const share = `https://x.com/intent/post?text=${encodeURIComponent(post.title)}&url=${encodeURIComponent(url)}`;
+  const { cover, body: text } = splitCover(post.body);
+  const coverUrl = coverImage(post, pageUrl);
   const body =
-    `<a class="byline" href="/">${avatarHtml(profile)}<span>${escapeHtml(name)}</span></a>` +
+    `<a class="byline" href="${root}">${avatarHtml(profile)}<span>${escapeHtml(name)}</span></a>` +
+    (cover ? `<figure class="cover"><img src="${escapeHtml(cover.url)}" alt="${escapeHtml(cover.alt)}" referrerpolicy="no-referrer"></figure>` : '') +
     `<h2 class="post-title">${escapeHtml(post.title)}</h2>` +
     `<div class="post-meta"><time datetime="${new Date(post.time * 1000).toISOString().slice(0, 10)}">${humanDate(post.time)}</time></div>` +
-    `<div class="post-body">${renderMarkdown(post.body)}</div>` +
+    `<div class="post-body">${renderMarkdown(text, { base: basePath(pageUrl) })}</div>` +
     `<div class="panel">${onchainRows(post)}</div>` +
-    `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="/">More from ${escapeHtml(name)}</a>` +
+    `<div class="actions"><a class="btn"${accent ? ` style="background:${accent};border-color:${accent};color:${textOn(accent)}"` : ''} href="${root}">More from ${escapeHtml(name)}</a>` +
     `<a class="btn secondary" href="${escapeHtml(share)}" rel="noopener">Share</a></div>` +
     repliesHtml({ name, post, pageUrl, replies, repliesOff }) +
     '<p class="note">Posts on .gwei names are stored in Ethereum blobs and can be published by anyone. ' +
@@ -102,11 +145,13 @@ export function renderPostPage({ name, pageUrl, profile, post, replies = null, r
   return renderLayout({
     title: `${post.title} · ${name}`,
     subtitle: '.gwei post',
-    icon: faviconLinks(profile),
-    head: `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` +
+    icon: faviconLinks(profile, basePath(pageUrl)),
+    head: `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="${root}feed.xml">` +
       metaTags({
         title: `${post.title} · ${name}`, description, url, type: 'article',
-        ...cardImage(postCard(name, profile, post, pageUrl), postCardPath(post.hash), pageUrl, `${post.title}, a post by ${name}`),
+        // A cover is the post's preview image, as an article's banner is; without one, its drawn card.
+        ...(coverUrl ? { image: coverUrl, imageAlt: cover.alt || post.title, large: true }
+          : cardImage(postCard(name, profile, post, pageUrl), postCardPath(post.hash), pageUrl, `${post.title}, a post by ${name}`)),
       }),
     body,
   });
@@ -119,11 +164,32 @@ const iso = (t) => new Date(t * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 export function renderFeed({ name, pageUrl, posts }) {
   const updated = posts.length ? Math.max(...posts.map((p) => p.time)) : 0;
   const entries = posts.map((p) => {
-    const link = new URL(postPath(p.hash, p.title), pageUrl).href;
+    const link = new URL(postPath(p.hash, p.title).slice(1), pageUrl).href;
     return `<entry><title>${xml(p.title)}</title><link href="${xml(link)}"/><id>urn:gwei-post:${p.hash}</id>` +
-      `<updated>${iso(p.time)}</updated><content type="html">${xml(renderMarkdown(p.body || ''))}</content></entry>`;
+      `<updated>${iso(p.time)}</updated><content type="html">${xml(renderMarkdown(p.body || '', { base: basePath(pageUrl) }))}</content></entry>`;
   }).join('');
   return '<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom">' +
-    `<title>${xml(name)}</title><link href="${xml(pageUrl)}"/><link rel="self" href="${xml(new URL('/feed.xml', pageUrl).href)}"/>` +
+    `<title>${xml(name)}</title><link href="${xml(pageUrl)}"/><link rel="self" href="${xml(new URL('feed.xml', pageUrl).href)}"/>` +
     `<id>${xml(pageUrl)}</id><updated>${iso(updated)}</updated><author><name>${xml(name)}</name></author>${entries}</feed>`;
+}
+
+// The posts host's front page: the newest posts on every name, each linked under /<name>/ there (a name
+// with its own page moves on to it from there). `posts` are the index's recent() rows.
+export const postsHostCard = (host) => ({ kind: 'site', title: 'posts', lead: 'blogs on .gwei names and subnames, stored in Ethereum blobs', footer: host });
+export function renderRecentPosts({ pageUrl, posts }) {
+  const host = new URL(pageUrl).hostname;
+  const items = posts.map((p) =>
+    `<a class="post-link" href="${escapeHtml(`/${encodeURIComponent(p.name)}${postPath(p.hash, p.title)}`)}"><span class="post-date">${humanDate(p.time, 'short')}</span>` +
+    `<span class="post-name">${escapeHtml(p.title)} <span class="post-by">· ${escapeHtml(p.name)}</span></span>${p.onchain ? '' : '<span class="badge">Publishing</span>'}</a>`).join('');
+  return renderLayout({
+    title: 'Posts on .gwei names',
+    subtitle: 'posts',
+    head: metaTags({
+      title: 'Posts on .gwei names', description: 'Blogs on .gwei names and subnames, stored in Ethereum blobs.', url: pageUrl,
+      ...cardImage(postsHostCard(host), CARD_PATH, pageUrl, 'Posts on .gwei names'),
+    }),
+    body: '<div class="section">Recent posts</div>' + (items ? `<div class="posts">${items}</div>` : '<p class="note">No posts yet.</p>') +
+      '<p class="note">Posts on .gwei names are stored in Ethereum blobs and can be published by anyone. ' +
+      '<a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md">How it works →</a></p>',
+  });
 }

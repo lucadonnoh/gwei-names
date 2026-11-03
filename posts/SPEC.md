@@ -64,9 +64,30 @@ while no blob does yet, by the block of its first authorization.
 Bodies are untrusted, so clients must never render HTML from them. The gateway's renderer
 ([gateway/markdown.js](../gateway/markdown.js)) supports headings, paragraphs (a newline is a line
 break), `**bold**`, `*italic*`, `~~strike~~`, `` `code` ``, fenced code blocks, `>` quotes, `-` and
-`1.` lists, `---`, `[links](url)`, `![images](url)`, bare `https://` links, and TeX math as `$…$` and
-`$$…$$`. Links may be `https`, `http`, `mailto`, `ipfs://`, a `/path` on the name's own site or a
-`#anchor`; images may be `https`, `ipfs://` or a `data:image` URL.
+`1.` lists, `---`, `[links](url)`, `![images](url)`, bare `https://` links, `<https://…>` links, and
+TeX math as `$…$` and `$$…$$`. Links may be `https`, `http`, `mailto`, `ipfs://`, a `/path` on the
+name's own site or a `#anchor`; a web address written without its scheme (`example.com`) is an `https`
+link, and a `.gwei` name (`alice.gwei`) is its site on gwei.limo (a subname, `blog.alice.gwei`, its
+page on the posts host). Images may be `https`, `ipfs://` or a
+base64 `data:image` URL (png, jpeg, gif, webp or svg+xml).
+
+A `data:image` URL puts the picture inside the post, so it lives in the blob with the text and needs
+nothing pinned anywhere. It shares the post's 126,968 bytes with the text and costs nothing extra,
+since a blob costs the same full or not. The same format as [wei-names' posts](https://github.com/src-company/wei-names/blob/main/posts/SPEC.md),
+which this part comes from, so a post renders the same on both.
+
+### Cover image
+
+An image alone on the body's first line, followed by a blank line or nothing, is the post's
+**cover**: the gateway shows it as a banner above the title and gives it to link previews
+(`og:image`; a cover stored in the post is served at `/posts/<id>/cover`, never as SVG). It needs no
+field of its own, so a reader that doesn't know covers shows it as the post's first image.
+
+```
+![](data:image/webp;base64,UklGR…)
+
+The post starts here.
+```
 
 ## Blob format
 
@@ -145,13 +166,15 @@ contract and no publisher are involved: the transaction is the reply, and its se
   no replies has no reply section at all.
 
 **Sending.** A post page has a reply box, but a post page lives on its name's own host, where the
-owner's website takes over whenever they set one, so a wallet is never connected there. The box's
+owner's website takes over whenever they set one, or on the posts host every name shares (below), so a
+wallet is never connected there. The box's
 Reply opens `https://gwei.domains/#reply/<hash>/<name>/<text>` in a small window. Any site can open
 that link with any text, so the window only fills the text in, uses the name only to pick which of the
 post's authorizations to credit (it must be one), checks the post takes replies, and sends only when
 Send is pressed there and the wallet confirms. Once the transaction is in a block, the window posts
 `{ "type": "gwei-reply", "hash", "tx", "text" }` to the page that opened it, addressed only to that
-name's origins on gwei.limo and gwei.domains, and closes; the post page shows the reply at once, as
+name's origins on gwei.limo and gwei.domains and to the posts host's (whose pages run no script but
+the post page's own, so only the post's page hears it), and closes; the post page shows the reply at once, as
 text, if the message came from that window on `https://gwei.domains` and is for its post. That
 addressing only narrows who learns which browser sent a reply: anyone can authorize any post hash on
 their own name, open the window with that name (it then credits them), and hear back.
@@ -202,8 +225,18 @@ A claim that arrives after its blob was checked gets the blob checked again, so 
 can't hide a later real one. A blob no source has any more is rebuilt from a post it should carry
 (the index's copy, or IPFS through the gateways in `IPFS_GATEWAYS`) and checked against its versioned
 hash. Posts carried by a blob, and their blobs, are kept for good. Posts show on a name's page when it has
-no website set, at `https://<name>.gwei.domains/posts/…`, with an Atom feed at `/feed.xml`. A post's page
+no website set, at `https://<name>.gwei.limo/posts/…`, with an Atom feed at `/feed.xml`. A post's page
 shows its replies and a reply box (Replies, above). Post pages themselves never ask for a wallet.
+
+**The posts host.** Every name's pages, subnames at any depth included, are also at
+`https://posts.gwei.limo/<name>.gwei/` (the name as ENSIP-15 writes it), with the same paths under it:
+a subname has no host of its own, since the certificates cover one level, and a name with a website
+gives its host to the website. A top-level name without a website is sent on to its own host, so a post
+has one address at a time. Recent posts on every name are at `https://posts.gwei.limo/`. Every name
+shares this origin, so it serves only the gateway's own pages, never a website, and sandboxes
+everything that isn't a page (cards, avatars, covers, feeds). Like
+[posts.wei.domains](https://github.com/src-company/wei-names/blob/main/posts/SPEC.md), which it
+follows.
 
 **Publisher.** The gwei.domains publisher (`posts/poster/`) delivers blobs authors paid it for. It
 rebuilds each blob from the post's bytes (`GET /api/posts/<hash>/raw`) and checks its versioned hash

@@ -21,6 +21,16 @@ import { rpcEndpointConfig } from './rpc-config.js';
 import { hexToBytes } from './web3-auto.js';
 import { ens_normalize } from './ens-normalize.js';
 
+// Where a post is read, for notifiers: a top-level name's own host, else the posts host (worker.js), which
+// has every name, subnames included (and posts.gwei's and diff.gwei's, whose hosts are taken). Only names
+// of plain labels; any other is left to the reader to look up.
+export function postUrl(name, hash, title) {
+  const label = typeof name === 'string' && name.endsWith('.gwei') ? name.slice(0, -5) : null;
+  if (!label || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(label)) return null;
+  const own = /^[a-z0-9-]+$/.test(label) && !['posts', 'diff'].includes(label);
+  return (own ? `https://${label}.gwei.limo` : `https://posts.gwei.limo/${name}`) + postPath(hash, title);
+}
+
 export const T_AUTHORIZED = '0x521590a9cca024d1ff93e37c9ee8f521cee9c2da79903939763c3c34bdb7eb28'; // PostAuthorized(uint256,bytes32,address,bytes32,address,uint256)
 export const T_BLOB_PUBLISHED = '0xb51cc50f0049ae8836824f5ee55fbae269ff6cf4ff8fc6390b721310d5ade99b'; // BlobPublished(bytes32,address,uint256)
 export const T_REMOVED = '0xb436f9efc5db52a352858f3e68c0e4cf41e7c50b0ef72366bd2f05e7263df3ee'; // PostRemoved(uint256,bytes32,address)
@@ -168,7 +178,7 @@ export class PostStore {
     this.uploadsByIp = new Map();
     this.owners = new Map();
     this.primaries = new Map();
-    this.recentCache = null;
+    this.recentCache = new Map(); // limit -> { at, posts }: the dapp and the posts host ask for different lengths
     this.syncing = null;
     sql.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
     const version = `${SCHEMA_VERSION}:${this.contract || ''}`;
@@ -381,13 +391,12 @@ export class PostStore {
     const replies = rows.map((r) => {
       const post = posts.get(r.hash);
       const record = post.token ? records.get(post.token) : undefined;
-      const label = post.name?.endsWith('.gwei') ? post.name.slice(0, -5) : null;
       return {
         seq: r.seq, tx: r.tx, block: r.block, time: r.ts, from: r.sender, name: names.get(r.sender)?.name ?? null, system: names.get(r.sender)?.system ?? null,
         text: r.text,
         post: {
           hash: r.hash, title: r.title, name: post.name,
-          url: label && /^[a-z0-9-]+$/.test(label) ? `https://${label}.gwei.limo${postPath(r.hash, r.title)}` : null,
+          url: postUrl(post.name, r.hash, r.title),
         },
         shown: record === undefined ? null : repliesOn(r.hash, r.replies_on ? true : undefined, record),
       };
@@ -461,8 +470,9 @@ export class PostStore {
   // same names. Owners are re-checked so a sold or expired name's old posts drop out.
   async recent(limit = 20) {
     const now = this.now();
-    if (this.recentCache && now - this.recentCache.at < RECENT_CACHE_SECONDS && this.recentCache.limit === limit) {
-      return this.recentCache.posts;
+    const cached = this.recentCache.get(limit);
+    if (cached && now - cached.at < RECENT_CACHE_SECONDS) {
+      return cached.posts;
     }
     const candidates = this.rows(
       `WITH latest AS (SELECT token, author, hash, MAX(block * ${POS} + idx) AS pos, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM auth GROUP BY token, author, hash) ` +
@@ -484,7 +494,8 @@ export class PostStore {
       if (picked.length >= limit) break;
     }
     const posts = picked.concat(spare.slice(0, limit - picked.length)).sort((a, b) => a[0] - b[0]).map(([, post]) => post);
-    this.recentCache = { at: now, limit, posts };
+    if (this.recentCache.size > 8) this.recentCache.clear();
+    this.recentCache.set(limit, { at: now, posts });
     return posts;
   }
 
@@ -556,7 +567,7 @@ export class PostStore {
     const blobs = await this.fetchBlobs();
     await this.fillCids();
     this.prune();
-    if (events || blobs) this.recentCache = null;
+    if (events || blobs) this.recentCache.clear();
     let replies = 0;
     try {
       replies = await this.syncReplies(cursor);

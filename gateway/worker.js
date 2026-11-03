@@ -17,11 +17,12 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, keccak256, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, avatarPng, cardVersion,
+  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, POST_COVER_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, THEME_SCRIPT_HASH, avatarPng, cardVersion,
   decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
   renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
-import { POST_CSP, renderFeed, renderPostPage } from './post-page.js';
+import { POST_CSP, coverBytes, postsHostCard, renderFeed, renderPostPage, renderRecentPosts, splitCover } from './post-page.js';
+import { ens_normalize } from './ens-normalize.js';
 import { REPLIES_RECORD, repliesOn } from './replies-format.js';
 import { renderCard } from './share-card.js';
 import { MAX_POST_BYTES, POST_PATH, parsePost, postPath } from './posts-format.js';
@@ -618,7 +619,8 @@ async function answerApi(request, url, env) {
       if (path === '/api/posts/preview') {
         const post = parsePost(bytes);
         if (!post) return apiJson({ error: 'Not a v1 post: a JSON object with "v": 1, a "title" and a "body".' }, 400);
-        return apiJson({ title: post.title, html: renderMarkdown(post.body) });
+        const { cover, body } = splitCover(post.body);
+        return apiJson({ title: post.title, cover: cover?.url ?? null, html: renderMarkdown(body) });
       }
       const result = await index.upload(bytes, request.headers.get('cf-connecting-ip') || '');
       return result.error ? apiJson({ error: result.error }, result.status || 400) : apiJson(result, 201);
@@ -710,11 +712,13 @@ async function cardResponse(card, url, cache, ctx) {
 
 // Transient failures (RPC, a busy broker, unreachable storage) usually clear within seconds, so these
 // pages reload themselves up to three times a minute instead of leaving the visitor to refresh.
-const RETRY_SCRIPT = '<script>(()=>{try{const k="gwei-retry:"+location.href,now=Date.now(),' +
+export const RETRY_JS = '(()=>{try{const k="gwei-retry:"+location.href,now=Date.now(),' +
   't=JSON.parse(sessionStorage.getItem(k)||"[]").filter((x)=>now-x<60000);if(t.length>=3)return;' +
   't.push(now);sessionStorage.setItem(k,JSON.stringify(t));' +
   'document.body.insertAdjacentHTML("beforeend","<p>Retrying automatically…</p>");' +
-  'setTimeout(()=>location.reload(),1000+t.length*1500)}catch(_){}})()</script>';
+  'setTimeout(()=>location.reload(),1000+t.length*1500)}catch(_){}})()';
+export const RETRY_SCRIPT_HASH = "'sha256-h0Dbeovm/dziApofKbVskhV8OXsKTGeXSpMztHHi2Iw='";
+const RETRY_SCRIPT = `<script>${RETRY_JS}</script>`;
 function transientPage(title, message, status) {
   const response = page(title, `<p>${message}</p>${RETRY_SCRIPT}`, status, 'no-store');
   response.headers.set('retry-after', '2');
@@ -1115,6 +1119,130 @@ async function serveWeb3(ref, name, url, cache, ctx, route) {
   return new Response(empty ? null : body, { status, headers: harden(headers) });
 }
 
+// A registered name's own pages, the ones a website replaces: its profile, posts, feed, cards and avatar.
+// `pageUrl` is where they are, the name's host or /<name>/ on the posts host, and `path` is the request's
+// path below it ('/' for the profile).
+async function serveNamePages({ name, r, url, path, pageUrl, dappHash, env, cache, ctx }) {
+  const root = new URL(pageUrl).pathname;
+  if (path === AVATAR_PNG_PATH && r.profile?.seed) {
+    // Only an accent-colour change alters the generated avatar, so a day of caching is fine.
+    const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }));
+    return new Response(await avatarPng(r.profile.seed, 256, r.profile.page?.color), { status: 200, headers });
+  }
+  if (path === CARD_PATH && r.profile) return cardResponse(profileCard(name, r.profile, pageUrl), url, cache, ctx);
+  const index = postIndex(env);
+  // Posts count for the name's current owner only, so a sold name doesn't carry its old posts.
+  const token = r.profile?.seed && r.profile.owner ? '0x' + r.profile.seed : null;
+  const coverMatch = POST_COVER_PATH.exec(path);
+  const postMatch = POST_PATH.exec(path) || POST_CARD_PATH.exec(path) || coverMatch;
+  if (index && token && postMatch) {
+    const post = await fromIndex(() => index.postForToken(token, r.profile.owner, postMatch[1]), null);
+    if (post && path.endsWith('.png')) return cardResponse(postCard(name, r.profile, post, pageUrl), url, cache, ctx);
+    if (coverMatch) {
+      // A cover stored in the post (post-page.js), as an image a link preview can fetch. Never SVG.
+      const img = post && coverBytes(splitCover(post.body).cover?.url);
+      if (!img) return page(name, '<p>This post has no stored cover.</p>', 404);
+      const headers = harden(new Headers({ 'content-type': img.type, 'cache-control': 'public, max-age=86400' }));
+      headers.set('content-security-policy', "default-src 'none'; sandbox");
+      return new Response(img.bytes, { status: 200, headers });
+    }
+    if (post) {
+      // Replies show unless the post's author turned them off (replies-format.js repliesOn).
+      const on = repliesOn(post.hash, post.replies, r.profile.text?.[REPLIES_RECORD]);
+      const replies = on ? await fromIndex(() => index.replies(post.hash), null) : null;
+      const page = renderPostPage({ name, pageUrl, profile: r.profile, post, replies, repliesOff: !on });
+      return htmlResponse(page, 200, 'public, max-age=60', POST_CSP);
+    }
+  }
+  if (index && token && path === '/feed.xml') {
+    const posts = await fromIndex(() => cachedPosts(index, token, r.profile.owner, 20, cache, ctx), []);
+    const bodies = posts.length ? await fromIndex(() => index.bodies(posts.map((p) => p.hash)), []) : [];
+    const feed = renderFeed({ name, pageUrl, posts: posts.map((p, i) => ({ ...p, body: bodies[i] || '' })) });
+    const headers = harden(new Headers({ 'content-type': 'application/atom+xml; charset=utf-8', 'cache-control': 'public, max-age=300' }));
+    return new Response(feed, { status: 200, headers });
+  }
+  if (path !== '/') {
+    return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="${escapeHtml(root)}">go to the home page →</a></p>`, 404);
+  }
+  if (r.profile) {
+    const posts = index && token ? await fromIndex(() => cachedPosts(index, token, r.profile.owner, 50, cache, ctx), []) : [];
+    const postsHtml = postListHtml(posts, (hash, title) => root + postPath(hash, title).slice(1));
+    return htmlResponse(renderProfile({ name, dappHash, pageUrl, profile: r.profile, postsHtml }), 200, undefined, PROFILE_CSP);
+  }
+  return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains/#${dappHash}">set one →</a></p>`, 404);
+}
+
+// posts.gwei.limo (and posts.gwei.domains): every name's pages by path, /<name>.gwei/, subnames at any
+// depth included, as posts.wei.domains serves .wei (wei-names). A subname has no host of its own (the
+// certificates cover one level) and a name with a website gives its host to the website, so this is
+// where their posts are read; a top-level name without one is sent on to its own host. Recent posts are
+// at /. Every name shares this origin, so it serves only the gateway's own pages, never a website, and
+// sandboxes everything that isn't one (cards, avatars, covers, feeds): nothing an owner writes runs here.
+const POSTS_LABEL = 'posts';
+const POSTS_PLAIN_CSP = `default-src 'none'; script-src ${THEME_SCRIPT_HASH} ${RETRY_SCRIPT_HASH}; style-src 'unsafe-inline'; img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`;
+async function servePostsHost(request, url, env, ctx, route, base) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response('Method Not Allowed', { status: 405, headers: harden(new Headers({ allow: 'GET, HEAD' })) });
+  }
+  const res = await postsHostResponse(url, env, ctx, route, base);
+  if (res.status >= 300 && res.status < 400) return res;
+  const html = /^text\/html\b/.test(res.headers.get('content-type') || '');
+  // The gateway's pages carry their own CSP; its plain pages (not found, busy) get the strictest one.
+  if (html && /default-src/.test(res.headers.get('content-security-policy') || '')) return res;
+  const out = new Response(res.body, res);
+  out.headers.set('content-security-policy', html ? POSTS_PLAIN_CSP : "default-src 'none'; sandbox");
+  return out;
+}
+async function postsHostResponse(url, env, ctx, route, base) {
+  const cache = caches.default;
+  const host = url.hostname.toLowerCase();
+  if (url.pathname === '/') {
+    const index = postIndex(env);
+    const posts = index ? await fromIndex(() => index.recent(30), []) : [];
+    return htmlResponse(renderRecentPosts({ pageUrl: `https://${host}/`, posts }), 200, 'public, max-age=60', PROFILE_CSP);
+  }
+  if (url.pathname === CARD_PATH) return cardResponse(postsHostCard(host), url, cache, ctx);
+  const m = /^\/([^/]{1,1024})(\/.*)?$/.exec(url.pathname);
+  let given = null;
+  try { given = m && decodeURIComponent(m[1]); } catch (_) {}
+  const notFound = (message) => page('posts', `<p>${message}</p><p><a href="/">recent posts →</a></p>`, 404);
+  if (!given || !/\.gwei$/i.test(given)) return notFound('Not a .gwei name.');
+  let name = null;
+  try { name = ens_normalize(given); } catch (_) {}
+  if (!name || !/^[^.]+(?:\.[^.]+)*\.gwei$/.test(name)) return notFound('Not a valid name.'); // never echoed: this origin is shared
+  const rest = m[2] || '';
+  // One address per name: as ENSIP-15 writes it, percent-encoded one way, its pages under a trailing slash.
+  if (m[1] !== encodeURIComponent(name) || !rest) return Response.redirect(`https://${host}/${encodeURIComponent(name)}${rest || '/'}${url.search}`, 301);
+
+  let r;
+  try {
+    r = await resolveName(name, route, cache, ctx);
+  } catch (error) {
+    if (error instanceof RpcOverloadedError) return busyPage(name);
+    throw error;
+  }
+  if (r.error) return rpcFailedPage(name);
+  const label = name.slice(0, -'.gwei'.length);
+  const dappHash = encodeURIComponent(label);
+  if (!r.profile) {
+    return notFound(r.registered === false
+      ? `<b>${escapeHtml(name)}</b> isn’t registered. <a href="https://gwei.domains/#${dappHash}">Register it →</a>`
+      : `<b>${escapeHtml(name)}</b> has no page here.`);
+  }
+  // A top-level name without a website keeps its pages on its own host, when a URL reads that host as
+  // exactly this name (and it is one: posts.gwei's is this host, diff.gwei's a service).
+  if (!label.includes('.') && label !== POSTS_LABEL && !Object.hasOwn(RESERVED, label) && r.state === 'none') {
+    try {
+      const own = new URL(`https://${label}.${base}/`);
+      const sub = own.hostname.slice(0, -(base.length + 1));
+      if (own.hostname.endsWith('.' + base) && !own.username && !own.port && own.pathname === '/' && decodeDnsName(sub) === label) {
+        return Response.redirect(`${own.origin}${rest}${url.search}`, 302);
+      }
+    } catch (_) {}
+  }
+  return serveNamePages({ name, r, url, path: rest, pageUrl: `https://${host}/${encodeURIComponent(name)}/`, dappHash, env, cache, ctx });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1136,9 +1264,10 @@ export default {
     if (!base) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
     const sub = host.slice(0, -(base.length + 1)); // "donnoh", "diff", "a.b", …
     if (!sub) return page('gwei gateway', '<p>Not a gwei name.</p>', 404);
+    if (sub === POSTS_LABEL) return servePostsHost(request, url, env, ctx, route, base);
 
     // Reserved service subdomains: transparently proxy to their real origin (no caching/hardening).
-    if (RESERVED[sub]) {
+    if (Object.hasOwn(RESERVED, sub)) {
       const upstream = await fetch(RESERVED[sub] + url.pathname + url.search, {
         method: request.method, headers: request.headers, body: request.body, redirect: 'follow',
       });
@@ -1167,43 +1296,7 @@ export default {
         if (url.pathname === CARD_PATH) return cardResponse(unregisteredCard(name, pageUrl, r.price), url, cache, ctx);
         return htmlResponse(renderUnregistered({ name, dappHash, pageUrl, price: r.price }), url.pathname === '/' ? 200 : 404, undefined, PROFILE_CSP);
       }
-      if (url.pathname === AVATAR_PNG_PATH && r.profile?.seed) {
-        // Only an accent-colour change alters the generated avatar, so a day of caching is fine.
-        const headers = harden(new Headers({ 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }));
-        return new Response(await avatarPng(r.profile.seed, 256, r.profile.page?.color), { status: 200, headers });
-      }
-      if (url.pathname === CARD_PATH && r.profile) return cardResponse(profileCard(name, r.profile, pageUrl), url, cache, ctx);
-      const index = postIndex(env);
-      // Posts count for the name's current owner only, so a sold name doesn't carry its old posts.
-      const token = r.profile?.seed && r.profile.owner ? '0x' + r.profile.seed : null;
-      const postMatch = POST_PATH.exec(url.pathname) || POST_CARD_PATH.exec(url.pathname);
-      if (index && token && postMatch) {
-        const post = await fromIndex(() => index.postForToken(token, r.profile.owner, postMatch[1]), null);
-        if (post && url.pathname.endsWith('.png')) return cardResponse(postCard(name, r.profile, post, pageUrl), url, cache, ctx);
-        if (post) {
-          // Replies show unless the post's author turned them off (replies-format.js repliesOn).
-          const on = repliesOn(post.hash, post.replies, r.profile.text?.[REPLIES_RECORD]);
-          const replies = on ? await fromIndex(() => index.replies(post.hash), null) : null;
-          const page = renderPostPage({ name, pageUrl, profile: r.profile, post, replies, repliesOff: !on });
-          return htmlResponse(page, 200, 'public, max-age=60', POST_CSP);
-        }
-      }
-      if (index && token && url.pathname === '/feed.xml') {
-        const posts = await fromIndex(() => cachedPosts(index, token, r.profile.owner, 20, cache, ctx), []);
-        const bodies = posts.length ? await fromIndex(() => index.bodies(posts.map((p) => p.hash)), []) : [];
-        const feed = renderFeed({ name, pageUrl, posts: posts.map((p, i) => ({ ...p, body: bodies[i] || '' })) });
-        const headers = harden(new Headers({ 'content-type': 'application/atom+xml; charset=utf-8', 'cache-control': 'public, max-age=300' }));
-        return new Response(feed, { status: 200, headers });
-      }
-      if (url.pathname !== '/') {
-        return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
-      }
-      if (r.profile) {
-        const posts = index && token ? await fromIndex(() => cachedPosts(index, token, r.profile.owner, 50, cache, ctx), []) : [];
-        const postsHtml = postListHtml(posts, postPath);
-        return htmlResponse(renderProfile({ name, dappHash, pageUrl, profile: r.profile, postsHtml }), 200, undefined, PROFILE_CSP);
-      }
-      return page(name, `<p><b>${escapeHtml(name)}</b> has no website set.</p><p><a href="https://gwei.domains/#${dappHash}">set one →</a></p>`, 404);
+      return serveNamePages({ name, r, url, path: url.pathname, pageUrl, dappHash, env, cache, ctx });
     }
     if (r.state === 'unsupported') {
       return page(name, '<p>This name points to an unsupported contenthash (gwei.domains serves IPFS, IPNS, and Swarm).</p>', 415);

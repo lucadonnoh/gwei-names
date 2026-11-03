@@ -7,8 +7,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { checkEndpoints, nameTokenId } from './worker.js';
-import { PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT } from './profile-page.js';
+import worker, { RETRY_JS, RETRY_SCRIPT_HASH, checkEndpoints, nameTokenId } from './worker.js';
+import { PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT, THEME_SCRIPT_HASH } from './profile-page.js';
 import { POST_CSP, REPLY_SCRIPT, REPLY_SCRIPT_HASH } from './post-page.js';
 import { createHash } from 'node:crypto';
 import {
@@ -1688,6 +1688,147 @@ test('a profile without posts has no posts section, and a broken index only drop
   assert.doesNotMatch(html, /class="section">Posts/);
 });
 
+test('a name that is also an Object property is an ordinary name, not a reserved service', async () => {
+  const res = await invoke('https://constructor.gwei.domains/', { cache: makeCache(), fetchMock: aliceProfile() });
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /<div class="name">constructor\.gwei<\/div>/);
+});
+
+test('posts.<domain> serves every name’s posts by path, subnames included, and nothing a name’s owner writes runs there', async () => {
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const original = BODIES[POST_A.hash];
+  const get = (path, { fetchMock = aliceProfile(), method } = {}) =>
+    invoke('https://posts.gwei.domains' + path, { method, cache: makeCache(), fetchMock, env: { POST_INDEX: fakePostIndex() } });
+  const sandboxed = (res) => assert.equal(res.headers.get('content-security-policy'), "default-src 'none'; sandbox");
+  try {
+    // The front page: recent posts, each under /<name>/.
+    let res = await get('/');
+    assert.equal(res.status, 200);
+    let html = await res.text();
+    assert.match(html, /<a class="post-link" href="\/alice\.gwei\/posts\/a1a1a1a1a1a1-exploring-the-blobspace">/);
+    assert.match(html, /<meta property="og:image" content="https:\/\/posts\.gwei\.domains\/\.well-known\/gwei-card\.png\?v=[0-9a-f]{8}">/);
+    assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
+    res = await get('/.well-known/gwei-card.png');
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    sandboxed(res);
+
+    // One address per name.
+    res = await get('/sub.alice.gwei');
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get('location'), 'https://posts.gwei.domains/sub.alice.gwei/');
+    res = await get('/Sub.Alice.gwei/posts/a1a1a1a1a1a1');
+    assert.equal(res.headers.get('location'), 'https://posts.gwei.domains/sub.alice.gwei/posts/a1a1a1a1a1a1', 'as ENSIP-15 writes it');
+
+    // A subname: its profile, posts, feed, cards and avatar, every link under its base.
+    res = await get('/sub.alice.gwei/');
+    assert.equal(res.status, 200);
+    html = await res.text();
+    assert.match(html, /<div class="name">sub\.alice\.gwei<\/div>/);
+    assert.match(html, /<a class="post-link" href="\/sub\.alice\.gwei\/posts\/a1a1a1a1a1a1-exploring-the-blobspace">/);
+    assert.match(html, /<link rel="alternate" type="application\/atom\+xml" title="sub\.alice\.gwei" href="\/sub\.alice\.gwei\/feed\.xml">/);
+    assert.match(html, /<link rel="icon" type="image\/png" href="\/sub\.alice\.gwei\/\.well-known\/gwei-avatar\.png">/);
+    assert.match(html, /<meta property="og:url" content="https:\/\/posts\.gwei\.domains\/sub\.alice\.gwei\/">/);
+    assert.match(html, /<meta property="og:image" content="https:\/\/posts\.gwei\.domains\/sub\.alice\.gwei\/\.well-known\/gwei-card\.png\?v=/);
+    assert.match(html, /The owner of sub\.alice\.gwei can <a href="https:\/\/gwei\.domains\/#sub\.alice">edit this profile<\/a>\./);
+    assert.doesNotMatch(html, /host a website/, 'a subname’s page isn’t one a website replaces');
+    assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
+
+    BODIES[POST_A.hash] = `![sunrise](data:image/png;base64,${pixel})\n\nThe post starts here.`;
+    res = await get('/sub.alice.gwei/posts/a1a1a1a1a1a1');
+    assert.equal(res.status, 200);
+    html = await res.text();
+    assert.match(html, /<a class="byline" href="\/sub\.alice\.gwei\/">/);
+    assert.match(html, /href="\/sub\.alice\.gwei\/">More from sub\.alice\.gwei<\/a>/);
+    assert.match(html, /<link rel="canonical" href="https:\/\/posts\.gwei\.domains\/sub\.alice\.gwei\/posts\/a1a1a1a1a1a1-exploring-the-blobspace">/);
+    assert.match(html, /<meta property="og:image" content="https:\/\/posts\.gwei\.domains\/sub\.alice\.gwei\/posts\/a1a1a1a1a1a1\/cover">/);
+    assert.match(res.headers.get('content-security-policy'), /^default-src 'none'; script-src 'sha256-/, 'the theme and reply scripts only, by hash');
+    res = await get('/sub.alice.gwei/posts/a1a1a1a1a1a1/cover');
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    sandboxed(res);
+    BODIES[POST_A.hash] = original;
+    res = await get('/sub.alice.gwei/feed.xml');
+    assert.match(await res.text(), /<link href="https:\/\/posts\.gwei\.domains\/sub\.alice\.gwei\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"\/>/);
+    sandboxed(res);
+    for (const path of ['/sub.alice.gwei/.well-known/gwei-avatar.png', '/sub.alice.gwei/.well-known/gwei-card.png', '/sub.alice.gwei/.well-known/gwei-card/a1a1a1a1a1a1.png']) {
+      res = await get(path);
+      assert.equal(res.headers.get('content-type'), 'image/png', path);
+      sandboxed(res);
+    }
+
+    // A top-level name keeps its pages on its own host, unless a website took it.
+    res = await get('/alice.gwei/posts/a1a1a1a1a1a1?ref=x');
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), 'https://alice.gwei.domains/posts/a1a1a1a1a1a1?ref=x');
+    const withSite = makeFetch({ rpc: (data) => (data.startsWith(SEL.ch) ? CH_IPFS : rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) })(data)) });
+    res = await get('/alice.gwei/', { fetchMock: withSite });
+    assert.equal(res.status, 200);
+    html = await res.text();
+    assert.match(html, /<div class="name">alice\.gwei<\/div>/, 'its profile and posts, never its website');
+    assert.match(html, /href="\/alice\.gwei\/posts\/a1a1a1a1a1a1-exploring-the-blobspace"/);
+    assert.equal(withSite.calls.ipfs + withSite.calls.ipns + withSite.calls.swarm, 0, 'no content is fetched for the posts host');
+
+    res = await get('/posts.gwei/posts/a1a1a1a1a1a1');
+    assert.equal(res.status, 200, 'posts.gwei’s own host is this one, so its pages stay here');
+    assert.match(await res.text(), /<a class="byline" href="\/posts\.gwei\/">/);
+
+    // One spelling per name, and nothing a visitor types is shown back on this shared origin.
+    res = await get('/%73ub.alice.gwei/posts/a1a1a1a1a1a1');
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get('location'), 'https://posts.gwei.domains/sub.alice.gwei/posts/a1a1a1a1a1a1');
+    res = await get('/Your%20wallet%20is%20compromised%2C%20visit%20evil.gwei/');
+    assert.equal(res.status, 404);
+    html = await res.text();
+    assert.doesNotMatch(html, /compromised/);
+    assert.equal(res.headers.get('content-security-policy'),
+      `default-src 'none'; script-src ${THEME_SCRIPT_HASH} ${RETRY_SCRIPT_HASH}; style-src 'unsafe-inline'; img-src https: data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`,
+      'its plain pages get the strictest policy');
+    assert.equal(RETRY_SCRIPT_HASH, `'sha256-${createHash('sha256').update(RETRY_JS).digest('base64')}'`, 'the retry script, should a page need it');
+
+    // Nothing else.
+    res = await get('/nobody.gwei/', { fetchMock: makeFetch({ rpc: rpcProfile({ address: '0' }) }) });
+    assert.equal(res.status, 404);
+    assert.match(await res.text(), /isn’t registered/);
+    for (const path of ['/robots.txt', '/a..gwei/', '/bad%ZZ.gwei/', '/x%2Fy.gwei/']) assert.equal((await get(path)).status, 404, path);
+    assert.equal((await get('/sub.alice.gwei/', { method: 'POST' })).status, 405);
+  } finally {
+    BODIES[POST_A.hash] = original;
+  }
+});
+
+test('a post’s cover is its banner and its link preview, and a stored one is served for previews (from wei-names)', async () => {
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const original = BODIES[POST_A.hash];
+  const get = (path) => invoke('https://alice.gwei.domains' + path, { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX: fakePostIndex() } });
+  try {
+    BODIES[POST_A.hash] = `![sunrise](data:image/png;base64,${pixel})\n\nThe post starts here.`;
+    let html = await (await get('/posts/a1a1a1a1a1a1')).text();
+    assert.match(html, /<figure class="cover"><img src="data:image\/png;base64,iVBOR[^"]*" alt="sunrise"/);
+    assert.match(html, /<div class="post-body"><p>The post starts here\.<\/p><\/div>/, 'the cover isn’t shown twice');
+    assert.match(html, /<meta property="og:image" content="https:\/\/alice\.gwei\.domains\/posts\/a1a1a1a1a1a1\/cover">/);
+    assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+    let res = await get('/posts/a1a1a1a1a1a1/cover');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    assert.match(res.headers.get('content-security-policy'), /sandbox/);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff', 'its bytes are only ever an image');
+    assert.deepEqual(new Uint8Array(await res.arrayBuffer()), Uint8Array.from(atob(pixel), (c) => c.charCodeAt(0)));
+    BODIES[POST_A.hash] = '![](https://example.com/banner.jpg)\n\nText';
+    html = await (await get('/posts/a1a1a1a1a1a1')).text();
+    assert.match(html, /<meta property="og:image" content="https:\/\/example\.com\/banner\.jpg">/, 'a cover on the web is its own preview');
+    BODIES[POST_A.hash] = '![](data:image/svg+xml;base64,PHN2Zy8+)\n\nText';
+    html = await (await get('/posts/a1a1a1a1a1a1')).text();
+    assert.match(html, /<figure class="cover">/, 'an SVG cover shows, in an <img>');
+    assert.match(html, /og:image" content="https:\/\/alice\.gwei\.domains\/\.well-known\/gwei-card\/a1a1a1a1a1a1\.png/, 'but the preview is the drawn card');
+    res = await get('/posts/a1a1a1a1a1a1/cover');
+    assert.equal(res.status, 404, 'an SVG is never served from the name’s own host');
+    BODIES[POST_A.hash] = 'No cover here.\n\n![](https://example.com/x.jpg)';
+    html = await (await get('/posts/a1a1a1a1a1a1')).text();
+    assert.doesNotMatch(html, /class="cover"/, 'only an image alone on the first line is a cover');
+  } finally {
+    BODIES[POST_A.hash] = original;
+  }
+});
+
 test('a post page renders the body safely and shows where it lives on Ethereum', async () => {
   const POST_INDEX = fakePostIndex();
   let res = await invoke('https://alice.gwei.domains/posts/a1a1a1a1a1a1-whatever-slug', { cache: makeCache(), fetchMock: aliceProfile(), env: { POST_INDEX } });
@@ -1755,7 +1896,9 @@ test('the posts API: uploads, reads, CORS and sandboxing', async () => {
   assert.equal(res.status, 413);
 
   res = await api('/api/posts/preview', { method: 'POST', body: '{"v":1,"title":"T","body":"<b>hi</b> *there*"}' });
-  assert.deepEqual(await res.json(), { title: 'T', html: '<p>&lt;b&gt;hi&lt;/b&gt; <em>there</em></p>' });
+  assert.deepEqual(await res.json(), { title: 'T', cover: null, html: '<p>&lt;b&gt;hi&lt;/b&gt; <em>there</em></p>' });
+  res = await api('/api/posts/preview', { method: 'POST', body: '{"v":1,"title":"T","body":"![](https://e.example/c.png)\\n\\nText"}' });
+  assert.deepEqual(await res.json(), { title: 'T', cover: 'https://e.example/c.png', html: '<p>Text</p>' }, 'the preview shows the cover apart, as the page does');
   res = await api('/api/posts/preview', { method: 'POST', body: 'nope' });
   assert.equal(res.status, 400);
 
@@ -1951,7 +2094,7 @@ test('a post page that takes replies shows every reply under its sender’s name
   assert.match(html, /<a href="https:\/\/gwei\.domains\/#%F0%9F%A6%84" rel="nofollow noopener">🦄\.gwei<\/a><a class="reply-date"[^>]*>just now<\/a>/, 'a label that isn’t plain ASCII links to gwei.domains, not a host built from it');
   assert.match(html, /<a href="https:\/\/bob\.gwei\.domains\/" rel="nofollow noopener">bob\.gwei<\/a>/);
   assert.match(html, /<div class="reply-text">Great &lt;post&gt;\nsecond line<\/div>/, 'text, never markup');
-  assert.match(html, /<a href="https:\/\/gwei\.domains\/#sub\.team" rel="nofollow noopener">sub\.team\.gwei<\/a>/, 'a subname has no gateway host');
+  assert.match(html, /<a href="https:\/\/posts\.gwei\.domains\/sub\.team\.gwei\/" rel="nofollow noopener">sub\.team\.gwei<\/a>/, 'a subname has its page on the posts host');
   assert.match(html, /<a href="https:\/\/etherscan\.io\/address\/0x(c0){20}" rel="nofollow noopener">0xc0c0…c0c0<\/a>[\s\S]*anon here/, 'no name: the address');
   assert.match(html, /<a href="https:\/\/wei\.domains\/#carol" rel="nofollow noopener">carol\.wei<\/a>/);
   assert.match(html, /<a href="https:\/\/app\.ens\.domains\/dave\.eth" rel="nofollow noopener">dave\.eth<\/a>/);

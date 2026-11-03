@@ -2620,15 +2620,24 @@ test('replies: a name’s site is linked only when a URL reads it as exactly its
   const start = html.indexOf('function nameSiteOrigin(');
   const end = html.indexOf('// gwei.domains/#reply/<post hash>', start);
   const { ens_normalize } = await import('../gateway/ens-normalize.js');
-  const context = vm.createContext({ URL, GWEI_GATEWAY: 'gwei.limo', ethers: { ensNormalize: ens_normalize } });
-  vm.runInContext(html.slice(start, end) + '\nglobalThis.nameSiteOrigin = nameSiteOrigin;', context);
-  const o = context.nameSiteOrigin;
+  const context = vm.createContext({ URL, GWEI_GATEWAY: 'gwei.limo', ethers: { ensNormalize: ens_normalize }, postPathFor: (hash, title) => `/posts/${hash.slice(2, 14)}-${title}` });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.api = { nameSiteOrigin, namePostsBase, postUrlFor };', context);
+  const o = context.api.nameSiteOrigin;
   assert.equal(o('alice.gwei'), 'https://alice.gwei.limo');
   assert.equal(o('alice.gwei', 'gwei.domains'), 'https://alice.gwei.domains');
   assert.equal(o('🦄.gwei'), 'https://xn--3s9h.gwei.limo');
   assert.equal(o('blog.alice.gwei'), null, 'subnames have no host the certificates cover');
-  assert.match(html, /a\.href = origin \? new URL\(postPathFor\(p\.hash, p\.title\), origin\)\.href : '#' \+ encodeURIComponent\(p\.name\.slice\(0, -5\)\);/,
-    'so a subname’s post in the recent list links to its page on gwei.domains');
+  // So a subname's posts, and those of a name a website took, are read on the posts host.
+  const { namePostsBase, postUrlFor } = context.api;
+  const hash = '0x' + 'ab'.repeat(32);
+  assert.equal(postUrlFor('alice.gwei', hash, 't'), 'https://alice.gwei.limo/posts/abababababab-t');
+  assert.equal(postUrlFor('alice.gwei', hash, 't', true), 'https://posts.gwei.limo/alice.gwei/posts/abababababab-t', 'a website took its host');
+  assert.equal(postUrlFor('blog.alice.gwei', hash, 't'), 'https://posts.gwei.limo/blog.alice.gwei/posts/abababababab-t');
+  assert.equal(namePostsBase('🦄.blog.gwei'), 'https://posts.gwei.limo/%F0%9F%A6%84.blog.gwei/');
+  assert.equal(namePostsBase('posts.gwei'), 'https://posts.gwei.limo/posts.gwei/', 'its own host is the posts host');
+  assert.equal(namePostsBase('diff.gwei'), 'https://posts.gwei.limo/diff.gwei/');
+  for (const bad of ['Blog.alice.gwei', 'a/b.alice.gwei', 'x..gwei', '.gwei', 'alice.eth', null]) assert.equal(namePostsBase(bad), null, String(bad));
+  assert.match(html, /const href = postUrlFor\(p\.name, p\.hash, p\.title\);\n\s*if \(!href\) continue;/, 'the recent list links each post where it is read');
   for (const bad of ['evil．com/.gwei', '16843009#.gwei', 'a@evil.com.gwei', 'x/y.gwei', 'ａ.gwei', 'Alice.gwei', 'a..b.gwei', 'a:1.gwei', '.gwei', 'alice.eth', null]) {
     assert.equal(o(bad), null, String(bad));
   }
@@ -2740,6 +2749,40 @@ test('posts: editing the form clears a stale form error', () => {
   const context = vm.createContext({ $: (id) => (id === 'status' ? status : null) });
   vm.runInContext(html.slice(start, end) + '\nupdatePostCost();', context);
   assert.equal(classes.has('show'), false);
+});
+
+test('posts: the editor turns its picture tags and cover into the body the gateway reads (from wei-names)', async () => {
+  const start = html.indexOf('function expandPostBody(');
+  const end = html.indexOf('\nfunction onPostInput()', start);
+  assert.notEqual(start, -1, 'the editor must build its body');
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.expandPostBody = expandPostBody;', context);
+  const { splitCover } = await import('../gateway/post-page.js');
+  const { renderMarkdown } = await import('../gateway/markdown.js');
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const images = new Map([['1', png]]);
+  const body = context.expandPostBody('Hello\n\n![a cat](img:1)\n\n![lost](img:9)', images, png);
+  assert.equal(body, `![](${png})\n\nHello\n\n![a cat](${png})\n\n![lost](img:9)`, 'tags become their pictures; one without a picture stays as typed');
+  const { cover, body: rest } = splitCover(body);
+  assert.equal(cover.url, png, 'the cover is the first line, as the gateway reads it');
+  assert.match(renderMarkdown(rest), new RegExp(`<img src="${png.replace(/[+/.]/g, '\\$&')}" alt="a cat"`));
+  assert.equal(context.expandPostBody('Hi', new Map(), null), 'Hi', 'no cover, no first line');
+});
+
+test('posts: the editor has a toolbar, shortcuts, pictures, a cover and drafts, and no hint text', () => {
+  for (const kind of ['bold', 'italic', 'heading', 'link', 'list', 'numbered', 'quote', 'code']) {
+    assert.match(html, new RegExp(`postTool\\('${kind}',`), `toolbar: ${kind}`);
+  }
+  assert.match(html, /const kind = \{ b: 'bold', i: 'italic', k: 'link' \}\[e\.key\.toLowerCase\(\)\];/);
+  assert.match(html, /id="ppCoverFile" accept="image\/\*"/);
+  assert.match(html, /id="ppImageFile" accept="image\/\*" multiple/);
+  assert.match(html, /id="ppMdFile"/);
+  assert.match(html, /const postDraftKey = \(tokenId\) => `gwei_post_draft_\$\{CHAIN_ID\}_\$\{tokenHexOf\(tokenId\)\}`;/);
+  assert.match(html, /clearPostDraft\(tokenId\);/, 'a published post leaves no draft behind');
+  // Pictures are re-encoded (no EXIF location) unless they are a GIF that already fits.
+  assert.match(html, /if \(!ratio && file\.type === 'image\/gif' && file\.size \* 1\.4 < maxChars\)/);
+  assert.match(html, /canvas\.toBlob\(r, type, quality\)/);
+  assert.doesNotMatch(html, /profile-hint">Markdown:/, 'no hint line under the editor');
 });
 
 test('posts: the dapp builds the same blob as the gateway, and the vendored KZG gives the hash c-kzg does', async () => {
@@ -2942,9 +2985,10 @@ test('the QR encoder is vendored and encodes exactly like the qrcode package', a
 
 test('name sites are linked under the short gwei.limo domain', () => {
   assert.match(html, /^const GWEI_GATEWAY = 'gwei\.limo';$/m);
-  // Every <name>.gwei.domains link goes through GWEI_GATEWAY now; only the diff service is left.
+  // Every <name>.gwei.domains link goes through GWEI_GATEWAY now; only the diff service is left, and the
+  // posts host's other domain, which a reply window answers too.
   const left = [...html.matchAll(/[a-z0-9-]+\.gwei\.domains/gi)].map((m) => m[0].toLowerCase());
-  assert.deepEqual([...new Set(left)], ['diff.gwei.domains']);
+  assert.deepEqual([...new Set(left)], ['diff.gwei.domains', 'posts.gwei.domains']);
 });
 
 test('the Signal username field accepts only Signal-shaped usernames', () => {

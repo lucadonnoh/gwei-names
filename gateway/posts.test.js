@@ -10,7 +10,7 @@ import {
 } from './posts-format.js';
 import { excerpt, linkUrl, renderMarkdown } from './markdown.js';
 import { texToMathml } from './math.js';
-import { PostStore, T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED, clientKey } from './posts-store.js';
+import { PostStore, T_AUTHORIZED, T_BLOB_PUBLISHED, T_REMOVED, clientKey, postUrl } from './posts-store.js';
 import { decodeReply, encodeReply, namedRoom, replyRoom, replyRoomName, replyText, repliesOn, setRepliesRecord } from './replies-format.js';
 import { keccak256 } from './web3-auto.js';
 import { blobVersionedHash } from '../dapp/vendor/kzg.bundle.mjs';
@@ -1088,6 +1088,40 @@ test('reply rooms and messages are calldata-chat’s', async () => {
   assert.equal(replyText({ from, to: '0x' + 'cd'.repeat(20), value: '0x1', input: '0x01676d' }, room), null);
 });
 
+test('a post’s excerpt costs little whatever its body, and still drops pictures of any size', () => {
+  const big = 'data:image/png;base64,' + 'A'.repeat(120000);
+  assert.equal(excerpt(`![](${big})\n\nThe post starts here.`), 'The post starts here.');
+  assert.equal(excerpt('See [the spec](https://example.com/spec) and ![x](https://e.example/a.png) **now**.'), 'See the spec and now.');
+  for (const junk of ['['.repeat(126000), '!['.repeat(63000), '```'.repeat(42000), '](('.repeat(42000), '![a](data:'.repeat(12000)]) {
+    const t0 = performance.now();
+    excerpt(junk);
+    assert.ok(performance.now() - t0 < 250, `excerpt took ${Math.round(performance.now() - t0)} ms on ${JSON.stringify(junk.slice(0, 6))}…`);
+  }
+});
+
+test('posts can carry their own pictures, and links work as people type them (from wei-names)', () => {
+  const png = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(2000) + '='; // ~22,000 characters, far past a link's 2,000
+  assert.ok(renderMarkdown(`![a photo](${png})`).startsWith(`<p><img src="${png}" alt="a photo"`));
+  assert.doesNotMatch(renderMarkdown('![x](data:text/html;base64,PHNjcmlwdD4=)'), /<img/, 'only images');
+  assert.doesNotMatch(renderMarkdown('![x](data:image/svg+xml,<svg onload=alert(1)>)'), /<img|<svg/, 'not an image, and escaped');
+  assert.equal(linkUrl('example.com/page'), 'https://example.com/page');
+  assert.equal(linkUrl('www.example.com'), 'https://www.example.com/');
+  assert.equal(linkUrl('kenny.gwei'), 'https://kenny.gwei.limo/', 'a .gwei name links to its site');
+  assert.equal(linkUrl('Kenny.gwei/posts/abc'), 'https://kenny.gwei.limo/posts/abc');
+  assert.equal(linkUrl('dev.id.gwei'), 'https://posts.gwei.limo/dev.id.gwei/', 'a subname’s page is on the posts host');
+  assert.equal(linkUrl('Dev.ID.gwei/posts/abc'), 'https://posts.gwei.limo/dev.id.gwei/posts/abc');
+  assert.equal(linkUrl('dev.id.gwei?x=1'), 'https://posts.gwei.limo/dev.id.gwei/?x=1');
+  assert.equal(linkUrl('dé.id.gwei'), null, 'a name a URL could read differently is left as text');
+  // A /path link is one of the name's own pages, wherever they are served.
+  assert.match(renderMarkdown('[more](/posts/abc)'), /<a href="\/posts\/abc"/);
+  assert.match(renderMarkdown('[more](/posts/abc) [x](#top)', { base: '/blog.alice.gwei/' }), /<a href="\/blog\.alice\.gwei\/posts\/abc"[^>]*>more<\/a> <a href="#top"/);
+  assert.match(renderMarkdown('[more](/posts/abc)'), /<a href="\/posts\/abc"/, 'the base lasts for one call');
+  assert.equal(linkUrl('javascript:alert(1)'), null);
+  assert.equal(linkUrl('/posts/x'), '/posts/x');
+  assert.match(renderMarkdown('see <https://ethereum.org/en/>'), /see <a href="https:\/\/ethereum\.org\/en\/" rel="nofollow ugc noopener">https:\/\/ethereum\.org\/en\/<\/a>/);
+  assert.doesNotMatch(renderMarkdown('<javascript:alert(1)>'), /<a /);
+});
+
 test('the post’s author decides whether it takes replies: the name’s record first, then the post', () => {
   const hash = '0x634cd7f83ccd' + '00'.repeat(26);
   assert.equal(repliesOn(hash, undefined, ''), false, 'off by default: a post written before replies never chose them');
@@ -1222,6 +1256,10 @@ test('/api/replies lists every reply in the order the index found them, each say
     [2, 'to an old post', 'bob.gwei', 'From before replies', false],
   ]);
   assert.equal(page.replies[0].post.url, `https://alice.gwei.limo/posts/${postHash(takes).slice(2, 14)}-takes-replies`);
+  const h = '0x' + 'ab'.repeat(32);
+  assert.equal(postUrl('blog.alice.gwei', h, 'Hi'), 'https://posts.gwei.limo/blog.alice.gwei/posts/abababababab-hi', 'a subname’s posts are on the posts host');
+  assert.equal(postUrl('posts.gwei', h, 'Hi'), 'https://posts.gwei.limo/posts.gwei/posts/abababababab-hi');
+  assert.equal(postUrl('🦄.gwei', h, 'Hi'), null);
   assert.equal(page.next, 2);
   world.records = { [TOKEN]: `${old.hash.slice(2, 14)}:on` }; // the author turns the old post on
   world.traces.push(replyCall(roomA, 2300, 0, ALICE, 'later'));

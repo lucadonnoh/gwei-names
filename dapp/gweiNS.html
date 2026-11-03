@@ -439,6 +439,18 @@ body.modal-open { overflow: hidden; }
 .profile-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted); margin: 22px 0 12px; }
 .manage-form textarea.post-editor { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; min-height: 240px; }
 .post-preview { display: none; width: 100%; height: 420px; border: 1px solid var(--border-muted); background: #fff; margin: 4px 0 14px; }
+/* The post editor (ported from wei-names, MIT): a cover slot, a toolbar, and a bar for the room left. */
+.post-cover { margin: 0 0 12px; }
+.post-cover img { display: block; width: 100%; aspect-ratio: 5 / 2; object-fit: cover; background: var(--manage-bg); }
+.post-cover-actions { margin-top: 6px; }
+.manage-form .post-cover button, .manage-form .post-toolbar button { width: auto; margin: 0 6px 0 0; padding: 4px 10px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+.manage-form .post-cover .post-cover-add { width: 100%; padding: 18px; border-style: dashed; }
+.post-toolbar { display: flex; flex-wrap: wrap; gap: 4px 0; margin: 0 0 6px; }
+.post-toolbar .post-tool-right { margin-left: auto !important; margin-right: 0 !important; }
+.manage-form textarea.post-editor.drop { outline: 2px dashed var(--fg-muted); }
+.post-room { height: 3px; background: var(--border-muted); margin: 2px 0 8px; }
+.post-room div { height: 3px; width: 0; background: var(--fg-muted); }
+.post-room div.full { background: #d33; }
 .post-list { margin-bottom: 8px; font-size: 13px; }
 .post-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-muted); }
 .post-row .post-date { flex: none; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
@@ -2233,12 +2245,11 @@ async function loadRecentPosts() {
     if (!posts || !posts.length) return;
     list.innerHTML = '';
     for (const p of posts) {
-      // A subname has no site host (the certificate covers one level), so it links to its page here.
-      const origin = nameSiteOrigin(p.name);
-      const sub = !origin && nameSiteOrigin(p.name.split('.').slice(-2).join('.')) && ethers.ensNormalize(p.name) === p.name;
-      if (!origin && !sub) continue;
+      // A subname has no site host (the certificate covers one level): its posts are on the posts host.
+      const href = postUrlFor(p.name, p.hash, p.title);
+      if (!href) continue;
       const a = document.createElement('a');
-      a.href = origin ? new URL(postPathFor(p.hash, p.title), origin).href : '#' + encodeURIComponent(p.name.slice(0, -5));
+      a.href = href;
       a.target = '_blank'; a.rel = 'noopener';
       a.textContent = p.title + ' · ' + p.name;
       list.appendChild(a);
@@ -6008,9 +6019,10 @@ async function showManage(tokenId, name) {
       const daysText = daysLeft > 0 ? ` (${daysLeft} days left)` : ' (expired)';
       infoHtml += `<div${expiryStyle}><span>Expires:</span>${expiryDate}${daysText}</div>`;
     }
-    // A name without a website has a profile page on the gateway.
-    if (GWEI_GATEWAY && !hasContenthash && !contentContract) {
-      const pageUrl = `https://${name}.${GWEI_GATEWAY}`;
+    // A name without a website has a profile page on the gateway: on its own host, or a subname's on the posts host.
+    const pageBase = !hasContenthash && !contentContract && namePostsBase(name + '.gwei');
+    if (pageBase) {
+      const pageUrl = pageBase.replace(/\/$/, '');
       infoHtml += `<div><span>Page:</span><a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(pageUrl.replace('https://', ''))}</a></div>`;
     }
     // Display text records
@@ -6346,7 +6358,7 @@ async function refreshPostQuote() {
 }
 function readPostForm() {
   const title = ($('ppTitle')?.value || '').trim();
-  const body = $('ppBody')?.value || '';
+  const body = expandPostBody($('ppBody')?.value || '', postImages, postCover);
   const replies = $('ppReplies') ? $('ppReplies').checked : false;
   return { title, body, replies, bytes: postBytesFrom(title, body, replies) };
 }
@@ -6357,6 +6369,8 @@ function updatePostCost() {
   const el = $('ppCost');
   if (!el) return;
   const { bytes } = readPostForm();
+  const bar = $('ppRoom');
+  if (bar) { bar.style.width = Math.min(100, Math.round((bytes.length / POST_MAX_BYTES) * 100)) + '%'; bar.classList.toggle('full', bytes.length > POST_MAX_BYTES); }
   const size = `${bytes.length.toLocaleString()} of ${POST_MAX_BYTES.toLocaleString()} bytes`;
   if (bytes.length > POST_MAX_BYTES) { el.textContent = `Too long: ${size}.`; return; }
   el.textContent = currentPostFee == null
@@ -6364,17 +6378,281 @@ function updatePostCost() {
     : `${size}. Publishing costs ${ethers.formatEther(currentPostFee)} ETH plus gas for one transaction. The fee is held by the contract and goes to the gwei.domains publisher only when it puts this exact post in a blob; if it doesn't within a day, you can take it back.`;
 }
 
+// ── The post editor (ported from wei-names' dapp, MIT): a toolbar and shortcuts, a cover image,
+// pictures, Markdown files dropped in, and a draft kept per name. Pictures (the cover too) travel inside
+// the post as data: URLs, so they live in its blob with nothing to pin anywhere; in the textarea they
+// are short tags (img:N), put in only when the post is built. ──
+const POST_IMAGE_MAX_PX = 1600;
+const POST_COVER_RATIO = 5 / 2; // the banner shape, cropped to on attach, as X articles show theirs
+const POST_IMAGE_MAX_CHARS = 110000; // one picture's share, so a single photo can't leave no room for text
+let postImages = new Map(); // tag id -> data URL
+let postCover = null; // data URL, or null
+let postImageSeq = 0;
+let postDraftTimer = null;
+let postEditorToken = null; // the name the editor's pictures and draft belong to
+
+// The textarea's text with its picture tags put in, and the cover as the body's first line: an image
+// alone on the first line is the post's cover (posts/SPEC.md), so no field is needed for it.
+function expandPostBody(text, images, cover) {
+  const body = String(text).replace(/\]\(img:(\d{1,6})\)/g, (m, id) => (images.has(id) ? `](${images.get(id)})` : m));
+  return cover ? `![](${cover})\n\n${body}` : body;
+}
+function onPostInput() {
+  updatePostCost();
+  clearTimeout(postDraftTimer);
+  postDraftTimer = setTimeout(savePostDraft, 400);
+}
+
+// Drafts: the text, its pictures and the cover, per name, in this browser only.
+const postDraftKey = (tokenId) => `gwei_post_draft_${CHAIN_ID}_${tokenHexOf(tokenId)}`;
+function savePostDraft() {
+  if (!postEditorToken || !$('ppBody')) return;
+  const draft = { title: $('ppTitle').value, body: $('ppBody').value, images: [...postImages], cover: postCover, seq: postImageSeq };
+  try {
+    if (!draft.title && !draft.body && !draft.cover) localStorage.removeItem(postDraftKey(postEditorToken));
+    else localStorage.setItem(postDraftKey(postEditorToken), JSON.stringify(draft));
+  } catch (e) {}
+}
+function clearPostDraft(tokenId) {
+  try { localStorage.removeItem(postDraftKey(tokenId)); } catch (e) {}
+  if (tokenId === postEditorToken) { postImages = new Map(); postCover = null; postImageSeq = 0; }
+}
+function initPostEditor() {
+  const ta = $('ppBody');
+  if (!ta) return;
+  postEditorToken = currentTokenId;
+  postImages = new Map(); postCover = null; postImageSeq = 0;
+  try {
+    const draft = JSON.parse(localStorage.getItem(postDraftKey(currentTokenId)) || 'null');
+    if (draft) {
+      $('ppTitle').value = draft.title || '';
+      ta.value = draft.body || '';
+      postImages = new Map((draft.images || []).filter(([id, url]) => /^\d+$/.test(id) && /^data:image\//.test(url)));
+      postCover = /^data:image\//.test(draft.cover || '') ? draft.cover : null;
+      postImageSeq = Number(draft.seq) || postImages.size;
+    }
+  } catch (e) {}
+  renderCoverSlot();
+  ta.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const kind = { b: 'bold', i: 'italic', k: 'link' }[e.key.toLowerCase()];
+    if (kind) { e.preventDefault(); postFormat(kind); }
+  });
+  ta.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); files.forEach(attachPostImage); return; }
+    // A URL pasted over selected text makes it a link.
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (ta.selectionStart !== ta.selectionEnd && /^https?:\/\/\S+$/.test(text.trim())) {
+      e.preventDefault();
+      ta.setRangeText(`[${ta.value.slice(ta.selectionStart, ta.selectionEnd)}](${text.trim()})`, ta.selectionStart, ta.selectionEnd, 'end');
+      onPostInput();
+    }
+  });
+  ta.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); ta.classList.add('drop'); } });
+  ta.addEventListener('dragleave', () => ta.classList.remove('drop'));
+  ta.addEventListener('drop', (e) => {
+    ta.classList.remove('drop');
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    for (const f of files) {
+      if (f.type.startsWith('image/')) attachPostImage(f);
+      else if (/\.(md|markdown|txt)$/i.test(f.name) || /^text\//.test(f.type)) loadMarkdownFile(f);
+    }
+  });
+  updatePostCost();
+}
+
+const postTool = (kind, label, title) => `<button type="button" class="secondary" onclick="postFormat('${kind}')" title="${title}" aria-label="${title}">${label}</button>`;
+// Toolbar and shortcuts: wrap the selection, or prefix the lines it touches.
+function postFormat(kind) {
+  const ta = $('ppBody');
+  if (!ta) return;
+  const a = ta.selectionStart, b = ta.selectionEnd, value = ta.value, sel = value.slice(a, b);
+  const wrap = (left, right, placeholder) => {
+    const t = sel || placeholder;
+    ta.setRangeText(left + t + right, a, b, 'end');
+    ta.setSelectionRange(a + left.length, a + left.length + t.length);
+  };
+  const lines = (prefix) => {
+    const start = value.lastIndexOf('\n', a - 1) + 1;
+    let end = value.indexOf('\n', b);
+    if (end < 0) end = value.length;
+    const block = value.slice(start, end).split('\n').map((line, i) => prefix(i) + line.replace(/^(#{1,6} |> |- |\d+\. )/, '')).join('\n');
+    ta.setRangeText(block, start, end, a === b ? 'end' : 'select'); // a selection stays selected, for the next format
+  };
+  switch (kind) {
+    case 'bold': wrap('**', '**', 'bold text'); break;
+    case 'italic': wrap('*', '*', 'italic text'); break;
+    case 'heading': lines(() => '## '); break;
+    case 'quote': lines(() => '> '); break;
+    case 'list': lines(() => '- '); break;
+    case 'numbered': lines((i) => `${i + 1}. `); break;
+    case 'code': sel.includes('\n') ? wrap('```\n', '\n```', 'code') : wrap('`', '`', 'code'); break;
+    case 'link': {
+      const t = sel || 'link text';
+      ta.setRangeText(`[${t}](https://)`, a, b, 'end');
+      const at = a + t.length + 3;
+      ta.setSelectionRange(at, at + 8);
+      break;
+    }
+  }
+  ta.focus();
+  onPostInput();
+}
+
+function readAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+let postWebpOk = null;
+async function postImageType() {
+  if (postWebpOk === null) {
+    const c = document.createElement('canvas'); c.width = c.height = 1;
+    const blob = await new Promise((r) => c.toBlob(r, 'image/webp', 0.8));
+    postWebpOk = blob?.type === 'image/webp';
+  }
+  return postWebpOk ? 'image/webp' : 'image/jpeg'; // Safari can't encode WebP
+}
+// A picture as a data URL of at most `maxChars`: cropped to `ratio` if one is given, then scaled down
+// and re-encoded until it fits. Re-encoding through a canvas also drops the file's metadata (a phone
+// photo's EXIF can hold where it was taken), which matters in a post that can't be erased. Only a GIF
+// that already fits goes in as it is, so an animation stays animated.
+async function fitPostImage(file, maxChars, ratio = null) {
+  if (!ratio && file.type === 'image/gif' && file.size * 1.4 < maxChars) {
+    const url = await readAsDataUrl(file);
+    if (url.length <= maxChars) return url;
+  }
+  const src = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+    if (!sw || !sh) throw new Error('That image could not be read');
+    if (ratio) {
+      if (sw / sh > ratio) { const w = sh * ratio; sx = (sw - w) / 2; sw = w; } else { const h = sw / ratio; sy = (sh - h) / 2; sh = h; }
+    }
+    const type = await postImageType();
+    const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+    let scale = Math.min(1, POST_IMAGE_MAX_PX / Math.max(sw, sh));
+    for (let round = 0; round < 10; round++) {
+      canvas.width = Math.max(1, Math.round(sw * scale));
+      canvas.height = Math.max(1, Math.round(sh * scale));
+      for (const quality of [0.82, 0.68, 0.52]) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((r) => canvas.toBlob(r, type, quality));
+        if (!blob) continue;
+        const url = await readAsDataUrl(blob);
+        if (url.length <= maxChars) return url;
+      }
+      scale *= 0.75;
+    }
+    return null;
+  } finally {
+    URL.revokeObjectURL(src);
+  }
+}
+// What's left of the post for a picture, keeping some room for the text around it.
+const postRoomFor = (cap) => Math.min(cap, POST_MAX_BYTES - readPostForm().bytes.length - 1024);
+
+async function attachPostImage(file) {
+  const ta = $('ppBody');
+  if (!ta || !file) return;
+  const room = postRoomFor(POST_IMAGE_MAX_CHARS);
+  if (room < 4000) { showStatus('This post has no room left for another image', 'error'); return; }
+  showStatus('Fitting the image into the post...', '');
+  try {
+    const url = await fitPostImage(file, room);
+    if (!url) throw new Error('That image could not be made small enough for the room left in this post');
+    const id = String(++postImageSeq);
+    postImages.set(id, url);
+    const alt = (file.name || 'image').replace(/\.[a-z0-9]+$/i, '').replace(/[\[\]\n]+/g, ' ').trim().slice(0, 80) || 'image';
+    const at = ta.selectionStart, before = ta.value.slice(0, at);
+    const lead = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    ta.setRangeText(`${lead}![${alt}](img:${id})\n\n`, at, ta.selectionEnd, 'end');
+    $('status').classList.remove('show');
+    ta.focus();
+    onPostInput();
+  } catch (e) {
+    showStatus(e.message || 'Couldn’t attach that image', 'error');
+  }
+}
+async function setPostCover(file) {
+  if (!file) return;
+  const room = postRoomFor(90000) + (postCover ? postCover.length : 0);
+  if (room < 4000) { showStatus('This post has no room left for a cover image', 'error'); return; }
+  showStatus('Fitting the cover into the post...', '');
+  try {
+    const url = await fitPostImage(file, room, POST_COVER_RATIO);
+    if (!url) throw new Error('That image could not be made small enough for a cover');
+    postCover = url;
+    $('status').classList.remove('show');
+    renderCoverSlot();
+    onPostInput();
+  } catch (e) {
+    showStatus(e.message || 'Couldn’t use that image', 'error');
+  }
+}
+function clearPostCover() {
+  postCover = null;
+  renderCoverSlot();
+  onPostInput();
+}
+function renderCoverSlot() {
+  const el = $('ppCover');
+  if (!el) return;
+  el.innerHTML = postCover
+    ? `<img src="${escapeHtml(postCover)}" alt="Cover image">` +
+      `<div class="post-cover-actions"><button type="button" class="secondary" onclick="$('ppCoverFile').click()">Change cover</button>` +
+      `<button type="button" class="secondary" onclick="clearPostCover()">Remove</button></div>`
+    : `<button type="button" class="secondary post-cover-add" onclick="$('ppCoverFile').click()">+ Add a cover image</button>`;
+}
+// A Markdown file you already wrote: its leading "# Title" becomes the title if there is none yet.
+async function loadMarkdownFile(file) {
+  const ta = $('ppBody');
+  if (!ta || !file) return;
+  let text = (await file.text()).replace(/\r\n?/g, '\n');
+  const m = /^#\s+(.+)\n+/.exec(text);
+  if (m && !$('ppTitle').value.trim()) { $('ppTitle').value = m[1].trim().slice(0, 200); text = text.slice(m[0].length); }
+  if (!ta.value.trim()) ta.value = text;
+  else {
+    const before = ta.value.slice(0, ta.selectionStart);
+    const lead = !before || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+    ta.setRangeText(lead + text, ta.selectionStart, ta.selectionEnd, 'end');
+  }
+  onPostInput();
+}
+
 function postsFormHtml() {
-  const pageUrl = GWEI_GATEWAY && currentTokenName ? `https://${currentTokenName}.${GWEI_GATEWAY}` : null;
-  const hasWebsite = currentHasContenthash || !!currentContentContract;
+  const base = currentTokenName ? namePostsBase(currentTokenName + '.gwei', currentHasContenthash || !!currentContentContract) : null;
+  const pageUrl = base && base.replace(/\/$/, '');
   return (pageUrl
-    ? `<div class="profile-hint">Posts appear on <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>${hasWebsite ? ' once no website is set: the website takes the page while it is' : ''}. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
+    ? `<div class="profile-hint">Posts appear on <a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener">${escapeHtml(pageUrl.replace('https://', ''))}</a>. Their text is stored in Ethereum blobs and is public. You can take a post off your page, but not erase it. <a href="https://github.com/lucadonnoh/gwei-names/blob/main/posts/SPEC.md" target="_blank" rel="noopener">How it works</a></div>`
     : '') +
     '<div class="post-list" id="ppList" aria-live="polite"></div>' +
     '<div class="profile-section">New post</div>' +
+    '<div id="ppCover" class="post-cover"></div>' +
+    `<input type="file" id="ppCoverFile" accept="image/*" hidden onchange="setPostCover(this.files[0]); this.value=''">` +
     '<label for="ppTitle">Title</label><input type="text" id="ppTitle" maxlength="200">' +
-    '<label for="ppBody">Text</label><textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
-    '<div class="profile-hint">Markdown: # heading, **bold**, *italic*, [link](https://…), ![image](https://… or ipfs://…), - list, &gt; quote, `code`, $math$.</div>' +
+    '<label for="ppBody">Text</label>' +
+    '<div class="post-toolbar" role="toolbar" aria-label="Formatting">' +
+    postTool('bold', '<b>B</b>', 'Bold (⌘B)') + postTool('italic', '<i>I</i>', 'Italic (⌘I)') + postTool('heading', 'H', 'Heading') +
+    postTool('link', 'Link', 'Link (⌘K)') + postTool('list', '• List', 'List') + postTool('numbered', '1. List', 'Numbered list') +
+    postTool('quote', '❝', 'Quote') + postTool('code', '&lt;/&gt;', 'Code') +
+    `<button type="button" class="secondary" onclick="$('ppImageFile').click()" title="Add an image">Image</button>` +
+    `<button type="button" class="secondary post-tool-right" onclick="$('ppMdFile').click()" title="Open a Markdown file">Open .md</button></div>` +
+    '<textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
+    `<input type="file" id="ppImageFile" accept="image/*" multiple hidden onchange="[...this.files].forEach(attachPostImage); this.value=''">` +
+    `<input type="file" id="ppMdFile" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden onchange="loadMarkdownFile(this.files[0]); this.value=''">` +
+    '<div class="post-room"><div id="ppRoom"></div></div>' +
     '<div class="profile-color"><input type="checkbox" id="ppReplies" checked onchange="updatePostCost()"><label for="ppReplies">Allow replies</label></div>' +
     '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +
     '<button onclick="doPublishPost()">Publish</button>' +
@@ -6408,13 +6686,13 @@ async function loadOwnPosts(written) {
     const { posts } = await res.json();
     if (tokenId !== currentTokenId || !$('ppList')) return;
     if (pendingRepliesToken !== tokenId) { pendingReplies.clear(); pendingRepliesToken = tokenId; }
-    const base = `https://${currentTokenName}.${GWEI_GATEWAY}`;
+    const base = namePostsBase(currentTokenName + '.gwei', currentHasContenthash || !!currentContentContract) || '/';
     let html = (posts || []).map((p) => {
       const saved = record === null ? null : repliesOnFor(p.hash, p.replies, record);
       if (pendingReplies.get(p.hash) === saved) pendingReplies.delete(p.hash); // saved meanwhile
       const shown = pendingReplies.has(p.hash) ? pendingReplies.get(p.hash) : saved;
       return `<div class="post-row"><span class="post-date">${new Date(p.time * 1000).toISOString().slice(0, 10)}</span>` +
-        `<a href="${escapeHtml(base + postPathFor(p.hash, p.title))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
+        `<a href="${escapeHtml(base + postPathFor(p.hash, p.title).slice(1))}" target="_blank" rel="noopener">${escapeHtml(p.title)}</a>` +
         `<span class="post-state">${p.onchain ? 'On Ethereum' : 'Publishing'}</span>` +
         // No checkbox when the record couldn't be read: saving one from a guess would reset the others.
         (saved === null ? '' : `<label class="post-replies"><input type="checkbox"${shown ? ' checked' : ''} onchange="markReplies('${p.hash}', this.checked, ${saved})">Replies</label>`) +
@@ -6483,6 +6761,7 @@ async function previewPost() {
     const res = await fetch(`${POSTS_API}/posts/preview`, { method: 'POST', body: bytes });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error || 'Preview failed');
+    const cover = /^(?:https:|data:image\/)/.test(out.cover || '') ? `<img src="${escapeHtml(out.cover)}" alt="" style="width:100%;aspect-ratio:5/2;object-fit:cover;margin:0 0 20px">` : '';
     // The preview runs in a sandboxed frame with no scripts, the same markup the page will serve.
     frame.srcdoc = '<!doctype html><meta charset="utf-8"><style>' +
       'body{font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;margin:20px;color:#000;overflow-wrap:anywhere}' +
@@ -6490,7 +6769,7 @@ async function previewPost() {
       'img{max-width:100%;height:auto;display:block;margin:0 auto}pre{background:#f5f5f5;padding:12px;overflow-x:auto;font-size:13px}' +
       'code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;background:#f5f5f5;padding:1px 4px}pre code{padding:0}' +
       'blockquote{border-left:2px solid #666;margin:0 0 16px;padding-left:14px;color:#666}a{color:#000}</style>' +
-      `<h1>${escapeHtml(out.title)}</h1>${out.html}`;
+      `${cover}<h1>${escapeHtml(out.title)}</h1>${out.html}`;
     frame.style.display = 'block';
     frame.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   } catch (e) {
@@ -6528,6 +6807,7 @@ async function doPublishPost() {
   const hash = ethers.keccak256(bytes);
   const name = currentTokenName;
   const tokenId = currentTokenId;
+  const hasWebsite = currentHasContenthash || !!currentContentContract;
   isProcessing = true;
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
@@ -6557,11 +6837,12 @@ async function doPublishPost() {
     if (!uploaded) {
       for (let i = 0; i < 12 && !(await uploadPost(bytes, hash)); i++) await new Promise((resolve) => setTimeout(resolve, 10000));
     }
-    const url = `https://${name}.${GWEI_GATEWAY}${postPathFor(hash, title)}`;
+    const url = postUrlFor(name + '.gwei', hash, title, hasWebsite);
     $('status').innerHTML = escapeHtml(indexed ? 'Posted! It is on your page now and goes into an Ethereum blob within a few minutes. ' : 'Posted! It will appear on your page within a few minutes. ') +
-      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color:inherit;">View post →</a>`;
+      (url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color:inherit;">View post →</a>` : '');
     $('status').className = 'status show success';
-    if ($('ppTitle')) { $('ppTitle').value = ''; $('ppBody').value = ''; $('ppPreview').style.display = 'none'; }
+    clearPostDraft(tokenId);
+    if ($('ppTitle') && postEditorToken === tokenId) { $('ppTitle').value = ''; $('ppBody').value = ''; $('ppPreview').style.display = 'none'; renderCoverSlot(); updatePostCost(); }
     loadOwnPosts();
   } catch (e) {
     handleError(e);
@@ -6681,6 +6962,22 @@ function nameSiteOrigin(name, gateway = GWEI_GATEWAY) {
   }
 }
 
+// Where a name's posts are read (`name` with its .gwei): its own host for a top-level name without a
+// website, else /<name>/ on the posts host, which the gateway keeps for every name, subnames included
+// (and posts.gwei and diff.gwei, whose hosts are the posts host and a service).
+function namePostsBase(name, hasWebsite = false) {
+  const origin = !hasWebsite && !/^(?:posts|diff)\.gwei$/.test(name || '') && nameSiteOrigin(name);
+  if (origin) return origin + '/';
+  try {
+    if (GWEI_GATEWAY && /\.gwei$/.test(name || '') && name !== '.gwei' && ethers.ensNormalize(name) === name) return `https://posts.${GWEI_GATEWAY}/${encodeURIComponent(name)}/`;
+  } catch (e) {}
+  return null;
+}
+function postUrlFor(name, hash, title, hasWebsite = false) {
+  const base = namePostsBase(name, hasWebsite);
+  return base ? base + postPathFor(hash, title).slice(1) : null;
+}
+
 // gwei.domains/#reply/<post hash>[/<name>[/<text>]]: a post page's Reply opens this, in a small window.
 // Any site can make that link, so nothing from it is trusted: the text is only filled in, the name only
 // picks which of the post's authorizations to show (it must be one), and nothing is sent until Send is
@@ -6702,13 +6999,16 @@ async function openReply(hash, name = '', text = '') {
     const detail = await res.json();
     if (replyPost !== post) return;
     const auth = detail.authorizations?.find((a) => a.name && a.name === name) || detail.authorizations?.[0];
-    const origin = nameSiteOrigin(auth?.name);
+    const href = auth?.name && postUrlFor(auth.name, hash, detail.title);
     const link = document.createElement('a');
     link.textContent = `“${detail.title}”`;
-    if (origin) {
-      link.href = post.url = new URL(postPathFor(hash, detail.title), origin).href;
+    if (href) {
+      link.href = post.url = href;
       link.target = '_blank'; link.rel = 'noopener';
-      post.origins = [origin, nameSiteOrigin(auth.name, 'gwei.domains')].filter(Boolean);
+      // The post's page is on its name's host, or on the posts host (a subname, or a name a website
+      // took), which runs no script but the post page's own, so it only hears replies to its post.
+      post.origins = [nameSiteOrigin(auth.name), nameSiteOrigin(auth.name, 'gwei.domains'),
+        `https://posts.${GWEI_GATEWAY}`, 'https://posts.gwei.domains'].filter(Boolean);
     }
     $('replyTitle').replaceChildren('to ', link, auth?.name ? ` by ${auth.name}` : '');
     // Don't let anyone pay for a reply the post page won't show.
@@ -6902,11 +7202,11 @@ function showManageForm(action) {
 
   form.innerHTML = html;
   form.classList.add('show');
-  form.oninput = action === 'profile' ? updateProfileCost : action === 'posts' ? updatePostCost : null;
+  form.oninput = action === 'profile' ? updateProfileCost : action === 'posts' ? onPostInput : null;
   form.onchange = action === 'profile' ? updateProfileCost : null;
   if (action === 'renew') previewRenew();
   if (action === 'profile') { previewProfileAvatar(); updateProfileCost(); }
-  if (action === 'posts') { loadOwnPosts(); refreshPostQuote(); }
+  if (action === 'posts') { initPostEditor(); loadOwnPosts(); refreshPostQuote(); }
 }
 
 // Read and normalize the years input to 1..25. Keep the visible value in sync

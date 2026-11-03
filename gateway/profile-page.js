@@ -380,6 +380,7 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.replies{margin-top:4px}.reply{padding:12px 0;border-bottom:1px solid var(--panel)}.reply-head{font-size:12px;margin-bottom:4px}' +
   '.reply-head a{color:var(--fg)}.reply-date{margin-left:10px;color:var(--muted)!important;text-decoration:none}' +
   '.reply-text{font-size:14px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}.replies-note{margin-top:8px}' +
+  '.cover{margin:0 0 28px}.cover img{display:block;width:100%;height:auto;aspect-ratio:5/2;object-fit:cover;background:var(--panel)}' +
   '.reply-form{display:none;margin-top:16px}:root.js .reply-form{display:block}:root.js .reply-link{display:none}' +
   '.reply-form textarea{display:block;width:100%;min-height:84px;padding:10px 0;font:inherit;font-size:15px;line-height:1.5;color:var(--fg);' +
   'background:transparent;border:0;border-bottom:1px solid var(--muted);border-radius:0;outline:none;resize:vertical}.reply-form textarea:focus{border-bottom:2px solid var(--fg)}' +
@@ -390,7 +391,7 @@ const STYLE = ':root{--bg:#fff;--fg:#000;--muted:#666;--panel:#f5f5f5;--btn-bg:#
   '.section{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:32px 0 4px}' +
   '.post-link{display:flex;gap:14px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--panel);color:var(--fg);text-decoration:none;font-size:14px}' +
   '.post-link:hover{opacity:.55}.post-date{flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}' +
-  '.post-name{flex:1;overflow-wrap:anywhere}.post-link .badge{margin:0}' +
+  '.post-name{flex:1;overflow-wrap:anywhere}.post-by{color:var(--muted)}.post-link .badge{margin:0}' +
   '.byline{display:inline-flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none;font-size:13px;margin-bottom:28px}' +
   '.byline .avatar{width:32px;height:32px;margin:0}' +
   '.post-title{font-size:28px;font-weight:600;line-height:1.25;overflow-wrap:anywhere;margin-bottom:6px}' +
@@ -447,7 +448,7 @@ export function renderLayout({ title, head = '', body, subtitle = '', icon = '<l
 
 // Link-preview tags. `url` is the page on the host it was asked for (gwei.limo or gwei.domains), and
 // a 1200x630 `image` (a card, see cardImage) is shown large.
-export function metaTags({ title, description, url, image, imageWidth, imageHeight, imageAlt, type = 'website' }) {
+export function metaTags({ title, description, url, image, imageWidth, imageHeight, imageAlt, type = 'website', large = imageWidth > imageHeight }) {
   const tag = (attr, key, value) => `<meta ${attr}="${key}" content="${escapeHtml(value)}">`;
   return `<link rel="canonical" href="${escapeHtml(url)}">` + tag('name', 'description', description) +
     tag('property', 'og:type', type) + tag('property', 'og:site_name', 'Gwei Name Service') +
@@ -455,7 +456,7 @@ export function metaTags({ title, description, url, image, imageWidth, imageHeig
     tag('property', 'og:url', url) + tag('property', 'og:image', image) +
     (imageWidth ? tag('property', 'og:image:type', 'image/png') + tag('property', 'og:image:width', imageWidth) + tag('property', 'og:image:height', imageHeight) : '') +
     (imageAlt ? tag('property', 'og:image:alt', imageAlt) : '') +
-    tag('name', 'twitter:card', imageWidth > imageHeight ? 'summary_large_image' : 'summary') + tag('name', 'twitter:title', title) +
+    tag('name', 'twitter:card', large ? 'summary_large_image' : 'summary') + tag('name', 'twitter:title', title) +
     tag('name', 'twitter:description', description) + tag('name', 'twitter:image', image) +
     (imageAlt ? tag('name', 'twitter:image:alt', imageAlt) : '');
 }
@@ -467,11 +468,19 @@ export function metaTags({ title, description, url, image, imageWidth, imageHeig
 export const CARD_PATH = '/.well-known/gwei-card.png';
 export const POST_CARD_PATH = /^\/\.well-known\/gwei-card\/([0-9a-f]{12})\.png$/;
 export const postCardPath = (hash) => `/.well-known/gwei-card/${hash.slice(2, 14)}.png`;
+export const POST_COVER_PATH = /^\/posts\/([0-9a-f]{12})\/cover$/; // a cover stored in the post (post-page.js)
 const CARD_DESIGN = 2; // bump with any change to how cards look, so caches and previews refresh
 
 const displayName = (name, t) => (t.display && t.display.toLowerCase() !== name.toLowerCase() ? t.display : '');
-// The page's address as people read it: the name's own (Unicode) labels on the page's domain.
-const cardHost = (name, pageUrl) => `${name.slice(0, -'.gwei'.length)}.${new URL(pageUrl).hostname.split('.').slice(-2).join('.')}`;
+// Where a name's pages are, as a path: '/' on its own host, '/<name>/' on the posts host (worker.js),
+// which serves subnames and names whose host a website took. Every link a page makes starts here.
+export const basePath = (pageUrl) => new URL(pageUrl).pathname;
+// The page's address as people read it: the name's own (Unicode) labels on the page's domain, or the
+// posts host and the name.
+const cardHost = (name, pageUrl) => {
+  const url = new URL(pageUrl);
+  return url.pathname === '/' ? `${name.slice(0, -'.gwei'.length)}.${url.hostname.split('.').slice(-2).join('.')}` : `${url.hostname}/${name}`;
+};
 const CARD_BADGES = ['Proof of humanity', 'Free name', 'Primary name']; // the rest are plain from the name
 export function profileCard(name, profile, pageUrl) {
   const t = profile.text || {};
@@ -513,9 +522,9 @@ export function cardVersion(card) { // FNV-1a: a cache key, not a security bound
   for (const byte of new TextEncoder().encode(JSON.stringify([CARD_DESIGN, card]))) h = Math.imul(h ^ byte, 0x01000193);
   return (h >>> 0).toString(16).padStart(8, '0');
 }
-// The metaTags image fields for `card`, served at `path` on the page's own host.
+// The metaTags image fields for `card`, served at `path` under the page's base.
 export function cardImage(card, path, pageUrl, alt) {
-  return { image: new URL(`${path}?v=${cardVersion(card)}`, pageUrl).href, imageWidth: 1200, imageHeight: 630, imageAlt: alt };
+  return { image: new URL(`${path.slice(1)}?v=${cardVersion(card)}`, pageUrl).href, imageWidth: 1200, imageHeight: 630, imageAlt: alt };
 }
 
 // `name` is the full name ("alice.gwei"), `dappHash` its gwei.domains link fragment, `pageUrl` this page.
@@ -551,6 +560,7 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
   const rows = profileRows(profile).map(([label, value]) => `<div><span>${label}</span>${value}</div>`).join('');
   const badges = nameBadges(name, profile);
   const share = `https://x.com/intent/post?text=${encodeURIComponent(name)}&url=${encodeURIComponent(pageUrl)}`;
+  const root = basePath(pageUrl);
   const body =
     (siteDown ? `<div class="notice">The website of <b>${escapeHtml(name)}</b> isn\u2019t loading right now, so here is its profile. ` +
       'The website will open by itself as soon as it\u2019s back.</div>' : '') +
@@ -572,14 +582,16 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
     (siteDown
       ? `<p class="note">Websites on ${siteDown} load while some node keeps a copy online. If this one doesn\u2019t come back, ` +
         `its owner can put it online again: <a href="https://gwei.domains/guide/">how sites are hosted →</a></p><script>${SITE_CHECK_SCRIPT}</script>`
-      : `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
-        `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
-        '<a href="https://gwei.domains/guide/">host a website →</a></p>');
-  const feed = postsHtml ? `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="/feed.xml">` : '';
+      : root !== '/'
+        ? `<p class="note">The owner of ${escapeHtml(name)} can <a href="${dapp}">edit this profile</a>.</p>`
+        : `<p class="note">This is the default page for ${escapeHtml(name)}. Its owner can ` +
+          `<a href="${dapp}">edit this profile</a> or replace the page with a website stored on IPFS, Swarm or a contract: ` +
+          '<a href="https://gwei.domains/guide/">host a website →</a></p>');
+  const feed = postsHtml ? `<link rel="alternate" type="application/atom+xml" title="${escapeHtml(name)}" href="${escapeHtml(root)}feed.xml">` : '';
   return renderLayout({
     title: name,
     subtitle: '.gwei name',
-    icon: faviconLinks(profile),
+    icon: faviconLinks(profile, root),
     head: feed + metaTags({
       title: name, description, url: pageUrl,
       ...cardImage(profileCard(name, profile, pageUrl), CARD_PATH, pageUrl, `${name} on the Gwei Name Service`),
@@ -597,10 +609,11 @@ export function avatarHtml(profile) {
 
 // A name's pages use its avatar as their icon: the image record (or NFT) when it has one, else the
 // generated mark as a PNG, which every browser takes as a favicon (Safari ignores SVG ones).
-export function faviconLinks(profile) {
+export function faviconLinks(profile, root = '/') {
   const avatar = avatarUrl(profile.avatarImage || profile.text?.avatar);
   if (avatar) return `<link rel="icon" href="${escapeHtml(avatar)}">`;
-  if (profile.seed) return `<link rel="icon" type="image/png" href="${AVATAR_PNG_PATH}"><link rel="apple-touch-icon" href="${AVATAR_PNG_PATH}">`;
+  const png = escapeHtml(root + AVATAR_PNG_PATH.slice(1));
+  if (profile.seed) return `<link rel="icon" type="image/png" href="${png}"><link rel="apple-touch-icon" href="${png}">`;
   return '<link rel="icon" href="https://gwei.domains/favicon.ico">';
 }
 

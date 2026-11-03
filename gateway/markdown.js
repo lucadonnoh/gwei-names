@@ -15,7 +15,7 @@ const escapeHtml = (s) =>
 const MAX_QUOTE_DEPTH = 4;
 
 export function linkUrl(value) {
-  const v = (value || '').trim();
+  let v = (value || '').trim();
   // A held span (\u0000N\u0000) inside a destination would be expanded inside the attribute later.
   if (v.includes('\u0000')) return null;
   // Same-page anchors and paths on the name's own site, which keep working wherever a post is shown.
@@ -23,6 +23,17 @@ export function linkUrl(value) {
   if (/^mailto:[^\s@<>"']{1,64}@[^\s@<>"']{1,190}$/i.test(v)) return v;
   const ipfs = /^ipfs:\/\/(?:ipfs\/)?([a-zA-Z0-9]{46,100})(\/[^\s?#"'<>]*)?$/.exec(v);
   if (ipfs) return `https://ipfs.filebase.io/ipfs/${ipfs[1]}${ipfs[2] || ''}`;
+  // A .gwei name ([my site](alice.gwei)) is its site: gwei isn't a DNS name, gwei.limo serves it. A
+  // subname has no host of its own (the certificates cover one level): its page is on the posts host.
+  const gwei = /^([a-z0-9-]{1,63})\.gwei((?:[/?#][^\s"'<>]*)?)$/i.exec(v);
+  if (gwei) return `https://${gwei[1].toLowerCase()}.gwei.limo${gwei[2] || '/'}`;
+  const sub = /^((?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{1,63})\.gwei((?:[/?#][^\s"'<>]*)?)$/i.exec(v);
+  if (sub) return `https://posts.gwei.limo/${sub[1].toLowerCase()}.gwei${sub[2] && sub[2][0] === '/' ? sub[2] : '/' + (sub[2] || '')}`;
+  // Any other name ending in .gwei is no DNS name either: no link.
+  if (/^[^/?#:]*\.gwei(?:[/?#:]|$)/i.test(v)) return null;
+  // A web address written without its scheme ("example.com", "www.example.com/page"), the way people
+  // usually type one, is an https link (from wei-names, MIT).
+  if (/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#][^\s"'<>]*)?$/i.test(v)) v = 'https://' + v;
   if (!/^https?:\/\//i.test(v)) return null;
   try {
     const url = new URL(v);
@@ -34,6 +45,10 @@ export function linkUrl(value) {
 
 // A link destination: no spaces or angle brackets, parentheses only in balanced pairs (one level).
 const DEST = '(?:[^\\s()<>]|\\([^\\s()<>]*\\)){1,2000}';
+// An image may also be an inline data: URL, far longer than any link: a picture stored in the post
+// itself (the dapp's editor puts them there, as wei-names' does). One character class, so it can't
+// backtrack.
+const IMG_DEST = `(?:data:image\\/(?:png|jpeg|gif|webp|svg\\+xml);base64,[A-Za-z0-9+/]{1,200000}={0,2}|${DEST})`;
 
 // Inline markup. Code spans, links, images and backslash escapes are cut out first as placeholders,
 // the rest is escaped, emphasis is applied to the escaped text, then the placeholders go back in.
@@ -50,13 +65,19 @@ function inline(text) {
     // Inline math: no space just inside the dollars and no digit after, so "$5 and $10" stays text.
     .replace(/(^|[^\\$\w])\$(?=[^\s$])([^$\n]{0,2000}?[^\s$\\])\$(?![\w$])/g, (_, lead, tex) => lead + math(tex, false))
     .replace(/\\([\\`*_{}[\]()#+\-.!~>|$])/g, (_, c) => hold(escapeHtml(c)))
-    .replace(new RegExp(`!\\[([^\\]\\n]{0,300})\\]\\(\\s*(${DEST})(?:\\s+"[^"\\n]{0,200}")?\\s*\\)`, 'g'), (_, alt, src) => {
+    // <https://…>: an address in angle brackets is a link to itself, as in CommonMark.
+    .replace(/<(https?:\/\/[^\s<>\u0000]{1,2000})>/g, (m, href) => {
+      const url = linkUrl(href);
+      return url ? hold(`<a href="${escapeHtml(url)}" rel="nofollow ugc noopener">${escapeHtml(href)}</a>`) : m;
+    })
+    .replace(new RegExp(`!\\[([^\\]\\n]{0,300})\\]\\(\\s*(${IMG_DEST})(?:\\s+"[^"\\n]{0,200}")?\\s*\\)`, 'g'), (_, alt, src) => {
       const text = plain(alt);
       const url = src.includes('\u0000') ? null : avatarUrl(src);
       return url ? hold(`<img src="${escapeHtml(url)}" alt="${escapeHtml(text)}" loading="lazy" referrerpolicy="no-referrer">`) : hold(escapeHtml(text));
     })
     .replace(new RegExp(`\\[([^\\]\\n]{1,500})\\]\\(\\s*(${DEST})(?:\\s+"[^"\\n]{0,200}")?\\s*\\)`, 'g'), (_, label, href) => {
-      const url = linkUrl(href);
+      const found = linkUrl(href);
+      const url = found && found.startsWith('/') ? pathBase + found : found;
       const inner = emphasis(escapeHtml(label));
       return hold(url ? `<a href="${escapeHtml(url)}" rel="nofollow ugc noopener">${inner}</a>` : inner);
     });
@@ -188,18 +209,30 @@ function blocks(lines, depth, used = new Set()) {
   return out.join('');
 }
 
-export function renderMarkdown(text) {
+// Where a /path link goes: the name's own pages, at '/' on its host but under /<name>/ on the posts host
+// (worker.js). Set for the length of one (synchronous) renderMarkdown call.
+let pathBase = '';
+export function renderMarkdown(text, { base = '/' } = {}) {
   // NUL is the placeholder delimiter above; other control characters have no business in a post.
   const clean = String(text || '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
-  return blocks(clean.split('\n'), 0);
+  pathBase = String(base).replace(/\/$/, '');
+  try {
+    return blocks(clean.split('\n'), 0);
+  } finally {
+    pathBase = '';
+  }
 }
 
 // Plain text for previews and link cards: the body without markup, squeezed onto one line.
 export function excerpt(text, max = 200) {
-  const plain = String(text || '')
+  // Only a post's start can reach the excerpt, so only that is read: a post is up to 127 KB, and these
+  // patterns aren't all linear. Pictures go first, whatever their size (a stored one can be most of the
+  // post): no character of a destination can start another, so that pass is linear.
+  const head = String(text || '').replace(/!\[[^\[\]\n]{0,300}\]\((?:data:[^()\s]*|[^()\s]{0,4000})\)/g, ' ').slice(0, max * 40);
+  const plain = head
     .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!\[([^\[\]\n]{0,300})\]\([^()\s]{0,4000}\)/g, '')
+    .replace(/\[([^\[\]\n]{0,500})\]\([^()\s]{0,4000}\)/g, '$1')
     .replace(/^ {0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm, '')
     .replace(/(\*\*|~~|\*|`)(?=\S)([^*~`\n]*?\S)\1/g, '$2')
     .replace(/(^|[^\w])(__|_)(?=\S)([^_\n]*?\S)\2(?!\w)/g, '$1$3')
