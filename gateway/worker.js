@@ -852,6 +852,12 @@ async function lookupName(name, route) {
           }
         }
       } catch (_) {}
+    } else if (result.kind === 'web3') {
+      // As for a contenthash site below: the profile, for its pages on the posts host.
+      try {
+        const profile = profileFromResults(results.slice(2));
+        if (profile?.registered) result.profile = { ...profile, seed: tokenIdHex };
+      } catch (_) {}
     }
   } else {
     const chHex = b.slice(128, 128 + len * 2);
@@ -1243,6 +1249,19 @@ async function postsHostResponse(url, env, ctx, route, base) {
   return serveNamePages({ name, r, url, path: rest, pageUrl: `https://${host}/${encodeURIComponent(name)}/`, dappHash, env, cache, ctx });
 }
 
+// A post's address on its name's own host, asked of the website that took the host since: when the
+// website has no such page and the name has that post, it is read on the posts host. So a post link
+// made while the name had no website (notifications, shared links) keeps working after it sets one, and
+// the website still owns its host: every page it serves is served.
+async function postMoved(request, r, name, url, base, env) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+  const m = POST_PATH.exec(url.pathname);
+  const index = postIndex(env);
+  if (!m || !index || !r.profile?.seed || !r.profile.owner) return null;
+  const post = await fromIndex(() => index.postForToken('0x' + r.profile.seed, r.profile.owner, m[1]), null);
+  return post ? Response.redirect(`https://${POSTS_LABEL}.${base}/${encodeURIComponent(name)}${url.pathname}${url.search}`, 302) : null;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1344,6 +1363,14 @@ export default {
         stored.headers.set(STORED_CACHE_CONTROL, resp.headers.get('cache-control'));
         ctx.waitUntil(cache.put(contentKey, stored).catch(() => {}));
       }
+      // No such page: a 404, or in auto mode a 400 for a path that is no call (as /posts/<id>-<slug> isn't).
+      if (resp.status === 404 || resp.status === 400) {
+        const moved = await postMoved(request, r, name, url, base, env);
+        if (moved) {
+          void resp.body?.cancel().catch(() => {});
+          return moved;
+        }
+      }
       return resp;
     }
 
@@ -1363,6 +1390,9 @@ export default {
       upstream = new Response(null, { status: 404 });
     }
     if (upstream?.status === 404) {
+      void upstream.body?.cancel().catch(() => {});
+      const moved = await postMoved(request, r, name, url, base, env);
+      if (moved) return moved;
       return page(name, `<p>This page doesn't exist on <b>${escapeHtml(name)}</b>.</p><p><a href="/">go to the home page →</a></p>`, 404);
     }
     if (upstream) {

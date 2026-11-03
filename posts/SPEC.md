@@ -232,7 +232,8 @@ shows its replies and a reply box (Replies, above). Post pages themselves never 
 `https://posts.gwei.limo/<name>.gwei/` (the name as ENSIP-15 writes it), with the same paths under it:
 a subname has no host of its own, since the certificates cover one level, and a name with a website
 gives its host to the website. A top-level name without a website is sent on to its own host, so a post
-has one address at a time. Recent posts on every name are at `https://posts.gwei.limo/`. Every name
+has one address at a time, and a post's address on its own host whose website has no such page is sent
+to the posts host, so a link made before the name set a website keeps working. Recent posts on every name are at `https://posts.gwei.limo/`. Every name
 shares this origin, so it serves only the gateway's own pages, never a website, and sandboxes
 everything that isn't a page (cards, avatars, covers, feeds). Like
 [posts.wei.domains](https://github.com/src-company/wei-names/blob/main/posts/SPEC.md), which it

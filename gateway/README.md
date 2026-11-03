@@ -45,7 +45,8 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
 - **`posts.gwei.limo`** (and `posts.gwei.domains`) is the posts host, not the name `posts.gwei`:
   every name's profile and posts by path, `/<name>.gwei/…`, subnames included, and recent posts at `/`
   (`servePostsHost` in `worker.js`; posts/SPEC.md). A top-level name without a website is redirected to
-  its own host. Every name shares the origin, so it never serves a website, and every response that
+  its own host, and a website's 404 on one of its name's post paths (`postMoved`) redirects to the posts
+  host, so post links outlive a website being set. Every name shares the origin, so it never serves a website, and every response that
   isn't one of the gateway's pages is sandboxed.
 - **Name profiles.** A registered name with no `contenthash` and no usable `contentcontract` record
   gets a profile page at its root (`profile-page.js`, styled like gwei.domains): address, owner,

@@ -1688,6 +1688,38 @@ test('a profile without posts has no posts section, and a broken index only drop
   assert.doesNotMatch(html, /class="section">Posts/);
 });
 
+test('a post link on a name a website took since goes to the posts host, unless the website has that page', async () => {
+  const rpc = (data) => (data.startsWith(SEL.ch) ? CH_IPFS : rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) })(data));
+  const site = (pages) => makeFetch({ rpc, ipfs: (url) => {
+    const path = new URL(url).pathname.replace(/^\/ipfs\/[^/]+/, '');
+    return pages[path] ? new Response(pages[path], { status: 200, headers: { 'content-type': 'text/html' } }) : new Response('not found', { status: 404 });
+  } });
+  const get = (path, fetchMock, POST_INDEX = fakePostIndex()) => invoke('https://alice.gwei.domains' + path, { cache: makeCache(), fetchMock, env: { POST_INDEX } });
+
+  let res = await get('/posts/a1a1a1a1a1a1-exploring-the-blobspace?ref=ntfy', site({}));
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), 'https://posts.gwei.domains/alice.gwei/posts/a1a1a1a1a1a1-exploring-the-blobspace?ref=ntfy');
+  res = await get('/posts/a1a1a1a1a1a1-exploring-the-blobspace', site({ '/posts/a1a1a1a1a1a1-exploring-the-blobspace': 'the website’s own page' }));
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'the website’s own page', 'the website owns its host');
+  res = await get('/posts/ffffffffffff-no-such-post', site({}));
+  assert.equal(res.status, 404, 'not a post of this name');
+  const POST_INDEX = fakePostIndex();
+  res = await get('/about', site({}), POST_INDEX);
+  assert.equal(res.status, 404);
+  assert.equal(POST_INDEX.calls.filter((c) => c[0] === 'postForToken').length, 0, 'only post paths are looked up');
+
+  // A website in a contract: its 404 (a revert, in auto mode) moves the post the same way.
+  const profile = rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) });
+  const contract = makeFetch({ rpc: (data, _url, to) => {
+    if (to?.toLowerCase() === NAMENFT) return data.startsWith(SEL.text) && textKey(data) === 'contentcontract' ? CC_MAINNET : profile(data);
+    return data.startsWith(SEL.mode) ? MODE_AUTO : rpcRevert();
+  } });
+  res = await get('/posts/a1a1a1a1a1a1', contract);
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), 'https://posts.gwei.domains/alice.gwei/posts/a1a1a1a1a1a1');
+});
+
 test('a name that is also an Object property is an ordinary name, not a reserved service', async () => {
   const res = await invoke('https://constructor.gwei.domains/', { cache: makeCache(), fetchMock: aliceProfile() });
   assert.equal(res.status, 200);
