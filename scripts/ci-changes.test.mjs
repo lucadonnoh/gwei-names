@@ -10,7 +10,9 @@ const runs = (...changed) => Object.entries(affected(changed, ALL)).filter(([, h
 
 test('a change runs the suites built from it, and deploys the parts that ship it', () => {
   assert.deepEqual(runs('README.md', 'DEPLOY.md', 'audit/report.md'), [], 'docs run nothing');
-  assert.deepEqual(runs('gateway/markdown.js'), ['deploy-gateway', 'gateway']);
+  // The dapp's editor tests read posts the way the gateway renders them (markdown.js, post-page.js).
+  assert.deepEqual(runs('gateway/markdown.js'), ['dapp', 'deploy-gateway', 'gateway']);
+  assert.deepEqual(runs('gateway/worker.js'), ['deploy-gateway', 'gateway']);
   assert.deepEqual(runs('gateway/worker.test.js'), ['deploy-gateway', 'gateway']);
   assert.deepEqual(runs('dapp/gweiNS.html'), ['dapp', 'deploy-dapp', 'image']);
   assert.deepEqual(runs('Dockerfile'), ['deploy-dapp', 'image']);
