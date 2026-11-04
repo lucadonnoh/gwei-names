@@ -288,7 +288,7 @@ test('voting is discoverable with mobile WalletConnect recovery', () => {
   assert.match(html, /id="votingExplorerLink" href="https:\/\/etherscan\.io\/address\/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005"/);
   assert.doesNotMatch(html, /votingExplorerSeparator|id="votingExplorerLink"[^>]*display:none/);
   assert.match(html, /EXPLORER \+ '\/address\/' \+ VOTING_CONTRACT/);
-  assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: RPC_ENDPOINTS\[0\] \}/);
+  assert.match(html, /rpcMap: \{ \[CHAIN_ID\]: NET\.rpc\[0\] \}/);
   assert.match(html, /if \(deepLink && isMobile && !insideWalletBrowser\)/);
   assert.match(html, /window\.location\.href = deepLink/);
   assert.match(html, /}, 2000\);/);
@@ -2079,7 +2079,7 @@ function rpcHarness(fetchImpl) {
   assert.notEqual(start, -1, 'read RPC helpers must exist');
   assert.notEqual(end, -1, 'read RPC helpers must be bounded');
   const timers = [];
-  const context = vm.createContext({
+  const context = vm.createContext({ customRpcUrl: () => null, 
     console: { warn() {}, log() {}, error() {} },
     AbortController,
     fetch: fetchImpl,
@@ -2462,7 +2462,8 @@ test('integration and OpenSea links point at live URLs', () => {
 });
 
 test('dialogs and controls are keyboard accessible', () => {
-  assert.equal((html.match(/role="dialog" aria-modal="true"/g) || []).length, 2);
+  assert.equal((html.match(/role="dialog" aria-modal="true"/g) || []).length, 3);
+  assert.match(html, /else if \(overlay\.id === 'rpcModal'\) closeModal\(overlay\);/, 'Escape closes each dialog');
   assert.match(html, /if \(event\.key === 'Escape'\)/);
   assert.match(html, /<label for="nameInput">Name<\/label>/);
   assert.match(html, /id="nameInput"[^>]*autocapitalize="off" autocorrect="off" spellcheck="false"/);
@@ -2785,6 +2786,160 @@ test('posts: the editor has a toolbar, shortcuts, pictures, a cover and drafts, 
   assert.doesNotMatch(html, /profile-hint">Markdown:/, 'no hint line under the editor');
 });
 
+test('posts: Preview shows the gateway’s own page in a frame no script runs in, and a Blog row tells anyone a name has posts', () => {
+  assert.match(html, /<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"><\/iframe>/, 'sandbox with nothing allowed');
+  assert.match(html, /\/posts\/preview\?name=\$\{encodeURIComponent\(currentTokenName \+ '\.gwei'\)\}/);
+  assert.match(html, /out\.page\.replace\('<meta charset="utf-8">', '<meta charset="utf-8"><base target="_blank">'\)/, 'a link can’t replace the preview');
+  assert.doesNotMatch(html, /previewPost/);
+  assert.match(html, /void loadNameBlog\(tokenId, name, hasContenthash \|\| !!contentContract, thisManageVersion\);/);
+  assert.match(html, /const base = namePostsBase\(name \+ '\.gwei', hasWebsite\);/, 'read where the posts are read');
+});
+
+function namesHarness() {
+  const start = html.indexOf('const NAMES_YEAR = ');
+  const end = html.indexOf('async function namesRead(ids)', start);
+  assert.notEqual(start, -1, 'the names panel must exist');
+  const context = vm.createContext({ CONTRACT: '0x' + 'c0'.repeat(20) });
+  vm.runInContext(html.slice(start, end) + `
+    globalThis.api = { NAMES_YEAR, NAMES_GRACE, NAMES_SOON, NAMES_MAX_RENEWALS, namesRoot, namesStatus, namesClassify, namesApplyRenewed, namesRenewable, namesDefaultSel, namesSelected, namesFreshOk, namesOverCap, namesQuoteKey, namesRenewCalls, namesBulkNote, namesWhen };`, context);
+  return context.api;
+}
+
+test('your names: only what this wallet holds, what needs doing first, and a subname lives as long as its root', () => {
+  const api = namesHarness();
+  const now = 1_800_000_000, day = 86400, me = '0xAbC';
+  const row = (id, name, expiresAt, extra = {}) => ({ id, name, label: name.split('.')[0], owner: '0xabc', parent: 0n, expiresAt, ...extra });
+  const rows = api.namesClassify([
+    row('1', 'calm.gwei', now + 300 * day),
+    row('2', 'soon.gwei', now + 10 * day),
+    row('3', 'late.gwei', now - 5 * day),
+    row('4', 'gone.gwei', now - 200 * day),
+    row('5', 'blog.calm.gwei', 0, { parent: 1n }),
+    row('6', '', 0, { parent: 9n, label: 'lost' }),
+    row('7', 'sold.gwei', now + 300 * day, { owner: '0xother' }),
+    null,
+  ], me, { calm: now + 300 * day }, now);
+  assert.deepEqual(rows.map((r) => [r.id, r.status]), [['3', 'grace'], ['2', 'soon'], ['1', 'active'], ['5', 'active'], ['6', 'orphan'], ['4', 'expired']]);
+  assert.equal(rows.find((r) => r.id === '5').expires, now + 300 * day, 'not 1970');
+  assert.equal(api.namesRoot('a.b.calm.gwei'), 'calm');
+  assert.equal(api.namesStatus(false, 'x.gwei', 0, now), 'unknown', 'an expiry that didn’t read claims nothing');
+  assert.equal(api.namesStatus(false, 'x.gwei', now - api.NAMES_GRACE, now), 'grace', 'grace includes its last second, as the contract does');
+  assert.equal(api.namesStatus(false, 'x.gwei', now - api.NAMES_GRACE - 1, now), 'expired');
+
+  // renew() refuses subnames and names past grace, and one bad name reverts the batch.
+  assert.deepEqual(rows.filter(api.namesRenewable).map((r) => r.id), ['3', '2', '1']);
+  assert.deepEqual([...api.namesDefaultSel(rows)], ['3', '2'], 'only what has a deadline starts ticked');
+  assert.deepEqual(api.namesSelected(rows, new Set(['1', '4', '5', '99'])).map((r) => r.id), ['1'], 'a name that lapsed since it was ticked drops out');
+
+  assert.match(api.namesWhen(rows[0], now), /^open to anyone in 85 days$/);
+  assert.match(api.namesWhen(rows[1], now), /^expires in 10 days$/);
+  assert.equal(api.namesWhen(rows.find((r) => r.id === '6'), now), 'parent registered again');
+  assert.match(html, /const known = Object\.create\(null\);/, 'a label can be constructor');
+});
+
+test('your names: a lagging read can’t undo a renewal and offer to charge for it again', () => {
+  const api = namesHarness();
+  const now = 1_800_000_000, day = 86400;
+  const stale = () => [
+    { id: '1', name: 'soon.gwei', label: 'soon', sub: false, expires: now + 10 * day, status: 'soon' },
+    { id: '2', name: 'blog.soon.gwei', label: 'blog', sub: true, expires: now + 10 * day, status: 'soon' },
+    { id: '3', name: 'other.gwei', label: 'other', sub: false, expires: now + 5 * day, status: 'soon' },
+  ];
+  const renewed = new Map([['soon', now + 10 * day + api.NAMES_YEAR]]);
+  const rows = api.namesApplyRenewed(stale(), renewed, now);
+  assert.equal(rows.find((r) => r.id === '1').status, 'active');
+  assert.equal(rows.find((r) => r.id === '2').expires, now + 10 * day + api.NAMES_YEAR, 'a subname moves with its root');
+  assert.deepEqual([...api.namesDefaultSel(rows)], ['3'], 'what was renewed isn’t ticked again');
+  const fresher = stale();
+  fresher[0].expires = now + 10 * day + 2 * api.NAMES_YEAR;
+  assert.equal(api.namesApplyRenewed(fresher, renewed, now).find((r) => r.id === '1').expires, now + 10 * day + 2 * api.NAMES_YEAR, 'a floor, so a newer read stands and nothing is added twice');
+});
+
+test('your names: nothing is sent for a name that changed since the list was read', () => {
+  const api = namesHarness();
+  const now = 1_800_000_000;
+  const fresh = (extra = {}) => ({ owner: '0xme', parent: 0n, name: 'a.gwei', expiresAt: now + 86400, ...extra });
+  assert.equal(api.namesFreshOk([fresh(), fresh({ expiresAt: now - 86400 })], '0xme', now), true, 'grace can be renewed');
+  assert.equal(api.namesFreshOk([fresh({ owner: '0xother' })], '0xme', now), false, 'a name that moved on would be renewed for someone else');
+  assert.equal(api.namesFreshOk([fresh({ expiresAt: now - api.NAMES_GRACE - 1 })], '0xme', now), false, 'one past grace reverts the batch');
+  assert.equal(api.namesFreshOk([fresh({ parent: 1n })], '0xme', now), false);
+  assert.equal(api.namesFreshOk([null], '0xme', now), false, 'a failed read isn’t a yes');
+  const send = html.slice(html.indexOf('async function doRenewAll()'), html.indexOf('function namesPick()'));
+  assert.ok(send.indexOf('namesFreshOk(') < send.indexOf('aggregate3Value'), 'checked before it is sent');
+  assert.match(send, /if \(tx\) namesQuote = null;/, 'after a timeout Renew can’t send it again');
+  assert.match(send, /if \(!namesState\) return;/, 'a disconnect while it confirms isn’t an error');
+});
+
+test('your names: a renewal sends exactly the sum of its calls, and no call may fail and carry on', () => {
+  const api = namesHarness();
+  const picked = [{ id: '1' }, { id: '2' }];
+  const fees = [500n, 2000n], years = 3;
+  const calls = api.namesRenewCalls(picked, years, fees, (id) => 'renew:' + id);
+  assert.equal(calls.length, 6, 'one renew per name per year');
+  assert.deepEqual(calls.map((c) => c.callData), ['renew:1', 'renew:1', 'renew:1', 'renew:2', 'renew:2', 'renew:2']);
+  assert.ok(calls.every((c) => c.allowFailure === false), 'a failed call would strand its fee in Multicall3');
+  assert.ok(calls.every((c) => c.target === '0x' + 'c0'.repeat(20)));
+  assert.equal(calls.reduce((sum, c) => sum + c.value, 0n), (500n + 2000n) * BigInt(years), 'Multicall3 reverts unless the value is the exact sum');
+  assert.match(html, /tx = await wcTransaction\(mc\.aggregate3Value\(calls, \{ value: quote\.total \}\), 'Approve renewal'\);/);
+  assert.match(html, /total: fees\.reduce\(\(sum, fee\) => sum \+ fee, 0n\) \* BigInt\(years\)/);
+
+  assert.equal(api.namesQuoteKey(picked, 3), '1,2@3');
+  assert.match(html, /if \(!quote \|\| quote\.error \|\| quote\.key !== namesQuoteKey\(picked, years\)\) \{ namesRequote\(\); return; \}/, 'never a price for another basket');
+  assert.equal(api.namesOverCap(api.NAMES_MAX_RENEWALS, 1), false);
+  assert.equal(api.namesOverCap(api.NAMES_MAX_RENEWALS + 1, 1), true);
+
+  const eth = (wei) => String(wei);
+  assert.equal(api.namesBulkNote(0, 1, null, eth), '', 'no hint while nothing is ticked');
+  assert.equal(api.namesBulkNote(2, 3, null, eth), '2 names · 3 years · …');
+  assert.equal(api.namesBulkNote(1, 1, { total: 5n }, eth), '1 name · 1 year · <b>5 ETH</b>');
+  assert.equal(api.namesBulkNote(2, 3, { error: true }, eth), '2 names · 3 years · price unavailable');
+  assert.match(api.namesBulkNote(150, 2, null, eth), /^300 renewals is too many/);
+  assert.match(html, /<div id="namesSection" class="send-section" style="display:none;">/, 'only with a wallet connected');
+  assert.match(html, /body\.reply-mode #namesSection/);
+});
+
+test('custom RPC: replaces every read, is only ever set by the form, and is kept from wallets', () => {
+  const start = html.indexOf('function rpcUrlAllowed(value)');
+  const end = html.indexOf('// Blockscout is a third party', start);
+  const store = {};
+  const context = vm.createContext({ URL, localStorage: { getItem: (k) => store[k] ?? null } });
+  vm.runInContext(html.slice(start, end) + '\nglobalThis.api = { rpcUrlAllowed, customRpcUrl };', context);
+  const { rpcUrlAllowed, customRpcUrl } = context.api;
+  for (const ok of ['https://node.example', 'https://mainnet.infura.io/v3/key', 'http://localhost:8545', 'http://127.0.0.1:8545/', 'http://[::1]:8545']) assert.equal(rpcUrlAllowed(ok), true, ok);
+  for (const bad of ['http://node.example', 'http://localhost.evil.example', 'http://127.0.0.1.evil.example', 'https://user:pass@node.example', 'javascript:alert(1)', 'file:///etc/passwd', 'ws://localhost', 'node.example', '']) assert.equal(rpcUrlAllowed(bad), false, bad);
+  assert.equal(customRpcUrl(), null);
+  store.gwei_rpc = 'javascript:alert(1)';
+  assert.equal(customRpcUrl(), null, 'what the form wouldn’t have saved isn’t used');
+  store.gwei_rpc = 'https://node.example';
+  assert.equal(customRpcUrl(), 'https://node.example');
+
+  assert.match(html, /^const RPC_ENDPOINTS = customRpcUrl\(\) \? \[customRpcUrl\(\)\] : NET\.rpc;$/m, 'no fallback to the public endpoints');
+  assert.match(html, /^const STATS_RPCS = customRpcUrl\(\) \? \[customRpcUrl\(\)\] : NET\.logsRpcs \|\| \[\];$/m);
+  assert.match(html, /^const VOTING_INDEXER = customRpcUrl\(\) \? null : NET\.votingIndexer \|\| null;$/m);
+  assert.match(html, /rpcUrls: NET\.rpc,/, 'a private node’s URL never goes to a wallet');
+  assert.equal((html.match(/localStorage\.setItem\('gwei_rpc'/g) || []).length, 1);
+  const save = html.slice(html.indexOf('async function saveRpcSettings()'), html.indexOf('function resetRpcSettings()'));
+  assert.ok(save.indexOf('await testRpcUrl(url)') < save.indexOf("localStorage.setItem('gwei_rpc'"), 'tested before it is saved');
+  assert.match(html, /await ask\('eth_getLogs', \[\{/, 'a node that serves no logs can’t list names or load voting');
+  assert.match(html, /if \(reply\.result !== undefined && BigInt\(reply\.result\) !== BigInt\(CHAIN_ID\)\) throw rpcUnavailableError/, 'and it is checked again on every load');
+  assert.match(html, /'Your RPC isn’t answering for Ethereum\. Change it under RPC at the bottom of this page\.'/);
+  assert.match(html, /!== BigInt\(CHAIN_ID\)\) throw new Error\('That RPC isn’t on Ethereum mainnet\.'\);/);
+  assert.doesNotMatch(html, /searchParams\.get\('rpc'\)|URLSearchParams\(location\.search\)\.get\('rpc'\)/, 'no link can set it');
+});
+
+test('display name: the button clears it when this name is it, with the contract’s token 0', () => {
+  assert.match(html, /const tx = await wcTransaction\(contract\.setPrimaryName\(0\), 'Approve clearing your display name'\);/);
+  assert.match(html, /const isPrimary = primaryId != null && primaryId !== 0n && primaryId === BigInt\(tokenId\);/);
+  assert.match(html, /'function primaryName\(address addr\) view returns \(uint256\)'/);
+  assert.match(html, /if \(isPrimary\) nonOwnerHtml \+= primaryButtonHtml\(true, true\);/, 'a recipient can hold a display name it doesn’t own, and may not be able to set it again');
+  assert.match(html, /paintPrimaryButton\(tokenId === currentTokenId\);/, 'moved to another name meanwhile: that name isn’t the display name now');
+  const start = html.indexOf('const primaryButtonHtml = ');
+  const context = vm.createContext({});
+  vm.runInContext(html.slice(start, html.indexOf('\n', start)) + '\nglobalThis.b = primaryButtonHtml;', context);
+  assert.match(context.b(true), /onclick="doClearPrimary\(\)">Clear Display Name</);
+  assert.match(context.b(false), /onclick="doSetPrimary\(\)">Set as Display Name</);
+});
+
 test('posts: the dapp builds the same blob as the gateway, and the vendored KZG gives the hash c-kzg does', async () => {
   const api = postsHarness();
   const gateway = await import('../gateway/posts-format.js');
@@ -2808,7 +2963,7 @@ test('posts: the dapp authorizes against the blob hash and offers refunds for un
 
 test('posts: refunds are found from this browser and from the index, and only what the contract holds is offered', async () => {
   const start = html.indexOf('const paidPostsKey = ');
-  const end = html.indexOf('async function previewPost() {', start);
+  const end = html.indexOf('function postTab(which) {', start);
   const B = (n) => '0x01' + String(n).repeat(62).slice(0, 62);
   const PUB = '0x' + '24'.repeat(20);
   const ME = '0x' + 'A1'.repeat(20);

@@ -1928,9 +1928,24 @@ test('the posts API: uploads, reads, CORS and sandboxing', async () => {
   assert.equal(res.status, 413);
 
   res = await api('/api/posts/preview', { method: 'POST', body: '{"v":1,"title":"T","body":"<b>hi</b> *there*"}' });
-  assert.deepEqual(await res.json(), { title: 'T', cover: null, html: '<p>&lt;b&gt;hi&lt;/b&gt; <em>there</em></p>' });
+  let preview = await res.json();
+  assert.ok(preview.page.includes('<h2 class="post-title">T</h2>'), 'the draft as its post page');
+  assert.ok(preview.page.includes('<span>yourname.gwei</span>'), 'no name given: a stand-in in the byline');
+  assert.match(preview.page, /Authorized by the owner, waiting for its blob/);
+  delete preview.page;
+  assert.deepEqual(preview, { title: 'T', cover: null, html: '<p>&lt;b&gt;hi&lt;/b&gt; <em>there</em></p>' });
+  res = await api('/api/posts/preview?name=blog.alice.gwei', { method: 'POST', body: '{"v":1,"title":"T","body":"x","replies":true}' });
+  preview = await res.json();
+  assert.ok(preview.page.includes('<span>blog.alice.gwei</span>'));
+  assert.match(preview.page, /<div class="section">Replies<\/div>/, 'a post that takes replies shows they will be there');
+  res = await api('/api/posts/preview?name=' + encodeURIComponent('<img src=x onerror=alert(1)>.gwei'), { method: 'POST', body: '{"v":1,"title":"T","body":"x"}' });
+  preview = await res.json();
+  assert.ok(preview.page.includes('<span>yourname.gwei</span>'), 'what isn’t a name is never shown');
+  assert.doesNotMatch(preview.page, /onerror/);
   res = await api('/api/posts/preview', { method: 'POST', body: '{"v":1,"title":"T","body":"![](https://e.example/c.png)\\n\\nText"}' });
-  assert.deepEqual(await res.json(), { title: 'T', cover: 'https://e.example/c.png', html: '<p>Text</p>' }, 'the preview shows the cover apart, as the page does');
+  preview = await res.json();
+  delete preview.page;
+  assert.deepEqual(preview, { title: 'T', cover: 'https://e.example/c.png', html: '<p>Text</p>' }, 'the preview shows the cover apart, as the page does');
   res = await api('/api/posts/preview', { method: 'POST', body: 'nope' });
   assert.equal(res.status, 400);
 

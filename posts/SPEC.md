@@ -214,7 +214,7 @@ replies.
 | `GET /api/authors/<address>/paid` | fees an address put in escrow, latest per blob and publisher (to find refunds; the contract says what is left) |
 | `GET /api/posts/recent` | newest posts across all names |
 | `GET /api/blobs/<versionedHash>` | a blob the index fetched that carries a post, kept for good |
-| `POST /api/posts/preview` (body: post bytes) | `{ "title", "html" }` rendered by the gateway |
+| `POST /api/posts/preview?name=<name>` (body: post bytes) | `{ "title", "cover", "html", "page" }` rendered by the gateway; `page` is the draft as its post page |
 | `POST /api/sync` | asks the index to catch up now (at most every 10 seconds) |
 
 The index reads events every minute from the owner's node, or, when it's down, only events two

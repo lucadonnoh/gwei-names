@@ -794,6 +794,7 @@ AI-assisted audits performed on the upstream codebase:
 
 - **Dapp:** [gwei.domains](https://gwei.domains) (source: `dapp/gweiNS.html`)
 - **JS SDK:** [`gns-utils`](sdk/)
+- **Agent skill:** [`skills/gns`](skills/gns/SKILL.md), how to resolve, register and integrate `.gwei` names
 - **Deployment (mainnet):** [NameNFT](https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6) · [SubdomainRegistrar](https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c) · [Universal Resolver](https://etherscan.io/address/0xD658131FFB6D732335d37f199374289F1b31564F) · [HumanRegistrar](https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A) · [Integration Voting](https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005)
 - **Upstream (wei-names):** https://github.com/z0r0z/wei-names
 - **ENSIP-15:** https://docs.ens.domains/ensip/15/

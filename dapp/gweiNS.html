@@ -438,7 +438,11 @@ body.modal-open { overflow: hidden; }
 .profile-hint a { color: inherit; }
 .profile-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted); margin: 22px 0 12px; }
 .manage-form textarea.post-editor { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; min-height: 240px; }
-.post-preview { display: none; width: 100%; height: 420px; border: 1px solid var(--border-muted); background: #fff; margin: 4px 0 14px; }
+.post-preview { display: none; width: 100%; height: 560px; border: 1px solid var(--border-muted); background: #fff; margin: 0 0 8px; }
+.post-tabs { display: flex; border-bottom: 1px solid var(--border-muted); margin: 0 0 8px; }
+.manage-form .post-tab { width: auto; margin: 0 0 -1px; padding: 6px 12px; background: transparent; color: var(--fg-muted); border: 1px solid transparent; font-size: 11px; }
+.manage-form .post-tab.active { color: var(--fg); border-color: var(--border-muted) var(--border-muted) var(--manage-bg); background: var(--manage-bg); }
+.manage-form .post-tab:hover:not(.active) { color: var(--fg); background: transparent; }
 /* The post editor (ported from wei-names, MIT): a cover slot, a toolbar, and a bar for the room left. */
 .post-cover { margin: 0 0 12px; }
 .post-cover img { display: block; width: 100%; aspect-ratio: 5 / 2; object-fit: cover; background: var(--manage-bg); }
@@ -471,7 +475,7 @@ body.modal-open { overflow: hidden; }
 #replyPanel a { color: var(--fg); }
 /* #reply/…: only the reply, the wallet button and the wallet pickers. A post page opens this in a small window. */
 body.reply-mode .scroll-names, body.reply-mode .subtitle, body.reply-mode > .section:not(#replyPanel), body.reply-mode #pending,
-body.reply-mode #sendSection, body.reply-mode #verifySection, body.reply-mode #manage, body.reply-mode #statsPosts,
+body.reply-mode #namesSection, body.reply-mode #sendSection, body.reply-mode #verifySection, body.reply-mode #manage, body.reply-mode #statsPosts,
 body.reply-mode #integrations, body.reply-mode #voteDock, body.reply-mode #statsSection, body.reply-mode .site-footer { display: none !important; }
 body.reply-mode h1 { margin-bottom: 40px; }
 .profile-avatar-preview { display: none; width: 56px; height: 56px; object-fit: cover; margin: -4px 0 14px; background: var(--manage-bg); }
@@ -586,6 +590,29 @@ body.reply-mode h1 { margin-bottom: 40px; }
   letter-spacing: 0.05em;
 }
 .send-toggle:hover { color: var(--fg); }
+.names-panel { display: none; margin-top: 16px; }
+.names-panel.show { display: block; }
+.names-sum { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); margin-bottom: 12px; }
+.names-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid var(--border-muted); padding: 12px; margin-bottom: 14px; font-size: 12px; }
+.names-bulk select { font: inherit; font-size: 12px; padding: 6px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border-muted); border-radius: 0; }
+.names-bulk .note { flex: 1 0 100%; order: -1; line-height: 1.5; overflow-wrap: anywhere; }
+.names-bulk .note:empty { display: none; }
+.names-bulk button.act { margin: 0 0 0 auto; padding: 8px 16px; font-size: 11px; }
+.names-more { width: auto; margin: 0; padding: 0; border: 0; background: none; color: var(--fg-muted); font: inherit; font-size: 11px; letter-spacing: 0; text-transform: none; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.names-more:hover { background: none; color: var(--fg); }
+.names-rows { max-height: 420px; overflow-y: auto; }
+.names-line { display: flex; align-items: center; gap: 10px; }
+.names-check { flex: none; width: auto; margin: 0; padding: 0; accent-color: var(--fg); cursor: pointer; }
+.names-check.gap { visibility: hidden; pointer-events: none; }
+.names-row { flex: 1 1 auto; min-width: 0; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 0; font-size: 13px; color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--border-muted); }
+a.names-row:hover { opacity: 0.6; }
+.names-row .n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.names-row .p { flex: none; font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.names-row.dim .n, .names-row.dim .p { opacity: 0.45; }
+.names-tag { margin-left: 8px; padding: 1px 5px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); border: 1px solid var(--border-muted); }
+.names-tag.warn { color: var(--error-fg); border-color: currentColor; }
+.names-note { margin-top: 12px; font-size: 12px; line-height: 1.5; color: var(--error-fg); }
+.rpc-msg { min-height: 18px; margin-top: 10px; font-size: 12px; line-height: 1.5; color: var(--error-fg); overflow-wrap: anywhere; }
 .send-form {
   display: none;
   margin-top: 16px;
@@ -1136,6 +1163,11 @@ body.vote-dock-open { padding-bottom: 104px; }
 </div>
 
 <!-- Send ETH -->
+<div id="namesSection" class="send-section" style="display:none;">
+  <a href="#" onclick="toggleNames(event)" class="send-toggle" id="namesToggle" role="button" aria-expanded="false">your names →</a>
+  <div id="namesPanel" class="names-panel"><div id="namesBody"></div></div>
+</div>
+
 <div id="sendSection" class="send-section">
   <a href="#" onclick="toggleSend(event)" class="send-toggle" id="sendToggle">send eth →</a>
   <div id="sendForm" class="send-form">
@@ -1210,6 +1242,21 @@ body.vote-dock-open { padding-bottom: 104px; }
       <button class="modal-close" onclick="closeWalletModal()" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body" id="walletOptions"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="rpcModal" onclick="if(event.target===this)closeModal(this)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rpcModalTitle">
+    <div class="modal-header">
+      <div class="modal-title" id="rpcModalTitle">Your RPC</div>
+      <button class="modal-close" onclick="closeModal($('rpcModal'))" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="url" id="rpcInput" placeholder="https://" aria-label="RPC URL" autocapitalize="off" autocorrect="off" spellcheck="false" style="font-size:14px;">
+      <div class="rpc-msg" id="rpcMsg" aria-live="polite"></div>
+      <button onclick="saveRpcSettings()">Save</button>
+      <button class="secondary" id="rpcReset" onclick="resetRpcSettings()">Use public RPCs</button>
+    </div>
   </div>
 </div>
 
@@ -1790,7 +1837,7 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <!-- Footer -->
 <div class="site-footer">
-<a id="osFooterLink" href="https://opensea.io/contract/ethereum/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · fork of wei-names (<a href="https://diff.gwei.domains" target="_blank" rel="noopener">contract diff</a>) · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://etherscan.io/address/0x73849f6f2785BA7fd2f41b5B4573B75554417981" target="_blank" rel="noopener">Posts</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
+<a id="osFooterLink" href="https://opensea.io/contract/ethereum/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">OpenSea</a> · <a href="https://www.npmjs.com/package/@donnoh/gns-utils" target="_blank" rel="noopener"><svg fill="currentColor" width="14" height="14" viewBox="-2 -8 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" style="vertical-align:middle"><path d='M0 0h20v6.857H10V8H5.556V6.857H0V0zm1.111 5.714h2.222V2.286h1.111v3.428h1.112V1.143H1.11v4.571zm5.556-4.571v5.714h2.222V5.714h2.222V1.143H6.667zm5.555 0v4.571h2.222V2.286h1.112v3.428h1.11V2.286h1.112v3.428h1.11V1.143h-6.666z'/><path d='M10 4.7H9V2.2h1z'/></svg> gns-utils</a> · <a href="https://github.com/lucadonnoh/gwei-names" target="_blank" rel="noopener">GitHub</a> · fork of wei-names (<a href="https://diff.gwei.domains" target="_blank" rel="noopener">contract diff</a>) · <a id="nftExplorerLink" href="https://etherscan.io/address/0x9D51D507BC7264d4fE8Ad1cf7Fe191933A0a81d6" target="_blank" rel="noopener">NameNFT</a> · <a id="regExplorerLink" href="https://etherscan.io/address/0xc1D5245bfd98dDB7E73B33209B346b4FC0E03f3c" target="_blank" rel="noopener">Registrar</a> · <a id="humanExplorerLink" href="https://etherscan.io/address/0xA4283D56f523d05bBd46e483f7861d6D10Cb330A" target="_blank" rel="noopener">HumanRegistrar</a> · <a id="votingExplorerLink" href="https://etherscan.io/address/0xaA2c0f39F0b1a62A8aEB359bCd67874D2D145005" target="_blank" rel="noopener">Voting</a> · <a href="https://etherscan.io/address/0x73849f6f2785BA7fd2f41b5B4573B75554417981" target="_blank" rel="noopener">Posts</a> · <a href="https://gwei.domains/guide/" target="_blank" rel="noopener">host a website</a> · <a href="#" id="rpcLink" onclick="openRpcSettings(event)">RPC</a> · built by <a href="#donnoh" style="color:inherit;">donnoh.gwei</a>
 </div>
 
 <!-- ethers loads here, not in <head>: the main script below needs it synchronously (top-level
@@ -2096,7 +2143,28 @@ const FREE_ROOT = NET.freeRoot; // e.g. 'id' → free subdomains under <name>.id
 const HUMAN_REGISTRAR = NET.humanRegistrar; // ZKPassport claims: <label>.zkpassport.gwei, one per passport
 const VOTING_CONTRACT = NET.voting;
 const VOTING_DEPLOY_BLOCK = NET.votingDeployBlock;
-const VOTING_INDEXER = NET.votingIndexer || null;
+// A node of the visitor's own, saved in this browser under RPC in the footer. It replaces the public
+// endpoints for every read, with no fallback to them: someone who sets one wants their reads to stay on
+// it. Only that form saves it: no link can. https anywhere, plain http only on this machine.
+function rpcUrlAllowed(value) {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) return false;
+    return url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname));
+  } catch (e) {
+    return false;
+  }
+}
+function customRpcUrl() {
+  try {
+    const url = localStorage.getItem('gwei_rpc') || '';
+    return rpcUrlAllowed(url) ? url : null;
+  } catch (e) {
+    return null;
+  }
+}
+// Blockscout is a third party a node of one's own has no need to tell.
+const VOTING_INDEXER = customRpcUrl() ? null : NET.votingIndexer || null;
 const POSTS_CONTRACT = NET.posts || '';
 const POSTS_PUBLISHER = NET.postsPublisher || '';
 const POSTS_API = 'https://gwei.domains/api'; // the gateway's post index, readable from any origin
@@ -2128,7 +2196,7 @@ if (NET.chainId !== 1) {
 
 // ── Historical reads (zkpassport claims, integration votes) and the network stats ──
 // The stats themselves come from the gateway (loadStats); these RPCs serve the other scans.
-const STATS_RPCS = NET.logsRpcs || [];
+const STATS_RPCS = customRpcUrl() ? [customRpcUrl()] : NET.logsRpcs || [];
 const STATS_RPC_TIMEOUT_MS = 8000;
 async function statsRpc(method, params) {
   for (const url of STATS_RPCS) {
@@ -2612,6 +2680,7 @@ const ABI = [
   'function isApprovedForAll(address owner, address operator) view returns (bool)',
   'function setApprovalForAll(address operator, bool approved)',
   'function reverseResolve(address addr) view returns (string)',
+  'function primaryName(address addr) view returns (uint256)',
   'function commitments(bytes32 commitment) view returns (uint256)',
   // Custom errors, so ethers can decode reverts into readable names
   'error Expired()',
@@ -2660,9 +2729,11 @@ const textEncoder = new TextEncoder();
 // error, a rate limit, a timeout or a malformed reply, moves on to the next endpoint and retries.
 // The endpoint that answered becomes the current one, so a provider that starts throttling is
 // dropped after one failed request instead of hanging every lookup behind ethers' 429 backoff.
-const RPC_ENDPOINTS = NET.rpc;
+const RPC_ENDPOINTS = customRpcUrl() ? [customRpcUrl()] : NET.rpc;
 const RPC_TIMEOUT_MS = 6000;
-const RPC_UNAVAILABLE_MESSAGE = 'Could not reach an Ethereum RPC (every endpoint failed). Check your connection and try again.';
+const RPC_UNAVAILABLE_MESSAGE = customRpcUrl()
+  ? 'Your RPC isn’t answering for Ethereum. Change it under RPC at the bottom of this page.'
+  : 'Could not reach an Ethereum RPC (every endpoint failed). Check your connection and try again.';
 let rpcProvider = null;
 let readContract = null;
 let rpcReady = null;
@@ -2740,6 +2811,12 @@ function getRpc() {
   if (rpcProvider) return Promise.resolve(rpcProvider);
   if (!rpcReady) {
     rpcReady = (async () => {
+      // A saved node was checked when it was saved. If it has moved to another chain since, nothing it
+      // says is about these names, and a recipient read from it would be wrong.
+      if (customRpcUrl()) {
+        const [reply] = await rpcPost(customRpcUrl(), JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }), 5000).catch(() => [{}]);
+        if (reply.result !== undefined && BigInt(reply.result) !== BigInt(CHAIN_ID)) throw rpcUnavailableError(new Error('wrong chain'));
+      }
       const p = new FailoverRpcProvider(RPC_ENDPOINTS, ethers.Network.from(CHAIN_ID));
       // Start on whichever endpoint answers first; if none answers, start on the first and let
       // the per-request failover keep trying.
@@ -2761,6 +2838,51 @@ function getRpc() {
 
 // Initialize RPC on load
 getRpc().catch(() => {});
+
+function openRpcSettings(event) {
+  event?.preventDefault();
+  $('rpcInput').value = customRpcUrl() || '';
+  $('rpcMsg').textContent = '';
+  $('rpcReset').style.display = customRpcUrl() ? '' : 'none';
+  openModal($('rpcModal'));
+}
+// The node has to answer for this chain and this contract, and serve the logs this page scans (your
+// names, voting), before it replaces every read.
+async function testRpcUrl(url) {
+  const ask = async (method, params, timeout = RPC_TIMEOUT_MS) => {
+    const [reply] = await rpcPost(url, JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), timeout);
+    if (reply.result === undefined) throw new Error('no result');
+    return reply.result;
+  };
+  if (BigInt(await ask('eth_chainId', [])) !== BigInt(CHAIN_ID)) throw new Error('That RPC isn’t on Ethereum mainnet.');
+  const fee = await ask('eth_call', [{ to: CONTRACT, data: iface.encodeFunctionData('getFee', [5]) }, 'latest']);
+  if (!fee || fee === '0x') throw new Error('That RPC doesn’t serve the name contract.');
+  const first = Number(NET.deployBlock);
+  await ask('eth_getLogs', [{
+    address: CONTRACT, topics: [VOTING_TRANSFER_TOPIC, null, ethers.zeroPadValue(ethers.ZeroAddress, 32)],
+    fromBlock: ethers.toQuantity(first), toBlock: ethers.toQuantity(first + VOTING_LOG_MAX_BLOCK_SPAN - 1),
+  }], 15000).catch(() => { throw new Error('That RPC doesn’t serve the logs this page reads.'); });
+}
+// Every read holds its endpoints from load, so a reload is what moves them all.
+async function saveRpcSettings() {
+  const url = $('rpcInput').value.trim();
+  const msg = $('rpcMsg');
+  if (!url) { resetRpcSettings(); return; }
+  if (!rpcUrlAllowed(url)) { msg.textContent = 'Enter a full https:// URL.'; return; }
+  msg.textContent = '';
+  try {
+    await testRpcUrl(url);
+    localStorage.setItem('gwei_rpc', url);
+    location.reload();
+  } catch (e) {
+    msg.textContent = /^That RPC/.test(e.message || '') ? e.message : 'Couldn’t reach that RPC.';
+  }
+}
+function resetRpcSettings() {
+  try { localStorage.removeItem('gwei_rpc'); } catch (e) {}
+  location.reload();
+}
+if (customRpcUrl() && $('rpcLink')) $('rpcLink').textContent = 'RPC: yours';
 
 // Wallet-agnostic tx.wait() - handles wallets that return bad data or hang
 const TX_RECEIPT_POLL_MS = 1000;
@@ -2886,6 +3008,16 @@ async function multicall(calls) {
     }
   });
 }
+
+// The Your names panel's state (its code is after doRenew).
+let namesState = null;  // the last completed scan: { addr, rows, primary, missing }
+let namesSel = null;    // token ids ticked to renew, as strings; null until the first scan picks a default
+let namesYears = 1;
+let namesQuote = null;  // { key, fees, total } for exactly the ticked names and years
+let namesQuoteSeq = 0;
+let namesSeq = 0;       // invalidates a scan the account changed under
+let namesCount = 0;
+let namesRenewed = new Map(); // root label -> the expiry a renewal here reached
 
 // Wallet state
 let provider = null;
@@ -4304,6 +4436,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault();
     if (overlay.id === 'shareModal') closeShareModal();
+    else if (overlay.id === 'rpcModal') closeModal(overlay);
     else closeWalletModal();
     return;
   }
@@ -4393,7 +4526,7 @@ async function connectWithWallet(walletKey) {
         projectId: '2ff244db6297895e3320c072d1395f1d',
         chains: [CHAIN_ID],
         showQrModal: true,
-        rpcMap: { [CHAIN_ID]: RPC_ENDPOINTS[0] },
+        rpcMap: { [CHAIN_ID]: NET.rpc[0] },
         metadata: {
           name: 'Gwei Name Service',
           description: 'Register .gwei names',
@@ -4478,7 +4611,7 @@ async function connectWithWallet(walletKey) {
                 chainId: CHAIN_ID_HEX,
                 chainName: CHAIN_NAME,
                 nativeCurrency: { name: NET.chainId === 1 ? 'Ether' : 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
-                rpcUrls: RPC_ENDPOINTS,
+                rpcUrls: NET.rpc,
                 blockExplorerUrls: [EXPLORER]
               }]
             });
@@ -4510,6 +4643,7 @@ async function connectWithWallet(walletKey) {
     contract = new ethers.Contract(CONTRACT, ABI, signer);
     syncWalletGlobals();
     updateWalletDisplay();
+    namesOnConnect();
 
     // Store handlers for cleanup on disconnect
     walletEventHandlers = {
@@ -4610,6 +4744,7 @@ function disconnectWallet() {
   isWalletConnect = false;
   wcDeepLink = null;
   syncWalletGlobals();
+  namesOnDisconnect();
   $('walletBtn').textContent = 'connect';
   updateWcBanner();
   closeWalletModal();
@@ -5920,9 +6055,12 @@ async function showManage(tokenId, name) {
       { fn: 'contenthash', args: [tokenId], allowFailure: true },
       { fn: 'text', args: [tokenId, CONTENTCONTRACT], allowFailure: true },
       ...textKeys.map(key => ({ fn: 'text', args: [tokenId, key], allowFailure: true })),
-      { fn: 'addr(uint256,uint256)', args: [tokenId, 60n], allowFailure: true }
+      { fn: 'addr(uint256,uint256)', args: [tokenId, 60n], allowFailure: true },
+      ...(connectedAddress ? [{ fn: 'primaryName', args: [connectedAddress], allowFailure: true }] : [])
     ]);
     const coin60Stale = coin60Mismatch(results[5 + textKeys.length]?.[0], results[1]?.[0]);
+    const primaryId = results[6 + textKeys.length]?.[0];
+    const isPrimary = primaryId != null && primaryId !== 0n && primaryId === BigInt(tokenId);
     const [owner, resolved, record, contentHash] = [
       results[0]?.[0] || null,
       results[1]?.[0] || null,
@@ -6025,6 +6163,7 @@ async function showManage(tokenId, name) {
       const pageUrl = pageBase.replace(/\/$/, '');
       infoHtml += `<div><span>Page:</span><a href="${escapeHtml(pageUrl)}" target="_blank" rel="noopener" style="color:inherit;">${escapeHtml(pageUrl.replace('https://', ''))}</a></div>`;
     }
+    if (postsEnabled()) infoHtml += '<div id="nameBlog" style="display:none;"></div>';
     // Display text records
     const textLabels = {
       url: 'URL', email: 'Email', description: 'Description', 'com.twitter': 'Twitter', 'com.github': 'GitHub',
@@ -6052,6 +6191,7 @@ async function showManage(tokenId, name) {
     }
     $('manageInfo').innerHTML = infoHtml;
     if (hasContenthash) void warnIfWebsiteOffline(contentHash, isOwner, thisManageVersion);
+    void loadNameBlog(tokenId, name, hasContenthash || !!contentContract, thisManageVersion);
 
     // Build actions if owner
     if (isOwner) {
@@ -6063,7 +6203,7 @@ async function showManage(tokenId, name) {
         <button onclick="showManageForm('setContent')">Set Website</button>
         <button onclick="showManageForm('setText')">Set Text</button>
         <button onclick="showManageForm('subdomain')">Subdomain</button>
-        <button onclick="doSetPrimary()">Set as Display Name</button>
+        ${primaryButtonHtml(isPrimary)}
       `;
       if (regEnabled()) {
         actionsHtml += `<button onclick="showManageForm('subSales')">Subdomain Sales</button>`;
@@ -6078,6 +6218,7 @@ async function showManage(tokenId, name) {
       if (isTopLevel) {
         nonOwnerHtml += `<button onclick="showManageForm('renew')" style="margin-top:8px;">Renew (anyone)</button>`;
       }
+      if (isPrimary) nonOwnerHtml += primaryButtonHtml(true, true);
       $('manageActions').innerHTML = nonOwnerHtml;
     }
 
@@ -6400,7 +6541,10 @@ function expandPostBody(text, images, cover) {
 function onPostInput() {
   updatePostCost();
   clearTimeout(postDraftTimer);
-  postDraftTimer = setTimeout(savePostDraft, 400);
+  postDraftTimer = setTimeout(() => {
+    savePostDraft();
+    if ($('ppPreview')?.style.display === 'block') renderPostPreview();
+  }, 400);
 }
 
 // Drafts: the text, its pictures and the cover, per name, in this browser only.
@@ -6642,23 +6786,38 @@ function postsFormHtml() {
     '<div id="ppCover" class="post-cover"></div>' +
     `<input type="file" id="ppCoverFile" accept="image/*" hidden onchange="setPostCover(this.files[0]); this.value=''">` +
     '<label for="ppTitle">Title</label><input type="text" id="ppTitle" maxlength="200">' +
-    '<label for="ppBody">Text</label>' +
+    '<div class="post-tabs" role="tablist">' +
+    `<button type="button" role="tab" id="ppTabWrite" class="post-tab active" aria-selected="true" onclick="postTab('write')">Write</button>` +
+    `<button type="button" role="tab" id="ppTabPreview" class="post-tab" aria-selected="false" onclick="postTab('preview')">Preview</button></div>` +
+    '<div id="ppWrite">' +
     '<div class="post-toolbar" role="toolbar" aria-label="Formatting">' +
     postTool('bold', '<b>B</b>', 'Bold (⌘B)') + postTool('italic', '<i>I</i>', 'Italic (⌘I)') + postTool('heading', 'H', 'Heading') +
     postTool('link', 'Link', 'Link (⌘K)') + postTool('list', '• List', 'List') + postTool('numbered', '1. List', 'Numbered list') +
     postTool('quote', '❝', 'Quote') + postTool('code', '&lt;/&gt;', 'Code') +
     `<button type="button" class="secondary" onclick="$('ppImageFile').click()" title="Add an image">Image</button>` +
     `<button type="button" class="secondary post-tool-right" onclick="$('ppMdFile').click()" title="Open a Markdown file">Open .md</button></div>` +
-    '<textarea id="ppBody" class="post-editor" rows="14" spellcheck="true"></textarea>' +
+    '<textarea id="ppBody" class="post-editor" rows="14" spellcheck="true" aria-label="Post text"></textarea></div>' +
+    '<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"></iframe>' +
     `<input type="file" id="ppImageFile" accept="image/*" multiple hidden onchange="[...this.files].forEach(attachPostImage); this.value=''">` +
     `<input type="file" id="ppMdFile" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden onchange="loadMarkdownFile(this.files[0]); this.value=''">` +
     '<div class="post-room"><div id="ppRoom"></div></div>' +
     '<div class="profile-color"><input type="checkbox" id="ppReplies" checked onchange="updatePostCost()"><label for="ppReplies">Allow replies</label></div>' +
     '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +
     '<button onclick="doPublishPost()">Publish</button>' +
-    '<button class="secondary" onclick="previewPost()">Preview</button>' +
-    `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>` +
-    '<iframe id="ppPreview" class="post-preview" sandbox title="Post preview"></iframe>';
+    `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>`;
+}
+
+// A name's Blog row, for anyone looking at it: how many posts it has and where they are read.
+async function loadNameBlog(tokenId, name, hasWebsite, version) {
+  const el = $('nameBlog');
+  const base = namePostsBase(name + '.gwei', hasWebsite);
+  if (!el || !base) return;
+  try {
+    const { posts } = await (await fetch(`${POSTS_API}/names/${tokenHexOf(tokenId)}/posts`)).json();
+    if (!posts?.length || version !== manageVersion || $('nameBlog') !== el) return;
+    el.innerHTML = `<span>Blog:</span><a href="${escapeHtml(base)}" target="_blank" rel="noopener" style="color:inherit;">${posts.length} post${posts.length === 1 ? '' : 's'}</a>`;
+    el.style.display = '';
+  } catch (e) {}
 }
 
 // Posts this browser paid to publish and that may not have been delivered yet, so their fee can be
@@ -6752,29 +6911,34 @@ async function refundRows(tokenId) {
   return html;
 }
 
-async function previewPost() {
-  const { title, bytes } = readPostForm();
+function postTab(which) {
+  const preview = which === 'preview';
+  $('ppWrite').style.display = preview ? 'none' : '';
+  $('ppPreview').style.display = preview ? 'block' : 'none';
+  for (const [id, on] of [['ppTabWrite', !preview], ['ppTabPreview', preview]]) {
+    $(id).classList.toggle('active', on);
+    $(id).setAttribute('aria-selected', String(on));
+  }
+  if (preview) renderPostPreview(); else $('ppBody').focus();
+}
+// The draft as its post page will look, from the gateway's own page code, in a frame where no script
+// runs. Nothing is uploaded or paid for. The base keeps a link from replacing the preview.
+let postPreviewSeq = 0;
+async function renderPostPreview() {
   const frame = $('ppPreview');
   if (!frame) return;
-  if (!title) { showStatus('Give the post a title first', 'error'); return; }
+  const seq = ++postPreviewSeq;
+  const { title, body, replies } = readPostForm();
+  let page;
   try {
-    const res = await fetch(`${POSTS_API}/posts/preview`, { method: 'POST', body: bytes });
+    const res = await fetch(`${POSTS_API}/posts/preview?name=${encodeURIComponent(currentTokenName + '.gwei')}`, { method: 'POST', body: postBytesFrom(title || 'Untitled', body, replies) });
     const out = await res.json();
-    if (!res.ok) throw new Error(out.error || 'Preview failed');
-    const cover = /^(?:https:|data:image\/)/.test(out.cover || '') ? `<img src="${escapeHtml(out.cover)}" alt="" style="width:100%;aspect-ratio:5/2;object-fit:cover;margin:0 0 20px">` : '';
-    // The preview runs in a sandboxed frame with no scripts, the same markup the page will serve.
-    frame.srcdoc = '<!doctype html><meta charset="utf-8"><style>' +
-      'body{font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.65;margin:20px;color:#000;overflow-wrap:anywhere}' +
-      'h1{font-size:24px;line-height:1.25;margin:0 0 20px}h2{font-size:19px;margin:28px 0 10px}h3{font-size:16px}' +
-      'img{max-width:100%;height:auto;display:block;margin:0 auto}pre{background:#f5f5f5;padding:12px;overflow-x:auto;font-size:13px}' +
-      'code{font-family:ui-monospace,Menlo,monospace;font-size:.88em;background:#f5f5f5;padding:1px 4px}pre code{padding:0}' +
-      'blockquote{border-left:2px solid #666;margin:0 0 16px;padding-left:14px;color:#666}a{color:#000}</style>' +
-      `${cover}<h1>${escapeHtml(out.title)}</h1>${out.html}`;
-    frame.style.display = 'block';
-    frame.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (!res.ok || !out.page) throw new Error(out.error || 'Preview failed');
+    page = out.page.replace('<meta charset="utf-8">', '<meta charset="utf-8"><base target="_blank">');
   } catch (e) {
-    showStatus(e.message || 'Preview failed', 'error');
+    page = `<p style="font:13px Helvetica,Arial,sans-serif;color:#666;padding:20px">${escapeHtml(e.message || 'Preview failed')}</p>`;
   }
+  if (seq === postPreviewSeq && $('ppPreview') === frame) frame.srcdoc = page;
 }
 
 // Upload the bytes. Returns false if the gateway is turning anonymous uploads away right now; those
@@ -6842,7 +7006,7 @@ async function doPublishPost() {
       (url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="color:inherit;">View post →</a>` : '');
     $('status').className = 'status show success';
     clearPostDraft(tokenId);
-    if ($('ppTitle') && postEditorToken === tokenId) { $('ppTitle').value = ''; $('ppBody').value = ''; $('ppPreview').style.display = 'none'; renderCoverSlot(); updatePostCost(); }
+    if ($('ppTitle') && postEditorToken === tokenId) { $('ppTitle').value = ''; $('ppBody').value = ''; postTab('write'); renderCoverSlot(); updatePostCost(); }
     loadOwnPosts();
   } catch (e) {
     handleError(e);
@@ -7955,6 +8119,38 @@ async function doSetPrimary() {
     await waitForTx(tx);
     showStatus(tokenName + '.gwei is now your display name!', 'success', tx.hash);
     updateWalletDisplay();
+    paintPrimaryButton(tokenId === currentTokenId);
+    if (namesState) { namesState.primary = BigInt(tokenId); namesRender(); }
+  } catch (e) {
+    handleError(e);
+  } finally {
+    isProcessing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// `clearOnly`: on a name this wallet doesn't own, which it may not be able to set again.
+const primaryButtonHtml = (isPrimary, clearOnly = false) => `<button id="primaryBtn"${clearOnly ? ' data-clear-only="1"' : ''} onclick="${isPrimary ? 'doClearPrimary' : 'doSetPrimary'}()">${isPrimary ? 'Clear Display Name' : 'Set as Display Name'}</button>`;
+function paintPrimaryButton(isPrimary) {
+  const btn = $('primaryBtn');
+  if (btn?.dataset.clearOnly && !isPrimary) btn.remove();
+  else if (btn) btn.outerHTML = primaryButtonHtml(isPrimary, !!btn.dataset.clearOnly);
+}
+// Token 0 means no name: setPrimaryName skips its checks for it, so this works whatever became of the name.
+async function doClearPrimary() {
+  if (isProcessing || !contract) return;
+  isProcessing = true;
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    showStatus('Clearing your display name...', '');
+    const tx = await wcTransaction(contract.setPrimaryName(0), 'Approve clearing your display name');
+    showStatus('Waiting for confirmation...', '', tx.hash);
+    await waitForTx(tx);
+    showStatus('Display name cleared.', 'success', tx.hash);
+    // From what was just confirmed, not a re-read: a public RPC can still answer with the old name.
+    if (connectedAddress) $('walletBtn').textContent = connectedAddress.slice(0, 6) + '...' + connectedAddress.slice(-4);
+    paintPrimaryButton(false);
+    if (namesState) { namesState.primary = 0n; namesRender(); }
   } catch (e) {
     handleError(e);
   } finally {
@@ -8198,6 +8394,314 @@ async function doRenew() {
     isProcessing = false;
     if (btn) btn.disabled = false;
   }
+}
+
+// ── Your names (from wei-names, MIT): every name this wallet holds, what needs doing first, renewed
+// together in one transaction. Names aren't enumerable on chain: loadOwnedVotingTokenIds finds them, and
+// ownerOf confirms each. ownerOf doesn't know about expiry, so a lapsed name still shows, as a status. A
+// subname's own expiresAt is 0: it lives as long as the root above it. ──
+const NAMES_YEAR = 365 * 86400; // REGISTRATION_PERIOD in NameNFT
+const NAMES_GRACE = 90 * 86400; // GRACE_PERIOD in NameNFT
+const NAMES_SOON = 30 * 86400;
+const NAMES_RANK = { grace: 0, soon: 1, active: 2, unknown: 3, orphan: 4, expired: 5 }; // what needs doing first
+const NAMES_MAX_RENEWALS = 200; // one renew() per name per year, well inside a block
+const NAMES_MAX_YEARS = 10;
+const NAMES_CHUNK = 249; // subcalls per multicall, three per name
+
+const namesRoot = (full) => String(full || '').replace(/\.gwei$/, '').split('.').pop() || '';
+function namesStatus(sub, name, expires, now) {
+  if (sub && !name) return 'orphan'; // its parent was registered again: the token is left with no name
+  if (!expires) return 'unknown';
+  if (now > expires + NAMES_GRACE) return 'expired';
+  if (now > expires) return 'grace';
+  return expires - now <= NAMES_SOON ? 'soon' : 'active';
+}
+function namesOrder(a, b) {
+  const rank = NAMES_RANK[a.status] - NAMES_RANK[b.status];
+  if (rank) return rank;
+  if (a.sub !== b.sub) return a.sub ? 1 : -1;
+  return a.expires - b.expires || (a.name || a.label).localeCompare(b.name || b.label);
+}
+// Raw reads to rows: what this address still owns, what needs doing first.
+function namesClassify(rows, me, rootExpiry, now) {
+  const owner = String(me).toLowerCase();
+  return rows.filter((r) => r && r.owner === owner).map((r) => {
+    const sub = r.parent !== 0n;
+    const expires = (sub ? rootExpiry[namesRoot(r.name)] : r.expiresAt) || 0;
+    return { id: r.id, name: r.name, label: r.label, sub, expires, status: namesStatus(sub, r.name, expires, now) };
+  }).sort(namesOrder);
+}
+// What this session's renewals reached, as a floor: a node that hasn't seen one yet can't bring the old
+// date back, and with it an offer to renew and pay again. A subname moves with its root.
+function namesApplyRenewed(rows, renewed, now) {
+  for (const r of rows) {
+    const reached = renewed.get(r.sub ? namesRoot(r.name) : r.label);
+    if (reached > r.expires) {
+      r.expires = reached;
+      r.status = namesStatus(r.sub, r.name, reached, now);
+    }
+  }
+  return rows.sort(namesOrder);
+}
+// What renew() can extend: it refuses a subname and a name past its grace, and one bad name reverts the
+// whole transaction.
+const namesRenewable = (r) => !!r && !r.sub && ['active', 'soon', 'grace'].includes(r.status);
+// Ticked to start with: only what has a deadline. Spending on every name should be a choice.
+const namesDefaultSel = (rows) => rows.filter((r) => namesRenewable(r) && r.status !== 'active').map((r) => r.id);
+const namesSelected = (rows, sel) => rows.filter((r) => namesRenewable(r) && sel.has(r.id));
+// The same, from fresh reads just before sending: a tab can sit open for days, and a name that moved
+// on would be renewed for someone else.
+const namesFreshOk = (fresh, me, now) => fresh.every((f) => f && f.owner === me && f.parent === 0n && ['active', 'soon', 'grace'].includes(namesStatus(false, f.name, f.expiresAt, now)));
+const namesOverCap = (count, years) => count * years > NAMES_MAX_RENEWALS;
+const namesQuoteKey = (picked, years) => picked.map((r) => r.id).join(',') + '@' + years;
+// renew() once per name per year, in one Multicall3 transaction, each with exactly its fee. allowFailure
+// stays false: a call that failed and carried on would leave its fee in Multicall3 for anyone to take.
+function namesRenewCalls(picked, years, fees, encodeRenew) {
+  return picked.flatMap((r, i) => Array.from({ length: years }, () => ({
+    target: CONTRACT, allowFailure: false, value: fees[i], callData: encodeRenew(r.id),
+  })));
+}
+function namesBulkNote(count, years, quote, formatEth) {
+  if (!count) return '';
+  if (namesOverCap(count, years)) return `${count * years} renewals is too many for one transaction.`;
+  const head = `${count} name${count === 1 ? '' : 's'} · ${years} year${years === 1 ? '' : 's'} · `;
+  if (quote?.error) return head + 'price unavailable';
+  return head + (quote ? `<b>${formatEth(quote.total)} ETH</b>` : '…');
+}
+const namesDate = (t) => new Date(t * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+function namesDays(seconds) {
+  const days = Math.max(0, Math.round(seconds / 86400));
+  return days === 0 ? 'today' : days === 1 ? 'in 1 day' : `in ${days} days`;
+}
+function namesWhen(r, now) {
+  if (r.status === 'orphan') return 'parent registered again';
+  if (!r.expires) return '';
+  if (r.status === 'expired') return 'expired ' + namesDate(r.expires);
+  if (r.status === 'grace') return 'open to anyone ' + namesDays(r.expires + NAMES_GRACE - now);
+  if (r.status === 'soon') return 'expires ' + namesDays(r.expires - now);
+  return 'expires ' + namesDate(r.expires);
+}
+
+async function namesRead(ids) {
+  const calls = ids.flatMap((id) => ['ownerOf', 'getFullName', 'records'].map((fn) => ({ fn, args: [id], allowFailure: true })));
+  const res = [];
+  for (let i = 0; i < calls.length; i += NAMES_CHUNK) res.push(...await multicall(calls.slice(i, i + NAMES_CHUNK)));
+  return ids.map((id, i) => {
+    const [owner, full, record] = res.slice(i * 3, i * 3 + 3);
+    if (!owner || !record) return null;
+    // getFullName is empty once a parent was registered again: the token stays, the name doesn't.
+    return { id: String(id), owner: String(owner[0]).toLowerCase(), name: full ? String(full[0]) : '', label: String(record[0]), parent: BigInt(record[1]), expiresAt: Number(record[2]) };
+  });
+}
+// Expiry of every root the rows hang from. Roots held here are already read, so most wallets add no call.
+async function namesRootExpiry(rows) {
+  const known = Object.create(null); // labels are anyone's: constructor.gwei is a name
+  for (const r of rows) if (r && r.parent === 0n && r.label) known[r.label] = r.expiresAt;
+  const missing = [...new Set(rows.filter((r) => r && r.parent !== 0n && r.name).map((r) => namesRoot(r.name)).filter((label) => label && !(label in known)))];
+  if (!missing.length) return known;
+  const res = await multicall(missing.map((label) => ({ fn: 'expiresAt', args: [localComputeId(label)], allowFailure: true })));
+  missing.forEach((label, i) => { if (res[i]) known[label] = Number(res[i][0]); });
+  return known;
+}
+async function namesScan() {
+  const me = connectedAddress;
+  if (!me) return;
+  const seq = ++namesSeq;
+  if (!namesState) $('namesBody').innerHTML = '<div class="names-sum">Reading your names…</div>';
+  try {
+    const ids = (await loadOwnedVotingTokenIds(me)).map((id) => BigInt(id));
+    if (seq !== namesSeq) return;
+    const [meta, read] = await Promise.all([
+      multicall(['balanceOf', 'primaryName'].map((fn) => ({ fn, args: [me], allowFailure: true }))),
+      ids.length ? namesRead(ids) : [],
+    ]);
+    const rootExpiry = await namesRootExpiry(read);
+    if (seq !== namesSeq) return;
+    const held = read.filter((r) => r && r.owner === me.toLowerCase()).length;
+    // balanceOf counts what ownerOf attributes here, so a shortfall means some weren't found.
+    const balance = meta[0] ? Number(meta[0][0]) : held;
+    namesState = {
+      addr: me.toLowerCase(),
+      rows: namesApplyRenewed(namesClassify(read, me, rootExpiry, Math.floor(Date.now() / 1000)), namesRenewed, Math.floor(Date.now() / 1000)),
+      primary: meta[1] ? BigInt(meta[1][0]) : 0n,
+      missing: Math.max(0, balance - held),
+    };
+    namesCount = balance;
+    namesSetToggle();
+    namesRender();
+    namesRequote();
+  } catch (e) {
+    if (seq !== namesSeq) return;
+    console.warn('Could not read your names:', e);
+    $('namesBody').innerHTML = '<div class="names-note">Couldn’t read your names.</div><button class="names-more" onclick="namesScan()">try again</button>';
+  }
+}
+function namesRow(r, st, now) {
+  let tag = '';
+  if (st.primary && BigInt(r.id) === st.primary) tag += '<span class="names-tag">primary</span>';
+  if (r.status === 'grace') tag += '<span class="names-tag warn">renew</span>';
+  else if (r.status === 'expired') tag += '<span class="names-tag">expired</span>';
+  const when = `<span class="p">${escapeHtml(namesWhen(r, now))}</span>`;
+  const dim = r.status === 'expired' || r.status === 'orphan' ? ' dim' : '';
+  const box = r.name
+    ? `<a class="names-row${dim}" href="#${escapeHtml(encodeURIComponent(r.name.replace(/\.gwei$/, '')))}" onclick="namesPick()"><span class="n">${escapeHtml(r.name)}${tag}</span>${when}</a>`
+    : `<div class="names-row dim"><span class="n">${escapeHtml(r.label)}${tag}</span>${when}</div>`;
+  const check = namesRenewable(r)
+    ? `<input type="checkbox" class="names-check" data-id="${escapeHtml(r.id)}"${namesSel.has(r.id) ? ' checked' : ''} onchange="namesTick(this)" aria-label="Renew ${escapeHtml(r.name)}">`
+    : '<input type="checkbox" class="names-check gap" disabled tabindex="-1" aria-hidden="true">';
+  return `<div class="names-line">${check}${box}</div>`;
+}
+function namesRender() {
+  const body = $('namesBody'), st = namesState;
+  if (!body || !st) return;
+  const now = Math.floor(Date.now() / 1000), rows = st.rows;
+  const shortfall = st.missing ? `<div class="names-note">${st.missing} more name${st.missing === 1 ? '' : 's'} at this address couldn’t be read.</div><button class="names-more" onclick="namesScan()">try again</button>` : '';
+  if (!rows.length) { body.innerHTML = '<div class="names-sum">No names yet</div>' + shortfall; return; }
+  if (namesSel === null) namesSel = new Set(namesDefaultSel(rows));
+  const pool = rows.filter(namesRenewable);
+  const gone = rows.filter((r) => r.status === 'expired' || r.status === 'orphan').length;
+  const subs = rows.filter((r) => r.sub && r.status !== 'orphan' && r.status !== 'expired').length;
+  const live = rows.length - gone - subs;
+  const options = Array.from({ length: NAMES_MAX_YEARS }, (_, i) => i + 1).map((y) => `<option value="${y}"${y === namesYears ? ' selected' : ''}>${y} year${y === 1 ? '' : 's'}</option>`).join('');
+  body.innerHTML = `<div class="names-sum">${live} name${live === 1 ? '' : 's'}${subs ? ` · ${subs} subname${subs === 1 ? '' : 's'}` : ''}${gone ? ` · ${gone} lapsed` : ''}</div>` +
+    (pool.length ? `<div class="names-bulk"><span class="note" id="namesBulkNote"></span><select id="namesYears" aria-label="Years to renew" onchange="namesYearsChange(this)">${options}</select>` +
+      `<button class="names-more" onclick="namesSelectAll()">all ${pool.length}</button><button class="names-more" onclick="namesSelectNone()">none</button>` +
+      '<button class="act" id="namesBulkBtn" onclick="doRenewAll()">Renew</button></div>' : '') +
+    `<div class="names-rows">${rows.map((r) => namesRow(r, st, now)).join('')}</div>` + shortfall;
+  namesBulkPaint();
+}
+// Only the note and the button: ticking a name keeps the list where the reader left it.
+function namesBulkPaint() {
+  const note = $('namesBulkNote');
+  if (!note || !namesState) return;
+  const count = namesSelected(namesState.rows, namesSel).length;
+  note.innerHTML = namesBulkNote(count, namesYears, namesQuote, (wei) => ethers.formatEther(wei));
+  $('namesBulkBtn').disabled = !count || !signer || namesOverCap(count, namesYears) || !namesQuote || !!namesQuote.error || isProcessing;
+}
+// The fees are the contract's own answer, sent exactly.
+async function namesRequote() {
+  const seq = ++namesQuoteSeq;
+  namesQuote = null;
+  namesBulkPaint();
+  const picked = namesState ? namesSelected(namesState.rows, namesSel || new Set()) : [];
+  const years = namesYears;
+  if (!picked.length || namesOverCap(picked.length, years)) return;
+  try {
+    const lengths = [...new Set(picked.map((r) => byteLength(r.label)))];
+    const res = await multicall(lengths.map((length) => ({ fn: 'getFee', args: [length] })));
+    if (seq !== namesQuoteSeq) return;
+    const fees = picked.map((r) => res[lengths.indexOf(byteLength(r.label))][0]);
+    namesQuote = { key: namesQuoteKey(picked, years), fees, total: fees.reduce((sum, fee) => sum + fee, 0n) * BigInt(years) };
+  } catch (e) {
+    if (seq !== namesQuoteSeq) return;
+    namesQuote = { error: true };
+  }
+  namesBulkPaint();
+}
+function namesTick(el) {
+  if (el.checked) namesSel.add(el.dataset.id); else namesSel.delete(el.dataset.id);
+  namesRequote();
+}
+function namesYearsChange(el) {
+  namesYears = Math.min(NAMES_MAX_YEARS, Math.max(1, Number(el.value) || 1));
+  namesRequote();
+}
+function namesSelectAll() {
+  namesSel = new Set(namesState.rows.filter(namesRenewable).map((r) => r.id));
+  namesRender();
+  namesRequote();
+}
+function namesSelectNone() {
+  namesSel = new Set();
+  namesRender();
+  namesRequote();
+}
+async function doRenewAll() {
+  if (isProcessing || !signer || !namesState) return;
+  const picked = namesSelected(namesState.rows, namesSel), years = namesYears, quote = namesQuote;
+  if (!picked.length || namesOverCap(picked.length, years)) return;
+  // The quote has to be for exactly these names: anything else isn't the price on screen.
+  if (!quote || quote.error || quote.key !== namesQuoteKey(picked, years)) { namesRequote(); return; }
+  isProcessing = true;
+  namesBulkPaint();
+  let tx = null;
+  try {
+    showStatus(`Renewing ${picked.length} name${picked.length === 1 ? '' : 's'}…`, '');
+    const fresh = await namesRead(picked.map((r) => BigInt(r.id)));
+    if (!namesFreshOk(fresh, connectedAddress?.toLowerCase(), Math.floor(Date.now() / 1000))) {
+      showStatus('Some of these names have changed. Check the list and renew again.', 'error');
+      namesScan();
+      return;
+    }
+    const calls = namesRenewCalls(picked, years, quote.fees, (id) => iface.encodeFunctionData('renew', [BigInt(id)]));
+    const mc = new ethers.Contract(MULTICALL3, MULTICALL3_ABI, signer);
+    tx = await wcTransaction(mc.aggregate3Value(calls, { value: quote.total }), 'Approve renewal');
+    showStatus('Waiting for confirmation…', '', tx.hash);
+    await waitForTx(tx);
+    showStatus(`Renewed ${picked.length} name${picked.length === 1 ? '' : 's'} for ${years} year${years === 1 ? '' : 's'}!`, 'success', tx.hash);
+    if (!namesState) return; // disconnected while it confirmed
+    for (const r of picked) namesRenewed.set(r.label, r.expires + years * NAMES_YEAR);
+    namesApplyRenewed(namesState.rows, namesRenewed, Math.floor(Date.now() / 1000));
+    namesSel = null;
+    namesQuote = null;
+    namesRender();
+    namesRequote();
+    if (picked.some((r) => r.id === String(currentTokenId))) doCheckName();
+  } catch (e) {
+    handleError(e);
+    if (tx) namesQuote = null; // sent: Renew stays off until the selection changes
+    if (tx && !/revert/i.test(e?.message || '')) showStatus('The renewal hasn’t confirmed yet. Check it before renewing again.', 'error', tx.hash);
+  } finally {
+    isProcessing = false;
+    namesBulkPaint();
+  }
+}
+// The row's link loads the name; its panel is above the list the reader just scrolled.
+function namesPick() {
+  setTimeout(() => $('nameInput').scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
+}
+const namesPanelOpen = () => $('namesPanel').classList.contains('show');
+function namesSetToggle() {
+  const toggle = $('namesToggle'), open = namesPanelOpen();
+  toggle.textContent = open ? 'your names ↑' : `your names${namesCount ? ' · ' + namesCount : ''} →`;
+  toggle.setAttribute('aria-expanded', String(open));
+}
+function toggleNames(event) {
+  event?.preventDefault();
+  const open = !namesPanelOpen();
+  $('namesPanel').classList.toggle('show', open);
+  namesSetToggle();
+  if (!open) return;
+  if (namesState?.addr === connectedAddress?.toLowerCase()) namesRender();
+  namesScan();
+}
+// One balanceOf on connect gives the toggle its count without paying for the scan.
+async function namesOnConnect() {
+  const me = connectedAddress;
+  if (!me) return;
+  $('namesSection').style.display = '';
+  const seq = ++namesSeq;
+  try {
+    const [balance] = await multicall([{ fn: 'balanceOf', args: [me], allowFailure: true }]);
+    if (seq === namesSeq) namesCount = balance ? Number(balance[0]) : 0;
+  } catch (e) {
+    namesCount = 0;
+  }
+  namesSetToggle();
+}
+function namesOnDisconnect() {
+  namesSeq++;
+  namesQuoteSeq++;
+  namesState = null;
+  namesSel = null;
+  namesQuote = null;
+  namesRenewed = new Map();
+  namesYears = 1;
+  namesCount = 0;
+  $('namesPanel').classList.remove('show');
+  $('namesBody').innerHTML = '';
+  $('namesSection').style.display = 'none';
+  namesSetToggle();
 }
 
 // Send ETH functionality

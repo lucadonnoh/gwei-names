@@ -601,6 +601,21 @@ async function handleApi(request, url, env, ctx) {
   return answerApi(request, url, env);
 }
 
+// A draft as its post page will be (pending, dated now), so its author sees what readers will before
+// paying for anything. ?name= puts the name in the byline; its avatar and colour aren't looked up, so a
+// preview costs no RPC. The dapp shows this in a sandboxed frame, where no script runs.
+function draftPage(post, given) {
+  let name = 'yourname.gwei';
+  try {
+    const normalized = ens_normalize(String(given || ''));
+    if (/^[^.]+(?:\.[^.]+)*\.gwei$/.test(normalized)) name = normalized;
+  } catch (_) {}
+  return renderPostPage({
+    name, pageUrl: `https://${POSTS_LABEL}.gwei.limo/${encodeURIComponent(name)}/`, profile: { seed: nameTokenId(name), text: {}, page: {} },
+    post: { ...post, hash: '0x' + '0'.repeat(64), time: Math.floor(Date.now() / 1000), onchain: null }, repliesOff: !post.replies,
+  });
+}
+
 async function answerApi(request, url, env) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: API_HEADERS });
   // The commit this Worker was deployed from (CI passes it as GIT_COMMIT), so a deploy can be verified.
@@ -620,7 +635,7 @@ async function answerApi(request, url, env) {
         const post = parsePost(bytes);
         if (!post) return apiJson({ error: 'Not a v1 post: a JSON object with "v": 1, a "title" and a "body".' }, 400);
         const { cover, body } = splitCover(post.body);
-        return apiJson({ title: post.title, cover: cover?.url ?? null, html: renderMarkdown(body) });
+        return apiJson({ title: post.title, cover: cover?.url ?? null, html: renderMarkdown(body), page: draftPage(post, url.searchParams.get('name')) });
       }
       const result = await index.upload(bytes, request.headers.get('cf-connecting-ip') || '');
       return result.error ? apiJson({ error: result.error }, result.status || 400) : apiJson(result, 201);
