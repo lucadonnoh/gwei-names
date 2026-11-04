@@ -2791,8 +2791,20 @@ test('posts: Preview shows the gateway’s own page in a frame no script runs in
   assert.match(html, /\/posts\/preview\?name=\$\{encodeURIComponent\(currentTokenName \+ '\.gwei'\)\}/);
   assert.match(html, /out\.page\.replace\('<meta charset="utf-8">', '<meta charset="utf-8"><base target="_blank">'\)/, 'a link can’t replace the preview');
   assert.doesNotMatch(html, /previewPost/);
-  assert.match(html, /void loadNameBlog\(tokenId, name, hasContenthash \|\| !!contentContract, thisManageVersion\);/);
-  assert.match(html, /const base = namePostsBase\(name \+ '\.gwei', hasWebsite\);/, 'read where the posts are read');
+  assert.match(html, /const blogBase = posts && namePostsBase\(name \+ '\.gwei', hasContenthash \|\| !!contentContract\);/, 'read where the posts are read');
+});
+
+test('nothing that loads late sits above a control, so a click can’t land on something else', () => {
+  const form = html.slice(html.indexOf('function postsFormHtml()'), html.indexOf("// For a name's Blog row"));
+  assert.ok(form.length > 500, 'the slice must hold the function');
+  assert.ok(form.indexOf('id="ppList"') > form.indexOf('doPublishPost()'), 'the post list comes after every control of the form');
+  assert.ok(form.indexOf('id="ppList"') > form.indexOf('id="ppBody"'));
+  const manage = html.slice(html.indexOf('async function showManage('), html.indexOf('function websiteSwitchNote()'));
+  assert.ok(manage.length > 1000, 'the slice must hold the function');
+  assert.ok(manage.indexOf('const postCount = postsEnabled() ? namePostCount(tokenId) : null;') < manage.indexOf('const results = await multicall(['), 'its read runs alongside the chain’s');
+  assert.ok(manage.indexOf('id="nameBlog"') < manage.indexOf("$('manageInfo').innerHTML = infoHtml;"), 'the Blog row is in the first paint, never inserted later');
+  assert.doesNotMatch(html, /Checking the publishing fee/, 'the fee line is one sentence before and after its price lands');
+  assert.match(html, /min-width:11ch;">…<\/span>/, 'room held for the price');
 });
 
 function namesHarness() {
