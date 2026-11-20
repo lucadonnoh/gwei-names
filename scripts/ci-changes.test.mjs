@@ -15,6 +15,7 @@ test('a change runs the suites built from it, and deploys the parts that ship it
   assert.deepEqual(runs('gateway/worker.js'), ['deploy-gateway', 'gateway']);
   assert.deepEqual(runs('gateway/worker.test.js'), ['deploy-gateway', 'gateway']);
   assert.deepEqual(runs('dapp/gweiNS.html'), ['dapp', 'deploy-dapp', 'image']);
+  assert.deepEqual(runs('yearbook/index.html'), ['dapp'], 'tested here, published to IPFS by hand');
   assert.deepEqual(runs('Dockerfile'), ['deploy-dapp', 'image']);
   assert.deepEqual(runs('scripts/check-dapp-image.sh'), ['image']);
   assert.deepEqual(runs('test/NameNFT.t.sol'), ['contracts']);

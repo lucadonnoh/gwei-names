@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The .gwei yearbook</title>
+<meta name="description" content="Every name on the Gwei Name Service, newest first.">
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://yearbook.gwei.limo/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Gwei Name Service">
+<meta property="og:title" content="The .gwei yearbook">
+<meta property="og:description" content="Every name on the Gwei Name Service, newest first.">
+<meta property="og:url" content="https://yearbook.gwei.limo/">
+<meta property="og:image" content="https://gwei.domains/og-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0a0a'/><rect x='3' y='3' width='10' height='2' fill='%23e8e8e0'/><rect x='3' y='3' width='2' height='10' fill='%23e8e8e0'/><rect x='3' y='11' width='10' height='2' fill='%23e8e8e0'/><rect x='11' y='8' width='2' height='5' fill='%23e8e8e0'/><rect x='8' y='8' width='5' height='2' fill='%23e8e8e0'/></svg>" type="image/svg+xml">
+<script>
+// The saved theme, shared with the dapp and every name page, else the system's.
+try { var m = document.cookie.match(/(?:^|; )gwei-theme=(dark|light)/); if (m) document.documentElement.classList.add(m[1]); } catch (_) {}
+</script>
+<style>
+:root { --bg: #fff; --fg: #000; --muted: #666; color-scheme: light dark; }
+:root.dark { --bg: #0a0a0a; --fg: #e8e8e0; --muted: #888; }
+@media (prefers-color-scheme: dark) { :root:not(.light) { --bg: #0a0a0a; --fg: #e8e8e0; --muted: #888; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); max-width: 770px; margin: 0 auto; padding: 60px 20px 80px; }
+h1 { font-size: 14px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px; }
+h1 a { color: inherit; text-decoration: none; }
+.count { min-height: 18px; font-size: 12px; color: var(--muted); letter-spacing: 0.03em; margin-bottom: 40px; }
+.count b { color: var(--fg); font-weight: 400; }
+.month { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 20px 12px; margin-bottom: 32px; }
+.name { display: block; min-width: 0; color: inherit; text-decoration: none; }
+.name:hover { opacity: 0.6; }
+.pic { position: relative; width: 52px; height: 52px; margin-bottom: 7px; }
+.pic svg { display: block; width: 52px; height: 52px; }
+.pic img { position: absolute; inset: 0; width: 52px; height: 52px; object-fit: cover; background: var(--bg); }
+.pic img.icon { object-fit: contain; }
+.name span { display: block; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+.note { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1><a href="https://gwei.domains/">Gwei Name Service</a></h1>
+<div class="count" id="count"></div>
+<div id="names"></div>
+<div id="more"></div>
+<script>
+// The source of https://yearbook.gwei.limo, a website like any other .gwei name's: this one file on
+// IPFS, reading the gateway's index. To publish a change: add it to IPFS and set the new CID on the name.
+//
+// Every name gets a square: its picture if it set one, else its website's favicon, else its generated
+// mark, which is drawn first and stays underneath, so nothing moves when a picture lands and a picture
+// that fails changes nothing.
+const API = 'https://gwei.domains/api';
+// Names whose picture is never shown here, should one ever need to go: labels, without .gwei.
+const NO_PICTURE = new Set([]);
+
+// Generated avatars, as gateway/profile-page.js avatarModel draws them: the first byte of a name's token
+// id picks the colour, the next six the pattern.
+const COLORS = ['#161616', '#244577', '#175640', '#402370', '#732430'];
+const GRID = 9, HALF = 5, CELL = 16, SIZE = 180, OFFSET = (SIZE - GRID * CELL) / 2, MIN_CELLS = 16;
+function markModel(hex) {
+  const bytes = hex.match(/../g).map((b) => parseInt(b, 16));
+  const bit = (i) => (bytes[1 + (i >> 3)] >> (i & 7)) & 1;
+  const cells = [];
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < HALF; x++) {
+      if (!bit(y * HALF + x)) continue;
+      cells.push([x, y]);
+      if (x < HALF - 1) cells.push([GRID - 1 - x, y]);
+    }
+  }
+  const color = COLORS[bytes[0] % COLORS.length];
+  if (cells.length >= MIN_CELLS && cells.length <= GRID * GRID - MIN_CELLS) return { color, cells };
+  const lit = new Set(cells.map(([x, y]) => `${x},${y}`)), inverse = [];
+  for (let y = 0; y < GRID; y++) for (let x = 0; x < GRID; x++) if (!lit.has(`${x},${y}`)) inverse.push([x, y]);
+  return { color, cells: inverse };
+}
+// One path for every cell: as separate shapes, neighbours show a light seam where they meet.
+function markSvg(hex) {
+  const { color, cells } = markModel(hex);
+  const d = cells.map(([x, y]) => `M${OFFSET + x * CELL} ${OFFSET + y * CELL}h${CELL}v${CELL}h-${CELL}z`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SIZE} ${SIZE}" shape-rendering="crispEdges" aria-hidden="true"><rect width="${SIZE}" height="${SIZE}" fill="${color}"/><path fill="#fff" fill-opacity="0.92" d="${d}"/></svg>`;
+}
+// A name's own host for a plain label, else its page on gwei.domains, where anything a URL could read
+// differently stays safe.
+function nameHref(label) {
+  return /^[a-z0-9-]{1,63}$/.test(label) && label !== 'posts' && label !== 'diff'
+    ? `https://${label}.gwei.limo/` : `https://gwei.domains/#${encodeURIComponent(label)}`;
+}
+// A favicon's address, if it is one an <img> may load: links in a site's page are anyone's text.
+function iconUrl(href, base) {
+  try {
+    const url = new URL(href, base);
+    if (url.protocol === 'https:') return url.href;
+    return /^data:image\/[a-z+.-]+[;,]/i.test(href) ? href : null;
+  } catch (e) {
+    return null;
+  }
+}
+const monthOf = (time) => new Date(time * 1000).toISOString().slice(0, 7);
+const monthName = (month) => new Date(month + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+// Names are anyone's text, so they only ever go in as text. Drawn a stretch at a time, ahead of the
+// reader: a long month is over a thousand names, and new ones only ever land below the screen.
+const CHUNK = 350;
+
+// Whichever picture loads first of `urls`, placed over the mark. An <img> never runs what it shows.
+async function showPicture(pic, urls, icon) {
+  for (const url of urls) {
+    const img = new Image();
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    if (icon) img.className = 'icon';
+    const loaded = await new Promise((done) => {
+      const timer = setTimeout(() => done(false), 10000);
+      img.onload = () => { clearTimeout(timer); done(true); };
+      img.onerror = () => { clearTimeout(timer); done(false); };
+      img.src = url;
+    });
+    if (loaded && img.naturalWidth) { pic.append(img); return; }
+  }
+}
+// A site's icons, from its own page. Parsed, never run. /favicon.ico is the last resort.
+async function siteIcons(label) {
+  if (!/^[a-z0-9-]{1,63}$/.test(label)) return [];
+  const site = `https://${label}.gwei.limo/`;
+  const res = await fetch(site, { signal: AbortSignal.timeout(8000) });
+  const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+  const links = [...doc.querySelectorAll('link[rel~="icon" i], link[rel~="apple-touch-icon" i]')].map((l) => l.getAttribute('href'));
+  return [...links, '/favicon.ico'].map((href) => iconUrl(href || '', site)).filter(Boolean);
+}
+async function loadPicture(pic, n) {
+  try {
+    if (n.image) return await showPicture(pic, [n.image], false);
+    if (n.nft) {
+      const res = await fetch(`${API}/names/${n.nft}/image`);
+      if (res.ok) return await showPicture(pic, [(await res.json()).image], false);
+    }
+    if (n.site) await showPicture(pic, await siteIcons(n.label), true);
+  } catch (e) {}
+}
+// Only for names near the screen, a few at a time: each one is a request to someone's server.
+const pictures = new Map();
+const queue = [];
+let running = 0;
+function pump() {
+  while (running < 6 && queue.length) {
+    const [pic, n] = queue.shift();
+    running++;
+    loadPicture(pic, n).finally(() => { running--; pump(); });
+  }
+}
+const nearby = new IntersectionObserver((entries) => {
+  for (const { isIntersecting, target } of entries) {
+    if (!isIntersecting) continue;
+    nearby.unobserve(target);
+    queue.push([target, pictures.get(target)]);
+  }
+  pump();
+}, { rootMargin: '600px' });
+function nameEntry(n) {
+  const { name, mark } = n;
+  const label = name.slice(0, -'.gwei'.length);
+  const link = document.createElement('a');
+  link.className = 'name';
+  link.href = nameHref(label);
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.title = name;
+  const pic = document.createElement('div');
+  pic.className = 'pic';
+  if (/^[0-9a-f]{14}$/.test(mark)) pic.innerHTML = markSvg(mark);
+  link.append(pic);
+  if (!NO_PICTURE.has(label) && (n.image || n.nft || n.site)) {
+    pictures.set(pic, { ...n, label });
+    nearby.observe(pic);
+  }
+  const text = document.createElement('span');
+  text.dir = 'auto';
+  text.textContent = label;
+  link.append(text);
+  return link;
+}
+function showNames(names) {
+  const list = document.getElementById('names'), more = document.getElementById('more');
+  const totals = {};
+  for (const n of names) totals[monthOf(n.time)] = (totals[monthOf(n.time)] || 0) + 1;
+  let shown = 0, month = null, grid = null;
+  const draw = () => {
+    const end = Math.min(shown + CHUNK, names.length);
+    for (; shown < end; shown++) {
+      const n = names[shown], m = monthOf(n.time);
+      if (m !== month) {
+        month = m;
+        const head = document.createElement('div');
+        head.className = 'month';
+        const [title, total] = [document.createElement('span'), document.createElement('span')];
+        title.textContent = monthName(m);
+        total.textContent = totals[m].toLocaleString('en-US');
+        head.append(title, total);
+        grid = document.createElement('div');
+        grid.className = 'grid';
+        list.append(head, grid);
+      }
+      grid.append(nameEntry(n));
+    }
+    return shown < names.length;
+  };
+  draw();
+  const watch = new IntersectionObserver((entries) => {
+    if (entries.some((e) => e.isIntersecting) && !draw()) watch.disconnect();
+  }, { rootMargin: '1500px' });
+  watch.observe(more);
+}
+async function start() {
+  const count = document.getElementById('count');
+  try {
+    const res = await fetch(`${API}/names`);
+    const { ready, names } = await res.json();
+    if (!res.ok || !ready) throw new Error('not ready');
+    const total = document.createElement('b');
+    total.textContent = names.length.toLocaleString('en-US');
+    count.append(total, ' names');
+    showNames(names);
+  } catch (e) {
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = 'Couldn’t load the names right now.';
+    document.getElementById('names').append(note);
+  }
+}
+start();
+</script>
+</body>
+</html>

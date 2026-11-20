@@ -48,6 +48,9 @@ You need the Cloudflare account that manages the `gwei.domains` zone.
   its own host, and a website's 404 on one of its name's post paths (`postMoved`) redirects to the posts
   host, so post links outlive a website being set. Every name shares the origin, so it never serves a website, and every response that
   isn't one of the gateway's pages is sandboxed.
+- **`/api/names`** lists every top-level name, newest first, for [yearbook.gwei.limo](../yearbook/index.html):
+  what its generated mark is drawn from, a date, its avatar as an image (or the token to ask
+  `/api/names/<token>/image` for an NFT's), and whether it has a website.
 - **Name profiles.** A registered name with no `contenthash` and no usable `contentcontract` record
   gets a profile page at its root (`profile-page.js`, styled like gwei.domains): address, owner,
   expiry and its `display`, `description`, `avatar`, `url`, `com.twitter`, `com.github`,

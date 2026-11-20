@@ -17,7 +17,7 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, keccak256, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, POST_COVER_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, THEME_SCRIPT_HASH, avatarPng, cardVersion,
+  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, POST_COVER_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, THEME_SCRIPT_HASH, avatarPng, avatarUrl, cardVersion,
   decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
   renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
@@ -601,6 +601,14 @@ async function handleApi(request, url, env, ctx) {
   return answerApi(request, url, env);
 }
 
+// A name's row for the yearbook: its avatar as an image a page can show, or the token to ask for an NFT's.
+function namePicture({ avatar, token, ...row }) {
+  if (!avatar) return row;
+  const image = avatarUrl(avatar);
+  if (image) return { ...row, image };
+  return nftAvatarRef(avatar) ? { ...row, nft: token } : row;
+}
+
 // A draft as its post page will be (pending, dated now), so its author sees what readers will before
 // paying for anything. ?name= puts the name in the byline; its avatar and colour aren't looked up, so a
 // preview costs no RPC. The dapp shows this in a sandboxed frame, where no script runs.
@@ -642,6 +650,19 @@ async function answerApi(request, url, env) {
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return apiJson({ error: 'Method not allowed.' }, 405);
     if (path === '/api/stats') return apiJson(await index.networkStats(), 200, 'public, max-age=60');
+    if (path === '/api/names') {
+      const { ready, names } = await index.networkNames();
+      return apiJson({ ready, names: names.map(namePicture) }, 200, 'public, max-age=300');
+    }
+    if ((m = hashIn(/^\/api\/names\/(0x[0-9a-fA-F]{64})\/image$/))) {
+      // An NFT avatar's image, read as a profile page reads it. What the name's record says, never what
+      // the request does, picks the NFT.
+      const route = rpcRoute(request, env);
+      const record = await ethCall(1, NAMENFT, encodeTextCall(m.slice(2), 'avatar'), route);
+      const ref = record ? nftAvatarRef(readText(record.slice(2), word(record.slice(2), 0))) : null;
+      const image = ref ? avatarUrl(await nftImage(ref, route)) : null;
+      return image ? apiJson({ image }, 200, 'public, max-age=86400') : apiJson({ error: 'No NFT avatar.' }, 404);
+    }
     if (path === '/api/replies') {
       // Every reply, in the order the index found them, for notifiers and mirrors: pass `next` back as `after`.
       const after = Math.max(Number.parseInt(url.searchParams.get('after'), 10) || 0, 0);

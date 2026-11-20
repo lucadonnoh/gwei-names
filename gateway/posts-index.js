@@ -38,5 +38,6 @@ export class PostIndex extends DurableObject {
     };
   }
   networkStats() { return this.stats.stats(); }
+  networkNames() { return this.stats.names(); }
   poke() { return this.store.poke(); }
 }

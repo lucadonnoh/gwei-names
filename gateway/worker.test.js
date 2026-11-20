@@ -1545,8 +1545,19 @@ test('an NFT avatar is resolved through tokenURI and its metadata', async () => 
   const html = await res.text();
   assert.match(html, /<img class="avatar" src="https:\/\/ipfs\.filebase\.io\/ipfs\/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644\/7\.png"/);
 
+  // The yearbook asks for the same image by token: the name's own record picks the NFT.
+  const image = (token, fetchMock) => invoke(`https://gwei.domains/api/names/${token}/image`, { cache: makeCache(), fetchMock, env: { POST_INDEX: fakePostIndex() } });
+  const token = '0x' + 'ab'.repeat(32);
+  let api = await image(token, makeFetch({ rpc }));
+  assert.equal(api.status, 200);
+  assert.deepEqual(await api.json(), { image: 'https://ipfs.filebase.io/ipfs/bafybeif4fkci4bylob5wmge5mwavvzuk6mjjq6cj2f46egyuqt5on5e644/7.png' });
+  assert.match(api.headers.get('cache-control'), /max-age=86400/);
+  assert.equal((await image(token, makeFetch({ rpc: rpcProfile({ address: 'a11ce', text: { avatar: 'https://example.com/a.png' } }) }))).status, 404, 'not an NFT: nothing to look up');
+  assert.equal((await image('0x1234', makeFetch({ rpc }))).status, 404, 'only a whole token id');
+
   // A token whose tokenURI reverts just has no avatar.
   const broken = (data, url, to) => (to?.toLowerCase() === NFTC ? null : rpc(data, url, to));
+  assert.equal((await image(token, makeFetch({ rpc: broken }))).status, 404);
   const plain = await invoke('https://geek.gwei.domains/', { cache: makeCache(), fetchMock: makeFetch({ rpc: broken }) });
   assert.equal(plain.status, 200);
   const plainHtml = await plain.text();
@@ -1619,10 +1630,34 @@ function fakePostIndex({ posts = [POST_A, POST_B], fail = false, postReplies } =
     paidBy: answer('paidBy', [{ hash: POST_A.hash, blob: POST_A.onchain.blob, publisher: '0x' + '9b'.repeat(20), token: TOKEN_HEX, block: 5, title: POST_A.title }]),
     poke: answer('poke', { throttled: true }),
     sync: answer('sync', { events: 2, blobs: 1 }),
+    networkNames: answer('networkNames', { ready: true, names: [
+      { name: 'alice.gwei', mark: '9e0f6f68e7256d', time: 1790000000 },
+      { name: 'pic.gwei', mark: 'aa', time: 1, avatar: 'ipfs://bafkreigw36dmko6bpsp355lk5k6u35zbhu3egeaxkm42wfczvfrbcimsnq', token: '0x' + 'aa'.repeat(32) },
+      { name: 'nft.gwei', mark: 'bb', time: 1, avatar: 'eip155:1/erc721:0x' + 'ab'.repeat(20) + '/7', token: '0x' + 'bb'.repeat(32), site: true },
+      { name: 'junk.gwei', mark: 'cc', time: 1, avatar: 'javascript:alert(1)', token: '0x' + 'cc'.repeat(32) },
+    ] }),
     networkStats: answer('networkStats', { ready: true, block: 26270000, names: 4382, subdomains: 120, burnedWei: '1500000000000000000', lengths: { 3: 10 }, sites: ['donnoh'] }),
   };
   return { calls, getByName: (name) => { calls.push(['getByName', name]); return stub; } };
 }
+test('/api/names lists every name for the names page, readable from anywhere and cached at the edge', async () => {
+  const POST_INDEX = fakePostIndex();
+  const cache = makeCache();
+  const get = () => invoke('https://gwei.domains/api/names', { cache, fetchMock: makeFetch({}), env: { POST_INDEX } });
+  const res = await get();
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+  assert.match(res.headers.get('cache-control'), /max-age=300/);
+  assert.deepEqual(await res.json(), { ready: true, names: [
+    { name: 'alice.gwei', mark: '9e0f6f68e7256d', time: 1790000000 },
+    { name: 'pic.gwei', mark: 'aa', time: 1, image: 'https://ipfs.filebase.io/ipfs/bafkreigw36dmko6bpsp355lk5k6u35zbhu3egeaxkm42wfczvfrbcimsnq' },
+    { name: 'nft.gwei', mark: 'bb', time: 1, site: true, nft: '0x' + 'bb'.repeat(32) },
+    { name: 'junk.gwei', mark: 'cc', time: 1 },
+  ] }, 'an avatar becomes an image a page can show, an NFT the token to ask with, and anything else nothing');
+  await get();
+  assert.equal(POST_INDEX.calls.filter((c) => c[0] === 'networkNames').length, 1, 'the second answer comes from the edge');
+});
+
 test('/api/replies lists replies for notifiers and mirrors, from a cursor, with a bounded page', async () => {
   const POST_INDEX = fakePostIndex();
   const api = (path) => invoke('https://gwei.domains' + path, { cache: makeCache(), fetchMock: makeFetch({}), env: { POST_INDEX } });

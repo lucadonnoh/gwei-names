@@ -59,7 +59,7 @@ function chain(logs, { head = DEPLOY + 1000, refuse = Infinity, balance = '0x6f0
 
 test('the stats topics are the keccak of NameNFT event signatures, and contentcontract the keccak of its key', async () => {
   const src = (await import('node:fs')).readFileSync(new URL('./stats-store.js', import.meta.url), 'utf8');
-  for (const t of [T_NAME, T_CH, T_TEXT, topic('contentcontract')]) assert.ok(src.includes(t), t);
+  for (const t of [T_NAME, T_CH, T_TEXT, topic('contentcontract'), topic('avatar')]) assert.ok(src.includes(t), t);
 });
 
 test('stats count names and subdomains, bucket lengths, and list websites newest record first', async () => {
@@ -84,6 +84,63 @@ test('stats count names and subdomains, bucket lengths, and list websites newest
   assert.deepEqual(stats.sites, ['bob', 'alice'], 'the newest record first; removed logs and other text keys ignored');
   assert.equal(stats.burnedWei, '500000000000000000');
   assert.equal(stats.ready, true);
+});
+
+test('names lists every top-level name, newest first, each with what its mark is drawn from and a date', async () => {
+  const T0 = 1782499607;
+  const big = (hex) => BigInt('0x' + hex.padEnd(64, '0'));
+  const c = chain([
+    registered(DEPLOY + 10, big('9e0f6f68e7256d11'), 'first'),
+    registered(DEPLOY + 20, big('aa'), 'free', false),
+    { ...registered(DEPLOY + 30, big('bb'), 'second'), logIndex: '0x1' },
+    { ...registered(DEPLOY + 30, big('cc'), 'third'), logIndex: '0x2' },
+    registered(DEPLOY + 40, big('dd'), 'back'),
+    registered(DEPLOY + 50, big('dd'), 'back'), // registered again: it is new again
+  ]);
+  c.rpc = async (method) => (method === 'eth_getBalance' ? '0x1' : { timestamp: '0x' + (T0 + 998 * 13).toString(16) });
+  const store = new StatsStore(memorySql(), c);
+  await store.sync();
+  const { ready, names } = store.names();
+  assert.equal(ready, true);
+  assert.deepEqual(names.map((n) => n.name), ['back.gwei', 'third.gwei', 'second.gwei', 'first.gwei'], 'no subnames, and a tie goes by log order');
+  assert.equal(names.at(-1).mark, '9e0f6f68e7256d', 'all a generated avatar reads');
+  assert.equal(names.at(-1).time, T0 + 10 * 13, 'dated from one recent block, not 12 seconds a block');
+  assert.equal(names[0].time, T0 + 50 * 13);
+  assert.equal(store.stats().names, 4);
+  assert.equal('avatar' in names[0], false);
+
+  const offline = chain([registered(DEPLOY + 10, big('ee'), 'alone')]);
+  const fallback = new StatsStore(memorySql(), offline);
+  await fallback.sync();
+  assert.equal(fallback.names().names[0].time, T0 + 10 * 12, 'a block time that couldn’t be read costs a little accuracy, not the page');
+});
+
+test('names says which have a picture or a website, and a record cleared, too long or wiped by re-registering is gone', async () => {
+  const big = (hex) => BigInt('0x' + hex.padEnd(64, '0'));
+  const [a, b, c2, d, e] = ['aa', 'bb', 'cc', 'dd', 'ee'].map(big);
+  const c = chain([
+    registered(DEPLOY + 1, a, 'pic'),
+    text(DEPLOY + 2, a, 'avatar', 'https://example.com/a.png'),
+    registered(DEPLOY + 3, b, 'cleared'),
+    text(DEPLOY + 4, b, 'avatar', 'https://example.com/b.png'),
+    text(DEPLOY + 5, b, 'avatar', ''),
+    registered(DEPLOY + 6, c2, 'huge'),
+    text(DEPLOY + 7, c2, 'avatar', 'x'.repeat(2001)),
+    registered(DEPLOY + 8, d, 'again'),
+    text(DEPLOY + 9, d, 'avatar', 'eip155:1/erc721:0x' + 'ab'.repeat(20) + '/1'),
+    registered(DEPLOY + 10, d, 'again'),
+    registered(DEPLOY + 11, e, 'site'),
+    contenthash(DEPLOY + 12, e, [0xe3, 1, 2]),
+    text(DEPLOY + 13, e, 'description', 'not an avatar'),
+  ]);
+  const store = new StatsStore(memorySql(), c);
+  await store.sync();
+  const by = Object.fromEntries(store.names().names.map((n) => [n.name.slice(0, -5), n]));
+  assert.equal(by.pic.avatar, 'https://example.com/a.png');
+  assert.equal(by.pic.token, node(a));
+  for (const l of ['cleared', 'huge', 'again', 'site']) assert.equal('avatar' in by[l], false, l);
+  assert.equal(by.site.site, true);
+  assert.equal('site' in by.pic, false);
 });
 
 test('the record a site is dated by is the one the gateway serves, and clearing or re-registering drops it', async () => {

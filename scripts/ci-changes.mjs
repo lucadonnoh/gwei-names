@@ -20,7 +20,7 @@ export const INPUTS = {
   // CI suites
   contracts: { paths: [...SOLIDITY, 'test/', 'script/'] },
   gateway: { paths: ['gateway/'], entries: ['gateway/*.test.js'] },
-  dapp: { paths: ['dapp/'], entries: ['dapp/gweiNS.test.js'] },
+  dapp: { paths: ['dapp/', 'yearbook/'], entries: ['dapp/gweiNS.test.js'] }, // its tests cover yearbook/ too
   sdk: { paths: ['sdk/', ...SOLIDITY] }, // abi:check compiles NameNFT
   snap: { paths: ['snap/'] },
   poster: { paths: ['posts/poster/', ...SOLIDITY], entries: ['posts/poster/*.mjs'] }, // deploys the contracts on anvil

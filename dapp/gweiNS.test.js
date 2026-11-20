@@ -2952,6 +2952,66 @@ test('display name: the button clears it when this name is it, with the contract
   assert.match(context.b(false), /onclick="doSetPrimary\(\)">Set as Display Name</);
 });
 
+function namesPageHarness() {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'yearbook', 'index.html'), 'utf8');
+  const start = page.indexOf('const COLORS = ');
+  const end = page.indexOf('// Names are anyone', start);
+  assert.notEqual(start, -1, 'the yearbook must draw marks');
+  const context = vm.createContext({ URL });
+  vm.runInContext(page.slice(start, end) + '\nglobalThis.api = { markModel, markSvg, nameHref, iconUrl, monthOf, monthName };', context);
+  return { page, ...context.api };
+}
+
+test('yearbook: every mark is the one the gateway draws on that name’s profile', async () => {
+  const { avatarModel } = await import('../gateway/profile-page.js');
+  const { markModel } = namesPageHarness();
+  const crypto = require('node:crypto');
+  const ids = Array.from({ length: 3000 }, () => crypto.randomBytes(32).toString('hex'));
+  // Patterns too sparse or too dense, which are inverted, and every colour.
+  ids.push('00' + '00'.repeat(31), 'ff' + 'ff'.repeat(31), '01' + '00'.repeat(31), '04' + 'ff'.repeat(31), '02' + '010000000000' + '00'.repeat(25));
+  for (const id of ids) {
+    const want = avatarModel(id);
+    const got = markModel(id.slice(0, 14));
+    assert.equal(got.color, want.color, id);
+    assert.deepEqual(JSON.parse(JSON.stringify(got.cells)), want.cells, id);
+  }
+});
+
+test('yearbook: a mark is one shape, under any picture, and a picture can only ever be an image', () => {
+  const { page, markSvg, iconUrl } = namesPageHarness();
+  const svg = markSvg('9e0f6f68e7256d');
+  assert.equal((svg.match(/<path/g) || []).length, 1, 'separate translucent cells show seams where they meet');
+  assert.match(svg, /shape-rendering="crispEdges"/);
+  assert.match(page, /pic\.innerHTML = markSvg\(mark\);/, 'the mark is drawn first and stays');
+  assert.match(page, /if \(loaded && img\.naturalWidth\) \{ pic\.append\(img\); return; \}/, 'a picture that fails changes nothing');
+  assert.match(page, /\.pic \{ position: relative; width: 52px; height: 52px;/, 'a fixed square: a picture landing moves nothing');
+  assert.match(page, /img\.referrerPolicy = 'no-referrer';/);
+  assert.match(page, /new DOMParser\(\)\.parseFromString\(await res\.text\(\), 'text\/html'\)/, 'a site’s page is parsed, never run');
+  assert.doesNotMatch(page, /\.write\(|eval\(|<iframe|new Function/);
+  const base = 'https://site.gwei.limo/';
+  assert.equal(iconUrl('/icon.png', base), 'https://site.gwei.limo/icon.png');
+  assert.equal(iconUrl('https://cdn.example/i.png', base), 'https://cdn.example/i.png');
+  assert.equal(iconUrl("data:image/svg+xml,<svg xmlns='x'/>", base), "data:image/svg+xml,<svg xmlns='x'/>");
+  for (const bad of ['javascript:alert(1)', 'data:,', 'data:text/html,<script>1</script>', 'http://insecure.example/i.png', 'file:///etc/passwd']) assert.equal(iconUrl(bad, base), null, bad);
+});
+
+test('yearbook: a name is only ever text, and links stay where they should', () => {
+  const { page, nameHref, monthOf, monthName } = namesPageHarness();
+  assert.match(page, /text\.textContent = label;/);
+  assert.match(page, /link\.href = nameHref\(label\);/);
+  assert.match(page, /if \(\/\^\[0-9a-f\]\{14\}\$\/\.test\(mark\)\) pic\.innerHTML = markSvg\(mark\);/, 'the one innerHTML, only from checked hex');
+  assert.equal((page.match(/innerHTML/g) || []).length, 1);
+  assert.equal(nameHref('alice'), 'https://alice.gwei.limo/');
+  assert.equal(nameHref('🦄'), 'https://gwei.domains/#%F0%9F%A6%84');
+  assert.equal(nameHref('posts'), 'https://gwei.domains/#posts', 'its host is the posts host');
+  assert.equal(nameHref('diff'), 'https://gwei.domains/#diff');
+  for (const bad of ['evil.com/x', 'a@b', 'x'.repeat(64), '"><script>']) assert.match(nameHref(bad), /^https:\/\/gwei\.domains\/#/, bad);
+  assert.equal(nameHref('"><script>').includes('<'), false);
+  assert.equal(monthOf(1793750400), '2026-11');
+  assert.equal(monthName('2026-11'), 'November 2026');
+  assert.match(page, /<meta name="robots" content="noindex">/, 'as name pages are: any name can be anything');
+});
+
 test('posts: the dapp builds the same blob as the gateway, and the vendored KZG gives the hash c-kzg does', async () => {
   const api = postsHarness();
   const gateway = await import('../gateway/posts-format.js');
