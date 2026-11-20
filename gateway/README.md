@@ -5,7 +5,8 @@ request it reads the label from the `Host`, asks the NameNFT contract for the na
 decodes its IPFS, IPNS, or Swarm reference, and reverse-proxies the content from a public protocol
 gateway. If no `contenthash` is set it falls back to the ERC-6821 `contentcontract` text record and
 serves the site straight out of a smart contract over web3:// (ERC-6860), with no storage network in
-between.
+between; with neither record, a name whose address is a contract serving a site (`resolveMode()`
+naming a mode, or ERC-8244 `html()`) is served from it, as wei.limo does (`addressSite`).
 
 This is the one piece of off-chain infrastructure GNS relies on. It follows the standard ENS-style
 contenthash-gateway pattern (the same idea as `eth.limo` for `.eth`) and also serves contract-hosted

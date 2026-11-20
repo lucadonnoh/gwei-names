@@ -777,7 +777,9 @@ function parseContentContract(record) {
 
 // Resolve a gwei name to whatever it points at, caching the result. Returns one of:
 //   { kind: 'ipfs'|'ipns'|'swarm', ref }     — website (IPFS CID, IPNS name, or Swarm bzz hash)
-//   { kind: 'web3', chainId, address }       — website served from a contract over web3://
+//   { kind: 'web3', chainId, address }       — website served from a contract over web3://, named by the
+//                                               contentcontract record or, failing both records, by the
+//                                               name's address (addressSite)
 //   { state: 'none' }             — no contenthash and no usable contentcontract record
 //   { state: 'unsupported' }      — contenthash present but unsupported or malformed
 //   { error: 'rpc' }              — RPC lookup failed (never cached; a retry recovers)
@@ -834,6 +836,28 @@ async function resolveName(name, route, cache, ctx) {
   return result;
 }
 
+// A name with no website record whose address is a contract that serves one, as wei.limo serves .wei
+// names (wei-names): ERC-4804's resolveMode() naming a mode, or ERC-8244's html() returning a page. Both
+// asked in one call. Only a mode the contract actually names, or an html() that isn't empty, counts, so
+// a wallet, a Safe, or a contract whose fallback answers anything at all keeps its profile page.
+const ADDRESS_SITE_MODES = new Set(['manual', 'auto', '5219']);
+async function addressSite(address, route) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address || '') || BigInt(address) === 0n) return false;
+  const calls = [SEL_RESOLVEMODE, SEL_HTML].map((sel) => ({ target: address, data: '0x' + sel }));
+  const results = decodeAggregate3(await ethCall(1, MULTICALL3, encodeAggregate3(calls), route, { long: true }));
+  if (!results || results.length !== 2) return false;
+  const [mode, html] = results;
+  if (mode.success && mode.data.length === 64) {
+    const tag = new TextDecoder().decode(hexToBytes(mode.data)).replace(/\0+$/, '');
+    if (ADDRESS_SITE_MODES.has(tag)) return true;
+  }
+  try {
+    return html.success && html.data.length >= 128 && Number(BigInt('0x' + html.data.slice(64, 128))) > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 async function lookupName(name, route) {
   let tokenIdHex = nameTokenId(name);
   if (!tokenIdHex) {
@@ -888,6 +912,10 @@ async function lookupName(name, route) {
           }
         }
       } catch (_) {}
+      // Last, the name's address, if it is a contract that serves a site (addressSite).
+      if (result.profile && await addressSite(result.profile.address, route)) {
+        result = { kind: 'web3', chainId: 1, address: result.profile.address.toLowerCase(), viaAddress: true, profile: result.profile };
+      }
     } else if (result.kind === 'web3') {
       // As for a contenthash site below: the profile, for its pages on the posts host.
       try {
@@ -1156,6 +1184,7 @@ async function serveWeb3(ref, name, url, cache, ctx, route) {
   headers.set('x-gwei-name', encodeURIComponent(name));
   headers.set('x-web3-contract', `${chain.short}:${ref.address}`);
   headers.set('x-web3-resolve-mode', mode);
+  if (ref.viaAddress) headers.set('x-gwei-site-from', 'address');
   // These statuses are defined to carry no body; handing one to Response() throws.
   const empty = status === 204 || status === 205 || status === 304;
   return new Response(empty ? null : body, { status, headers: harden(headers) });

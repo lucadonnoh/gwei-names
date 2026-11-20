@@ -659,8 +659,11 @@ in place.
 Two notes on how this differs from the spec and from other gateways:
 
 - ERC-6821 also says to fall back to the name's *resolved address* when no `contentcontract` record
-  exists. GNS `resolve()` falls back to `ownerOf`, so honoring that fallback would make every
-  registered name claim to be a website. Only an explicit record counts.
+  exists. GNS `resolve()` falls back to `ownerOf`, so the gateway only takes that address as a site
+  when it is a contract that says it is one: its `resolveMode()` names a mode (`manual`, `auto` or
+  `5219`), or its ERC-8244 `html()` returns a page. A wallet, a Safe, or a contract that answers any
+  call keeps the name's profile page. This is how wei.limo serves `.wei` names, so a contract site
+  can be pointed at by a `.wei` and a `.gwei` name the same way. Both records still win over it.
 - w3link injects a script into pages it serves, to rewrite `web3://` links into gateway URLs. We
   serve the contract's bytes unmodified, the same as the IPFS path does.
 

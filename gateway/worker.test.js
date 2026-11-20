@@ -190,7 +190,8 @@ async function answerRpc(handlers, data, url, to, init) {
   if (to?.toLowerCase() !== MULTICALL || !data.startsWith('0x82ad56cb')) return handlers.rpc(data, url, to, init);
   const answers = await Promise.all(aggregate3Calls(data).map((call) => handlers.rpc(call.data, url, call.target, init)));
   // A transport failure (a thrown request, an HTTP error) fails the whole call, as it would on the wire.
-  const failed = answers.find((a) => a === 'THROW' || a instanceof Response);
+  // A sub-call that reverts doesn't: allowFailure makes it an unsuccessful result.
+  const failed = answers.find((a) => a === 'THROW' || (a instanceof Response && !a.revert));
   if (failed) return failed;
   return aggregate3Return(answers.map((a) => (typeof a === 'string' && a.startsWith('0x') ? [true, a.slice(2)] : [false, ''])));
 }
@@ -686,6 +687,49 @@ test('5219 mode: serves the contract body and its own content-type', async () =>
   for (const [k, v] of SEC_HEADERS) assert.equal(res.headers.get(k), v);
 });
 
+test('a name with no website record is served from its address, when that is a contract serving a site (as wei.limo does)', async () => {
+  const SITE = 'a11ce'.padStart(40, '0');
+  // A contract answers or reverts; it never leaves a call unanswered.
+  const site = (answer) => makeFetch({ rpc: (data, url, to) => (to?.toLowerCase() === '0x' + SITE ? answer(data) ?? rpcRevert() : rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) })(data, url, to)) });
+  const get = (fetchMock) => invoke('https://alice.gwei.domains/docs?x=1', { cache: makeCache(), fetchMock });
+
+  // ERC-5219, through resolveMode(): served with its paths, as a contentcontract record would be.
+  let res = await get(site((data) => data.startsWith(SEL.mode) ? MODE_5219
+    : data.startsWith(SEL.request) ? abiRequestResult(200, '<h1>from the address</h1>', [['Content-type', 'text/html']]) : null));
+  const body = await res.text();
+  assert.equal(res.status, 200, body.slice(0, 300));
+  assert.equal(body, '<h1>from the address</h1>');
+  assert.equal(res.headers.get('x-web3-resolve-mode'), '5219');
+  assert.equal(res.headers.get('x-gwei-site-from'), 'address');
+
+  // ERC-8244: only html(). Its page is the front page.
+  res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: site((data) => data.startsWith('0x33c34ac3') ? abiBytesReturn('<p>html()</p>') : null) });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '<p>html()</p>');
+
+  // A wallet, a contract that answers anything, an empty html(), or a mode it doesn't name: its profile.
+  for (const answer of [() => '0x', () => MODE_AUTO.slice(0, 10), (d) => (d.startsWith('0x33c34ac3') ? abiBytesReturn('') : null), () => modeWord('website'), () => '0x' + '00'.repeat(32)]) {
+    res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: site(answer) });
+    assert.match(await res.text(), /<div class="name">alice\.gwei<\/div>/, String(answer));
+    assert.equal(res.headers.get('x-gwei-site-from'), null);
+  }
+  // The address can't be asked: its profile, never an error page.
+  res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: site(() => 'THROW') });
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /<div class="name">alice\.gwei<\/div>/);
+
+  // Either record still wins over the address.
+  const both = (record) => makeFetch({ rpc: (data, url, to) => {
+    if (to?.toLowerCase() === '0x' + SITE) return data.startsWith(SEL.mode) ? MODE_5219 : null;
+    if (to?.toLowerCase() === ROCK) return data.startsWith(SEL.mode) ? MODE_5219 : data.startsWith(SEL.request) ? abiRequestResult(200, 'the record') : null;
+    if (data.startsWith(SEL.text) && record) return CC_MAINNET;
+    return rpcProfile({ address: 'a11ce', owner: 'b0b', expires: (1877108399).toString(16) })(data, url, to);
+  } });
+  res = await invoke('https://alice.gwei.domains/', { cache: makeCache(), fetchMock: both(true) });
+  assert.equal(await res.text(), 'the record');
+  assert.equal(res.headers.get('x-gwei-site-from'), null);
+});
+
 test('web3 cache entries follow the resolved contract when a name is repointed', async () => {
   const cache = makeCache();
   let contentcontract = CC_MAINNET;
@@ -856,10 +900,10 @@ test('manual mode: MIME comes from the path extension', async () => {
   assert.equal(res.headers.get('content-type'), 'image/svg+xml');
 });
 
-const rpcRevert = () => new Response(
+const rpcRevert = () => Object.assign(new Response(
   JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: 3, message: 'execution reverted' } }),
   { headers: { 'content-type': 'application/json' } },
-);
+), { revert: true });
 const SEL_HTML = '0x33c34ac3';
 
 test('auto mode: the root is a call with empty calldata, and its bytes are served', async () => {
@@ -1320,7 +1364,7 @@ test('an unregistered name gets a register page; a registered one without a site
   assert.match(res.headers.get('content-security-policy'), /script-src|default-src 'none'/);
   assert.doesNotMatch(res.headers.get('content-security-policy'), /unsafe-eval|script-src 'unsafe-inline'/);
   assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
-  assert.equal(fetchMock.calls.rpcUrls.length, 2, 'one multicall for every record, then the primary name');
+  assert.equal(fetchMock.calls.rpcUrls.length, 3, 'one multicall for every record, the primary name, then whether its address serves a site');
 
   res = await invoke('https://alice.gwei.domains/favicon.ico', { cache: makeCache(), fetchMock });
   assert.equal(res.status, 404, 'other paths are not the profile');
