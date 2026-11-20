@@ -17,7 +17,7 @@ import {
   AutoModeError, encodeAutoCall, encodeAutoReturn, hexToBytes, isMimeType, keccak256, parseAutoQuery, parseDataUrl,
 } from './web3-auto.js';
 import {
-  AVATAR_PNG_PATH, CARD_PATH, MULTICALL3, POST_CARD_PATH, POST_COVER_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, THEME_SCRIPT_HASH, avatarPng, avatarUrl, cardVersion,
+  AVATAR_PNG_PATH, CARD_PATH, IPFS_OUTAGE, MULTICALL3, POST_CARD_PATH, POST_COVER_PATH, PROFILE_CSP, PROFILE_TEXT_KEYS, SITE_DOWN_CSP, THEME_SCRIPT_HASH, avatarPng, avatarUrl, cardVersion,
   decodeAggregate3, encodeAggregate3, nftAvatarRef, postCard, postListHtml, priceCalls, profileCard, profileFromResults, renderLayout,
   renderProfile, renderUnregistered, unregisteredCard,
 } from './profile-page.js';
@@ -1494,7 +1494,8 @@ export default {
       response.headers.set('retry-after', '10');
       return response;
     }
-    return transientPage(name, 'Content is set but couldn’t be fetched right now.', 504);
+    const outage = r.kind !== 'swarm' && IPFS_OUTAGE ? ` ${IPFS_OUTAGE}` : '';
+    return transientPage(name, `Content is set but couldn’t be fetched right now.${outage}`, 504);
   },
 
   // Daily check that every RPC and IPFS endpoint still answers Worker traffic. Public endpoints fail

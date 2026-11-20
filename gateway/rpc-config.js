@@ -14,6 +14,8 @@ export const RPCS = [
   'https://eth-mainnet.public.blastapi.io',
   'https://eth-pokt.nodies.app',
   'https://rpc.mevblocker.io',
+  'https://mainnet.rpc.buidlguidl.com',
+  'https://ethereum-json-rpc.stakely.io',
   'https://eth.rpc.blxrbdn.com',
   'https://ethereum-rpc.publicnode.com',
 ];

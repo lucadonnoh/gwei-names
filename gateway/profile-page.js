@@ -546,6 +546,10 @@ export function postListHtml(posts, postPath) {
     '</div>';
 }
 
+// Said where an IPFS or IPNS website didn't load while our own IPFS node is offline (since 2026-11-19).
+// Set it to '' once the node is back.
+export const IPFS_OUTAGE = 'Our IPFS node, which keeps many .gwei websites online, is offline for a few days.';
+
 // `siteDown` ('IPFS', 'IPNS' or 'Swarm'): the profile stands in for the name's website, which didn't load.
 export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = '', siteDown = null }) {
   const t = profile.text || {};
@@ -563,6 +567,7 @@ export function renderProfile({ name, dappHash, pageUrl, profile, postsHtml = ''
   const root = basePath(pageUrl);
   const body =
     (siteDown ? `<div class="notice">The website of <b>${escapeHtml(name)}</b> isn\u2019t loading right now, so here is its profile. ` +
+      (siteDown !== 'Swarm' && IPFS_OUTAGE ? `${IPFS_OUTAGE} ` : '') +
       'The website will open by itself as soon as it\u2019s back.</div>' : '') +
     (banner ? `<img class="banner" src="${escapeHtml(banner)}" alt="" referrerpolicy="no-referrer">` : '') +
     (avatar

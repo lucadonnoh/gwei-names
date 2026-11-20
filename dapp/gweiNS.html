@@ -112,6 +112,8 @@ h1 {
 .subtitle { font-size: 12px; color: var(--fg-muted); margin: 0 0 40px; letter-spacing: 0.03em; }
 .subtitle a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
 .subtitle a:hover { opacity: 0.55; }
+.outage { font-size: 12px; line-height: 1.6; border: 1px solid var(--border-muted); padding: 12px 14px; margin: -16px 0 40px; }
+.outage b { font-weight: 700; }
 .section {
   margin-bottom: 40px;
 }
@@ -1071,6 +1073,9 @@ body.vote-dock-open { padding-bottom: 104px; }
 
 <h1>gwei name service</h1>
 <div class="subtitle">The ownerless and unruggable ENS alternative on Ethereum</div>
+
+<!-- While our server (IPFS node, post publisher, notifications) is offline. Remove with POSTS_PAUSED. -->
+<div class="outage" id="outage" role="status"><b>Our server is offline for a few days.</b> Names work as usual: registering, renewing, records and transfers are all onchain. Until it’s back, publishing posts is paused, some .gwei websites hosted only on our IPFS node won’t load, the @gweidomains bot is quiet, and stats may be incomplete.</div>
 
 <div class="section" id="replyPanel" hidden>
   <label for="replyText">Reply</label>
@@ -2167,6 +2172,8 @@ function customRpcUrl() {
 const VOTING_INDEXER = customRpcUrl() ? null : NET.votingIndexer || null;
 const POSTS_CONTRACT = NET.posts || '';
 const POSTS_PUBLISHER = NET.postsPublisher || '';
+// The publisher runs on our server, offline since 2026-11-19: false again (and the #outage note out) once it's back.
+const POSTS_PAUSED = true;
 const POSTS_API = 'https://gwei.domains/api'; // the gateway's post index, readable from any origin
 const POSTS_ABI = [
   'function authorize(uint256 tokenId, bytes32 postHash, bytes32 blobHash, address publisher) payable',
@@ -6519,6 +6526,7 @@ function updatePostCost() {
   if (bar) { bar.style.width = Math.min(100, Math.round((bytes.length / POST_MAX_BYTES) * 100)) + '%'; bar.classList.toggle('full', bytes.length > POST_MAX_BYTES); }
   const size = `${bytes.length.toLocaleString()} of ${POST_MAX_BYTES.toLocaleString()} bytes`;
   if (bytes.length > POST_MAX_BYTES) { el.textContent = `Too long: ${size}.`; return; }
+  if (POSTS_PAUSED) { el.textContent = `${size}. Publishing is paused while our server is offline. Your draft stays here.`; return; }
   // One sentence with or without the price, room held for it, so the buttons under it don't move when it lands.
   const fee = currentPostFee == null ? '<span style="display:inline-block;min-width:11ch;">…</span>' : ethers.formatEther(currentPostFee);
   el.innerHTML = `${size}. Publishing costs ${fee} ETH plus gas for one transaction. The fee is held by the contract and goes to the gwei.domains publisher only when it puts this exact post in a blob; if it doesn't within a day, you can take it back.`;
@@ -6807,7 +6815,7 @@ function postsFormHtml() {
     '<div class="post-room"><div id="ppRoom"></div></div>' +
     '<div class="profile-color"><input type="checkbox" id="ppReplies" checked onchange="updatePostCost()"><label for="ppReplies">Allow replies</label></div>' +
     '<div class="profile-hint" id="ppCost" aria-live="polite"></div>' +
-    '<button onclick="doPublishPost()">Publish</button>' +
+    `<button onclick="doPublishPost()"${POSTS_PAUSED ? ' disabled' : ''}>Publish</button>` +
     `<button class="secondary" onclick="$('manageForm').classList.remove('show')">Cancel</button>` +
     // Last: it loads after the form opens, and anything above a control would move it under the reader's hand.
     '<div class="post-list" id="ppList" aria-live="polite"></div>';
@@ -6967,7 +6975,7 @@ async function waitForPostIndexed(hash, timeoutMs = 120000) {
 }
 
 async function doPublishPost() {
-  if (isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
+  if (POSTS_PAUSED || isProcessing || !signer || !currentTokenId || !postsEnabled()) return;
   const { title, bytes } = readPostForm();
   if (!title) { showStatus('Give the post a title', 'error'); return; }
   if (bytes.length > POST_MAX_BYTES) { showStatus(`The post is too long: ${bytes.length} bytes, the most is ${POST_MAX_BYTES}`, 'error'); return; }

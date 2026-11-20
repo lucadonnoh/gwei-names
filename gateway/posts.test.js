@@ -227,9 +227,11 @@ function fakeWorld() {
   world.rpcDown = new Set(); // hosts that fail
   world.extraLogs = {}; // host → logs only that endpoint returns (a lying RPC)
   world.extraHead = {}; // host → blocks that endpoint adds to the head
+  world.traceView = {}; // host → (traces) => the traces that endpoint shows instead (a lying RPC)
+  const traces = (host) => (world.traceView[host] || ((t) => t))(world.traces || []);
   world.fetch = async (url, init) => {
     world.calls.push(url);
-    if (init?.method === 'POST' && /^https:\/\/(rpc\.test|eth\.drpc\.org|eth-mainnet\.public\.blastapi\.io|eth-pokt\.nodies\.app|rpc\.mevblocker\.io|eth\.rpc\.blxrbdn\.com|ethereum-rpc\.publicnode\.com)/.test(url)) {
+    if (init?.method === 'POST' && /^https:\/\/(rpc\.test|eth\.drpc\.org|eth-mainnet\.public\.blastapi\.io|eth-pokt\.nodies\.app|rpc\.mevblocker\.io|mainnet\.rpc\.buidlguidl\.com|ethereum-json-rpc\.stakely\.io|eth\.rpc\.blxrbdn\.com|ethereum-rpc\.publicnode\.com)/.test(url)) {
       const host = new URL(url).host;
       if (world.rpcDown.has(host)) return new Response('down', { status: 503 });
       const { method, params } = JSON.parse(init.body);
@@ -239,7 +241,7 @@ function fakeWorld() {
         const number = Number(params[0]);
         if (params[1] && world.unreadable?.has(number)) return new Response('[' + ' '.repeat(17 * 1024 * 1024) + ']');
         world.blockReads = (world.blockReads || 0) + (params[1] ? 1 : 0);
-        const transactions = params[1] ? (world.traces || []).filter((t) => t.blockNumber === number && !t.traceAddress.length).map((t) => ({
+        const transactions = params[1] ? traces(host).filter((t) => t.blockNumber === number && !t.traceAddress.length).map((t) => ({
           hash: t.transactionHash, from: t.action.from, to: t.action.to, value: t.action.value, input: t.action.input, transactionIndex: '0x' + t.transactionPosition.toString(16),
         })) : undefined;
         return ok({ timestamp: '0x' + world.timestamp(number).toString(16), ...(transactions && { transactions }) });
@@ -251,12 +253,12 @@ function fakeWorld() {
       }
       if (method === 'eth_call') return ok(answerMulticall(params[0].data, world));
       if (method === 'trace_filter') {
-        if (host !== 'rpc.test') return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { message: 'method not found' } }));
+        if (host !== 'rpc.test' && host !== 'eth.drpc.org') return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { message: 'method not found' } }));
         const [{ fromBlock, toBlock, toAddress }] = params;
         world.traceCalls = (world.traceCalls || 0) + 1;
         // A block where a contract called a room many times with big inputs: the answer is too big.
         if ([...(world.poison || [])].some((b) => b >= Number(fromBlock) && b <= Number(toBlock))) return new Response('[' + ' '.repeat(4.3 * 1024 * 1024) + ']');
-        return ok((world.traces || []).filter((t) => t.blockNumber >= Number(fromBlock) && t.blockNumber <= Number(toBlock) && toAddress.includes(t.action.to)));
+        return ok(traces(host).filter((t) => t.blockNumber >= Number(fromBlock) && t.blockNumber <= Number(toBlock) && toAddress.includes(t.action.to)));
       }
       throw new Error('unexpected RPC ' + method);
     }
@@ -1234,6 +1236,27 @@ test('a post whose bytes arrive late still gets the replies sent since its autho
   assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['early bird']);
 });
 
+test('with the owner’s node down, a post whose bytes arrive late waits for it to catch up on its replies', async () => {
+  const world = fakeWorld();
+  world.head = 5000;
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const a = postBytes('Uploaded late');
+  world.logs.push(authorized(1000, 0, TOKEN, a.hash, ALICE));
+  world.traces = [replyCall(await replyRoom(a.hash), 1200, 0, BOB, 'early bird')];
+  await store.sync();
+  store.upload(a.bytes, 'ip');
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies, [], 'old blocks only from the owner’s node');
+  const unsure = store.meta('reply_unsure_from');
+  assert.ok(!unsure || Number(unsure) > 2000, 'so what the fallback covered stays near the head');
+  world.rpcDown.delete('rpc.test');
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['early bird']);
+});
+
 const replyCall = (room, block, pos, from, text) => ({ type: 'call', blockNumber: block, transactionPosition: pos, transactionHash: '0x' + pad32(`${block}${pos}`),
   traceAddress: [], action: { callType: 'call', from, to: room, value: '0x1', input: encodeReply(text) } });
 
@@ -1342,7 +1365,7 @@ test('a block nobody can read is skipped after a few tries, so the scan goes on'
   assert.ok(Number(store.meta('reply_cursor')) >= 1998);
 });
 
-test('a down node pauses the reply scan without retrying it piece by piece', async () => {
+test('a down node and fallback pause the reply scan without retrying it piece by piece', async () => {
   const world = fakeWorld();
   world.head = 2000;
   const store = makeStore(world);
@@ -1354,6 +1377,7 @@ test('a down node pauses the reply scan without retrying it piece by piece', asy
   const cursor = Number(store.meta('reply_cursor'));
   world.head = 3000;
   world.rpcDown.add('rpc.test');
+  world.rpcDown.add('eth.drpc.org');
   const before = world.traceCalls || 0;
   store.advance(60);
   await store.sync().catch(() => {});
@@ -1394,14 +1418,75 @@ test('replies show their senders’ names however many there are, and the newest
   assert.ok(named.every((r, i) => r.name === `user${i}.gwei`), 'every sender named, past one multicall’s 64 calls');
 });
 
-test('without the owner’s node, replies wait (public RPCs don’t offer trace_filter)', async () => {
+test('without the owner’s node, replies come from the fallback, each confirmed by another endpoint’s block', async () => {
   const world = fakeWorld();
+  world.head = 2000;
   const store = makeStore(world, { RPC_URL: '' });
   const a = postBytes('No node');
   store.upload(a.bytes, 'ip');
   world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
-  world.traces = [];
+  const room = await replyRoom(a.hash);
+  const kind = replyCall(room, 620, 1, BOB, 'kind words');
+  world.traces = [replyCall(room, 600, 0, BOB, 'real'), kind];
+  // dRPC makes one up and changes another; no other endpoint's blocks hold either.
+  world.traceView['eth.drpc.org'] = (traces) => [
+    ...traces.map((t) => t === kind ? { ...t, action: { ...t.action, input: encodeReply('altered') } } : t),
+    replyCall(room, 610, 0, ALICE, 'invented'),
+  ];
   const result = await store.sync();
-  assert.equal(result.replies, 0);
-  assert.equal(world.traceCalls || 0, 0);
+  const { replies } = await store.replies(a.hash);
+  assert.deepEqual(replies.map((r) => r.text), ['real'], 'only what another endpoint confirms');
+  assert.equal(result.replies, 1);
+  assert.ok(replies[0].time > 0, 'with its time, from the block that confirmed it');
+  assert.ok(Number(store.meta('reply_cursor')) >= 1998);
+});
+
+test('a reply the fallback finds waits while no other endpoint can confirm it', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const a = postBytes('Waiting');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  world.traces = [replyCall(await replyRoom(a.hash), 600, 0, BOB, 'patient')];
+  const base = world.fetch;
+  let others = false;
+  world.fetch = async (url, init) => {
+    const call = init?.method === 'POST' && JSON.parse(init.body);
+    if (!others && call?.method === 'eth_getBlockByNumber' && call.params[1] && !url.startsWith('https://eth.drpc.org')) return new Response('down', { status: 503 });
+    return base(url, init);
+  };
+  store.fetchImpl = world.fetch;
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies, []);
+  assert.equal(Number(store.meta('reply_cursor')) < 600, true, 'the scan stops before it');
+  others = true;
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['patient']);
+});
+
+test('blocks the fallback covered are read again from the owner’s node once it is back', async () => {
+  const world = fakeWorld();
+  world.head = 2000;
+  const store = makeStore(world);
+  world.rpcDown.add('rpc.test');
+  const a = postBytes('Left out');
+  store.upload(a.bytes, 'ip');
+  world.logs.push(authorized(500, 0, TOKEN, a.hash, ALICE));
+  const room = await replyRoom(a.hash);
+  const hidden = replyCall(room, 700, 0, BOB, 'hidden by the fallback');
+  world.traces = [replyCall(room, 600, 0, BOB, 'seen'), hidden];
+  world.traceView['eth.drpc.org'] = (traces) => traces.filter((t) => t !== hidden);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['seen']);
+  assert.ok(Number(store.meta('reply_unsure_from')) > 0);
+  world.rpcDown.delete('rpc.test');
+  world.head = 2100;
+  store.advance(60);
+  await store.sync();
+  assert.deepEqual((await store.replies(a.hash)).replies.map((r) => r.text), ['seen', 'hidden by the fallback']);
+  assert.equal(store.meta('reply_unsure_from'), '');
+  assert.ok(Number(store.meta('reply_cursor')) >= 2098, 'and it reads on to the head');
 });

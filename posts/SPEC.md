@@ -181,7 +181,10 @@ their own name, open the window with that name (it then credits them), and hear 
 
 Replies are found from the room addresses. Until Glamsterdam's EIP-7708 gives ETH transfers a log,
 that takes a tracing node: the gateway runs `trace_filter` (`toAddress`: the rooms) on the owner's
-Erigon, and without it shows no new replies. Internal calls to a room are traced too, with their input,
+Erigon. While that doesn't answer, it asks dRPC's public endpoint instead and keeps a reply only once
+another endpoint's copy of its block holds the same transaction at the same place; the blocks covered
+that way are read again from the Erigon when it is back, so the fallback can delay a reply but can't
+add or change one. Rooms catching up on old blocks wait for the Erigon. Internal calls to a room are traced too, with their input,
 so a range whose answer is too big or too slow is split, and a single block that still fails is read
 from its transactions, which is all a reply can be. Each sync has a budget of calls, scans new blocks
 for every room before rooms catch up on old ones, and keeps its progress block by block; a block that

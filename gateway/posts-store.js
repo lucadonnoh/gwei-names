@@ -63,7 +63,12 @@ const RECENT_PER_NAME = 2;
 const NAME_RETRY_SECONDS = 86400;
 const MAX_LIST = 200;
 // Replies (replies-format.js) are found with trace_filter on the owner's node until EIP-7708 gives every
-// ETH transfer a log: a range of blocks, for every room at once, in batches of rooms.
+// ETH transfer a log: a range of blocks, for every room at once, in batches of rooms. While that node
+// doesn't answer, trace_filter goes to TRACE_FALLBACK, a public endpoint that offers it, which isn't
+// taken on its word: each reply it finds counts only once another endpoint's copy of its block holds the
+// same transaction, and the blocks it covered are read again from the owner's node once that is back.
+// So the fallback can leave a reply out for a while, but can't add or change one.
+const TRACE_FALLBACK = 'https://eth.drpc.org';
 const REPLY_RANGE = 200;
 const REPLY_RANGES_PER_SYNC = 10;
 const ROOMS_PER_QUERY = 200;
@@ -582,7 +587,14 @@ export class PostStore {
   // events cursor, so a room exists before the blocks that could hold its replies are read).
   async syncReplies(until) {
     const { preferred } = rpcEndpointConfig(1, this.env);
-    if (!preferred) return 0; // trace_filter: only the owner's node offers it (public RPCs don't)
+    const budget = { calls: REPLY_CALLS_PER_SYNC, source: preferred ? { url: preferred, trusted: true } : fallbackSource() };
+    const unsure = Number(this.meta('reply_unsure_from')) || 0;
+    if (unsure && preferred && await this.sourceAnswers(budget)) {
+      const back = unsure - 1; // the owner's node is back: read what the fallback covered again
+      this.sql.exec('UPDATE room SET scanned = MAX(since - 1, ?) WHERE scanned > ?', back, back);
+      if (Number(this.meta('reply_cursor')) > back) this.setMeta('reply_cursor', back);
+      this.setMeta('reply_unsure_from', '');
+    }
     const start = Number(this.env.POSTS_FROM_BLOCK) > 0 ? Number(this.env.POSTS_FROM_BLOCK) - 1 : until;
     let cursor = Number(this.meta('reply_cursor') ?? start);
     const fresh = this.rows(
@@ -592,7 +604,6 @@ export class PostStore {
     for (const { hash, since } of fresh) {
       this.sql.exec('INSERT OR IGNORE INTO room (room, hash, since, scanned) VALUES (?, ?, ?, ?)', await replyRoom(hash), hash, since, since - 1);
     }
-    const budget = { calls: REPLY_CALLS_PER_SYNC };
     let found = 0;
     // New blocks first, for every room in step: whatever else is going on, new replies show.
     for (let n = 0; n < REPLY_RANGES_PER_SYNC && cursor < until && budget.calls > 0; n++) {
@@ -610,8 +621,10 @@ export class PostStore {
       this.setMeta('reply_cursor', cursor);
       if (through < to) break;
     }
-    // Then rooms behind the shared cursor (bytes that arrived late), nearest first, with what is left.
-    const behind = this.rows('SELECT room, scanned FROM room WHERE scanned < ? ORDER BY scanned DESC LIMIT ?', cursor, ROOM_CATCHUPS_PER_SYNC);
+    // Then rooms behind the shared cursor (bytes that arrived late), nearest first, with what is left;
+    // only from the owner's node, so what the fallback covered (to be read again) stays near the head.
+    budget.fallback = false;
+    const behind = !budget.source.trusted ? [] : this.rows('SELECT room, scanned FROM room WHERE scanned < ? ORDER BY scanned DESC LIMIT ?', cursor, ROOM_CATCHUPS_PER_SYNC);
     for (const { room, scanned } of behind) {
       if (budget.calls <= 0) break;
       let at = scanned;
@@ -631,18 +644,26 @@ export class PostStore {
   // Replies to `rooms` in blocks from..to, stored. Returns { found, through }: through is the last block
   // it got to with every block before it done (from - 1 for none), so progress is kept block by block.
   // trace_filter answers a whole range, but internal calls carry their input too, so a contract calling a
-  // room many times with big inputs can make that answer too big or too slow. When the node itself is
+  // room many times with big inputs can make that answer too big or too slow. When the source itself is
   // fine (it answers eth_blockNumber), such a range is split in two, and a block that still fails is read
   // from its transactions, which is all a reply can be. A block that can't even be read that way is
   // skipped after REPLY_BLOCK_TRIES syncs, logged. Every call is paid from `budget`, so a sync always
   // ends, and the next one picks up where it stopped.
   async scanRange(rooms, from, to, budget) {
     const set = new Set(rooms);
+    if (!budget.source.trusted) { // read again from the owner's node once it's back
+      const unsure = Number(this.meta('reply_unsure_from')) || 0;
+      if (!unsure || from < unsure) this.setMeta('reply_unsure_from', from);
+    }
     let calls;
     try {
       calls = await this.traceCalls(rooms, from, to, budget);
     } catch (error) {
-      if (budget.calls <= 0 || !(await this.nodeAnswers(budget))) {
+      if (budget.calls <= 0 || !(await this.sourceAnswers(budget))) {
+        if (budget.calls > 0 && budget.source.trusted && budget.fallback !== false) { // the owner's node is down: the fallback, for the rest of this sync
+          budget.source = fallbackSource();
+          return this.scanRange(rooms, from, to, budget);
+        }
         console.error(JSON.stringify({ event: 'reply_scan_paused', from, to, message: String(error?.message || error).slice(0, 200) }));
         return { found: 0, through: from - 1 };
       }
@@ -666,35 +687,62 @@ export class PostStore {
         return { found: 0, through: skip ? from : from - 1 };
       }
     }
+    calls = calls.filter((c) => set.has(lower(c.to)) && replyText(c, lower(c.to)) !== null);
+    let through = to;
+    if (!budget.source.trusted) ({ calls, through } = await this.confirmCalls(calls, to, budget));
     let found = 0;
     for (const c of calls) {
-      const room = String(c.to || '').toLowerCase();
-      if (!set.has(room)) continue;
-      const text = replyText(c, room);
-      if (text === null) continue;
+      const room = lower(c.to);
       this.sql.exec('INSERT OR IGNORE INTO reply (tx, block, pos, ts, room, sender, text) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        c.tx, c.block, c.pos, c.ts ?? null, room, String(c.from).toLowerCase(), text);
+        c.tx, c.block, c.pos, c.ts ?? null, room, lower(c.from), replyText(c, room));
       found++;
     }
-    return { found, through: to };
+    return { found, through };
   }
 
-  // Whether the owner's node answers at all, asked once per sync: a failure it gives for every request
-  // is the node being down, not a range too big to answer.
-  async nodeAnswers(budget) {
-    if (budget.nodeAnswers === undefined) {
+  // Whether the source answers at all, asked once per sync and source: a failure it gives for every
+  // request is the source being down, not a range too big to answer.
+  async sourceAnswers(budget) {
+    const { source } = budget;
+    if (source.answers === undefined) {
       if (budget.calls-- <= 0) return false;
-      const { preferred } = rpcEndpointConfig(1, this.env);
-      budget.nodeAnswers = await this.rpcAt([preferred], 'eth_blockNumber', []).then(() => true, () => false);
+      source.answers = await this.rpcAt([source.url], 'eth_blockNumber', []).then(() => true, () => false);
     }
-    return budget.nodeAnswers;
+    return source.answers;
+  }
+
+  // Replies the fallback found, kept only where another endpoint's copy of the block holds the same
+  // transaction at the same place: one block read per block with replies, in block order. One that
+  // differs or isn't there is dropped (logged); a block nobody else returns yet stops the range there,
+  // so it is tried again next sync. Returns { calls, through } as scanRange does.
+  async confirmCalls(calls, to, budget) {
+    const { endpoints, preferred } = rpcEndpointConfig(1, this.env);
+    const others = endpoints.filter((u) => u !== preferred && u !== budget.source.url);
+    const confirmed = [];
+    for (const number of [...new Set(calls.map((c) => c.block))].sort((a, b) => a - b)) {
+      let block;
+      try {
+        if (budget.calls-- <= 0) throw new Error('reply scan: out of calls for this sync');
+        block = await this.rpcAt(others, 'eth_getBlockByNumber', ['0x' + number.toString(16), true], FULL_BLOCK_MAX_BYTES);
+      } catch (error) {
+        console.error(JSON.stringify({ event: 'reply_confirm_waiting', block: number, message: String(error?.message || error).slice(0, 200) }));
+        return { calls: confirmed, through: number - 1 };
+      }
+      const txs = new Map((block?.transactions || []).map((tx) => [lower(tx?.hash), tx]));
+      let ts = null;
+      try { ts = Number(BigInt(block.timestamp)); } catch (_) {}
+      for (const c of calls.filter((c) => c.block === number)) {
+        if (sameTransaction(txs.get(lower(c.tx)), c)) confirmed.push({ ...c, ts: c.ts ?? ts });
+        else console.error(JSON.stringify({ event: 'reply_unconfirmed', tx: c.tx, block: number }));
+      }
+    }
+    return { calls: confirmed, through: to };
   }
 
   // Successful top-level calls to `rooms` in from..to, from trace_filter.
   async traceCalls(rooms, from, to, budget) {
     if (budget.calls-- <= 0) throw new Error('reply scan: out of calls for this sync');
-    const { preferred } = rpcEndpointConfig(1, this.env);
-    const traces = await this.rpcAt([preferred], 'trace_filter', [{ fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16), toAddress: rooms }]);
+    const traces = await this.rpcAt([budget.source.url], 'trace_filter', [{ fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16), toAddress: rooms }]);
     if (!Array.isArray(traces)) throw new Error('trace_filter: not a list');
     return traces
       .filter((t) => t?.type === 'call' && !t.error && !(t.traceAddress || []).length && (!t.action?.callType || t.action.callType === 'call'))
@@ -706,8 +754,7 @@ export class PostStore {
   // key that could give it some (EIP-7702), so no receipts are needed.
   async blockCalls(rooms, number, budget) {
     if (budget.calls-- <= 0) throw new Error('reply scan: out of calls for this sync');
-    const { preferred } = rpcEndpointConfig(1, this.env);
-    const block = await this.rpcAt([preferred], 'eth_getBlockByNumber', ['0x' + number.toString(16), true], FULL_BLOCK_MAX_BYTES);
+    const block = await this.rpcAt([budget.source.url], 'eth_getBlockByNumber', ['0x' + number.toString(16), true], FULL_BLOCK_MAX_BYTES);
     const ts = Number(BigInt(block.timestamp));
     return (block.transactions || [])
       .filter((tx) => rooms.has(String(tx.to || '').toLowerCase()))
@@ -1036,6 +1083,21 @@ export class PostStore {
 }
 
 export const isPostHash = (value) => HASH.test(value || '');
+
+const lower = (value) => String(value || '').toLowerCase();
+const fallbackSource = () => ({ url: TRACE_FALLBACK, trusted: false });
+
+// A block's transaction against a call the fallback reported: the same sender, room, input, value
+// and place in the block.
+function sameTransaction(tx, call) {
+  if (!tx) return false;
+  try {
+    return lower(tx.from) === lower(call.from) && lower(tx.to) === lower(call.to) && lower(tx.input) === lower(call.input)
+      && BigInt(tx.value ?? '0x0') === BigInt(call.value ?? '0x0') && Number(BigInt(tx.transactionIndex)) === call.pos;
+  } catch (_) {
+    return false;
+  }
+}
 
 // An aggregate3 result holding one ABI string -> the string ('' for anything else).
 // The string a call returned first (a lone string, or the first member of a tuple), or ''.

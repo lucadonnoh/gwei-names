@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { RETRY_JS, RETRY_SCRIPT_HASH, checkEndpoints, nameTokenId } from './worker.js';
-import { PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT, THEME_SCRIPT_HASH } from './profile-page.js';
+import { IPFS_OUTAGE, PROFILE_TEXT_KEYS, SITE_CHECK_SCRIPT, THEME_SCRIPT_HASH } from './profile-page.js';
 import { POST_CSP, REPLY_SCRIPT, REPLY_SCRIPT_HASH } from './post-page.js';
 import { createHash } from 'node:crypto';
 import {
@@ -1390,12 +1390,14 @@ test('a website that doesn’t load shows its profile instead of a dead end, the
   const html = await res.text();
   assert.match(html, /The website of <b>alice\.gwei<\/b> isn\u2019t loading right now, so here is its profile/);
   assert.match(html, /builds things/);
+  assert.ok(!IPFS_OUTAGE || html.includes(IPFS_OUTAGE), 'it says our IPFS node is offline while it is');
   assert.match(html, /Websites on IPFS load while some node keeps a copy online/);
   assert.ok(html.includes(`<script>${SITE_CHECK_SCRIPT}</script>`), 'it checks for the site by itself');
   assert.doesNotMatch(html, /This is the default page/);
 
   res = await invoke('https://alice.gwei.domains/about.html', { cache, fetchMock });
   assert.equal(res.status, 504, 'other paths keep the retrying error page');
+  assert.ok(!IPFS_OUTAGE || (await res.text()).includes(IPFS_OUTAGE));
 
   up = true;
   res = await invoke('https://alice.gwei.domains/', { cache, fetchMock });
