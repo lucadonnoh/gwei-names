@@ -22,7 +22,8 @@ export const RPCS = [
 
 export const SEPOLIA_RPCS = [
   'https://ethereum-sepolia-rpc.publicnode.com',
-  'https://sepolia.drpc.org',
+  // dRPC dropped Sepolia from its free plan (HTTP 400 "chain is not available on free plan", Nov 2026).
+  'https://sepolia.gateway.tenderly.co',
 ];
 
 export const CHAINS = {
