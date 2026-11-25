@@ -39,9 +39,8 @@ storage = "sqlite"
 # that still answers Worker traffic. ipfs.io and dweb.link are left out: they rate-limit Cloudflare's
 # shared egress (429 on every request in October 2026), so they never served content and would make
 # the daily health check fail every day.
-# While the eth-node is offline (since 2026-11-19) only Filebase is listed; put ipfs.slopo.net back
-# first when it returns: '["https://ipfs.slopo.net","https://ipfs.filebase.io"]'.
-IPFS_GATEWAYS = '["https://ipfs.filebase.io"]'
+# Our own Kubo node first, Filebase as the fallback. While the eth-node is offline, list only Filebase.
+IPFS_GATEWAYS = '["https://ipfs.slopo.net","https://ipfs.filebase.io"]'
 
 # GnsPosts (src/GnsPosts.sol) and the block it was deployed in; indexing is off while unset.
 POSTS_CONTRACT = '0x73849f6f2785BA7fd2f41b5B4573B75554417981'
