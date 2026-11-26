@@ -1074,8 +1074,6 @@ body.vote-dock-open { padding-bottom: 104px; }
 <h1>gwei name service</h1>
 <div class="subtitle">The ownerless and unruggable ENS alternative on Ethereum</div>
 
-<!-- While our server (IPFS node, post publisher, notifications) is offline. Remove with POSTS_PAUSED. -->
-<div class="outage" id="outage" role="status"><b>Our server is offline for a few days.</b> Names work as usual: registering, renewing, records and transfers are all onchain. Until it’s back, publishing posts is paused, some .gwei websites hosted only on our IPFS node won’t load, the @gweidomains bot is quiet, and stats may be incomplete.</div>
 
 <div class="section" id="replyPanel" hidden>
   <label for="replyText">Reply</label>
@@ -2172,8 +2170,9 @@ function customRpcUrl() {
 const VOTING_INDEXER = customRpcUrl() ? null : NET.votingIndexer || null;
 const POSTS_CONTRACT = NET.posts || '';
 const POSTS_PUBLISHER = NET.postsPublisher || '';
-// The publisher runs on our server, offline since 2026-11-19: false again (and the #outage note out) once it's back.
-const POSTS_PAUSED = true;
+// True while our server (it runs the publisher) is offline, together with an #outage note above the
+// form; it was offline 2026-11-19 to 2026-11-25.
+const POSTS_PAUSED = false;
 const POSTS_API = 'https://gwei.domains/api'; // the gateway's post index, readable from any origin
 const POSTS_ABI = [
   'function authorize(uint256 tokenId, bytes32 postHash, bytes32 blobHash, address publisher) payable',
